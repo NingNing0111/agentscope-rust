@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentscope-rust/schemas/version-lock.schema.json",
+  "title": "Upstream Version Lock",
+  "description": "Schema for AgentScope upstream version lock file",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "repository_url",
+    "release_tag",
+    "commit_hash",
+    "python_version",
+    "core_dependencies",
+    "generated_date"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of this schema"
+    },
+    "repository_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "HTTPS URL of the upstream AgentScope repository"
+    },
+    "release_tag": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Release tag name, e.g. 'v1.0.0'"
+    },
+    "commit_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$",
+      "description": "Full 40-character Git commit SHA-1 hash"
+    },
+    "python_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Python version constraint, e.g. '>=3.10'"
+    },
+    "core_dependencies": {
+      "type": "object",
+      "description": "Map of core dependency package names to version specs",
+      "additionalProperties": { "type": "string" }
+    },
+    "generated_date": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 date when this lock was generated"
+    },
+    "generated_by": {
+      "type": "string",
+      "description": "Tool or person that generated this lock"
+    }
+  },
+  "additionalProperties": false
+}

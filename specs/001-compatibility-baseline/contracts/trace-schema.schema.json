@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentscope-rust/schemas/trace-schema.schema.json",
+  "title": "Standard Trace Schema",
+  "description": "Schema for diff-test standard trace structure between Python and Rust implementations",
+  "type": "object",
+  "required": ["schema_version", "input", "final_result"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "Unique trace identifier (generated)"
+    },
+    "input": {
+      "type": "object",
+      "description": "Input parameters for the capability under test"
+    },
+    "model_requests": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ModelRequest" }
+    },
+    "model_responses": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ModelResponse" }
+    },
+    "streaming_chunks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/StreamingChunk" }
+    },
+    "tool_calls": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ToolCallRecord" }
+    },
+    "tool_results": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ToolResultRecord" }
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/EventRecord" }
+    },
+    "memory_mutations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/MemoryMutation" }
+    },
+    "state_transitions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/StateTransition" }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ErrorRecord" }
+    },
+    "cancellation": { "$ref": "#/$defs/CancellationRecord" },
+    "final_result": {
+      "description": "Final output of the operation (any type)"
+    }
+  },
+  "$defs": {
+    "ModelRequest": {
+      "type": "object",
+      "required": ["messages", "model"],
+      "properties": {
+        "messages": { "type": "array", "items": { "type": "object" } },
+        "model": { "type": "string" },
+        "temperature": { "type": "number" },
+        "max_tokens": { "type": "integer" },
+        "tools": { "type": "array", "items": { "type": "object" } },
+        "stream": { "type": "boolean" },
+        "extra_params": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "ModelResponse": {
+      "type": "object",
+      "required": ["message", "finish_reason"],
+      "properties": {
+        "message": { "type": "object" },
+        "finish_reason": { "type": "string" },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "prompt_tokens": { "type": "integer" },
+            "completion_tokens": { "type": "integer" },
+            "total_tokens": { "type": "integer" }
+          }
+        },
+        "model": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "StreamingChunk": {
+      "type": "object",
+      "required": ["index", "delta"],
+      "properties": {
+        "index": { "type": "integer" },
+        "delta": { "type": "object" },
+        "finish_reason": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "ToolCallRecord": {
+      "type": "object",
+      "required": ["tool_name", "arguments", "call_id"],
+      "properties": {
+        "tool_name": { "type": "string" },
+        "arguments": { "type": "object" },
+        "call_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ToolResultRecord": {
+      "type": "object",
+      "required": ["call_id", "result"],
+      "properties": {
+        "call_id": { "type": "string" },
+        "result": {},
+        "error": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "EventRecord": {
+      "type": "object",
+      "required": ["event_type", "sequence_number"],
+      "properties": {
+        "event_type": { "type": "string" },
+        "sequence_number": { "type": "integer" },
+        "payload": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "MemoryMutation": {
+      "type": "object",
+      "required": ["operation"],
+      "properties": {
+        "operation": { "type": "string", "enum": ["add", "update", "delete", "query"] },
+        "key": { "type": "string" },
+        "value": {},
+        "query_params": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "StateTransition": {
+      "type": "object",
+      "required": ["attribute", "old_value", "new_value"],
+      "properties": {
+        "attribute": { "type": "string" },
+        "old_value": {},
+        "new_value": {}
+      },
+      "additionalProperties": false
+    },
+    "ErrorRecord": {
+      "type": "object",
+      "required": ["category", "message"],
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "ValidationError", "ModelError", "ToolError",
+            "TimeoutError", "CancellationError", "PermissionDenied",
+            "SerializationError", "SessionError",
+            "UnsupportedFeature", "InternalError"
+          ]
+        },
+        "message": { "type": "string" },
+        "cause": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "CancellationRecord": {
+      "type": "object",
+      "required": ["cancelled"],
+      "properties": {
+        "cancelled": { "type": "boolean" },
+        "source": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

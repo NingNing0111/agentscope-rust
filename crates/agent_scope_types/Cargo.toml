@@ -1,0 +1,14 @@
+[package]
+name = "agent_scope_types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AgentScope Foundation Layer — core type definitions (ReplyFinishedReason, ErrorType, ErrorInfo, Hook types)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+schemars.workspace = true

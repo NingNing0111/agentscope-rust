@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentscope-rust/schemas/normalization-rules.schema.json",
+  "title": "Normalization Rules",
+  "description": "Schema for trace comparison normalization rules",
+  "type": "object",
+  "required": ["schema_version", "normalizable_fields", "immutable_fields"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "normalizable_fields": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/NormalizationRule" }
+    },
+    "immutable_fields": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "JSONPath expressions for fields that MUST NOT be ignored during comparison",
+      "minItems": 10
+    }
+  },
+  "$defs": {
+    "NormalizationRule": {
+      "type": "object",
+      "required": ["field_path", "normalization_strategy", "description"],
+      "properties": {
+        "field_path": {
+          "type": "string",
+          "description": "JSONPath expression, e.g. '$.trace_id'"
+        },
+        "normalization_strategy": {
+          "type": "string",
+          "enum": ["placeholder", "order_normalize", "epsilon_compare", "remove"],
+          "description": "Strategy: placeholder=replace with constant, order_normalize=sort keys/arrays, epsilon_compare=float within tolerance, remove=strip field"
+        },
+        "description": {
+          "type": "string",
+          "description": "Reason for normalizing this field"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

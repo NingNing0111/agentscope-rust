@@ -1,0 +1,11 @@
+{
+  "_fixture_name": "Event-ToolCallStart",
+  "_generated_at": "2026-07-28T09:01:05.858433+00:00",
+  "_description": "Golden snapshot fixture for Event-ToolCallStart",
+  "data": {
+    "type": "TOOL_CALL_START",
+    "reply_id": "reply-001",
+    "tool_call_id": "tc-001",
+    "tool_call_name": "search"
+  }
+}

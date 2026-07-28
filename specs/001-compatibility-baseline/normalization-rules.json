@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0.0",
+  "normalizable_fields": [
+    {
+      "field_path": "$.trace_id",
+      "normalization_strategy": "placeholder",
+      "description": "Trace ID is auto-generated and differs between Python and Rust runs."
+    },
+    {
+      "field_path": "$.input.timestamp",
+      "normalization_strategy": "placeholder",
+      "description": "Test start timestamp differs between runs."
+    },
+    {
+      "field_path": "$.model_responses[*].usage.prompt_tokens",
+      "normalization_strategy": "epsilon_compare",
+      "description": "Token counts may vary slightly due to provider tokenizer differences."
+    },
+    {
+      "field_path": "$.model_responses[*].usage.completion_tokens",
+      "normalization_strategy": "epsilon_compare",
+      "description": "Token counts may vary slightly due to provider tokenizer differences."
+    },
+    {
+      "field_path": "$.model_responses[*].usage.total_tokens",
+      "normalization_strategy": "epsilon_compare",
+      "description": "Token counts may vary slightly due to provider tokenizer differences."
+    },
+    {
+      "field_path": "$.model_requests[*].extra_params",
+      "normalization_strategy": "remove",
+      "description": "Provider-specific parameters that do not affect semantics."
+    },
+    {
+      "field_path": "$.events[*].timestamp",
+      "normalization_strategy": "placeholder",
+      "description": "Event timestamps are generated and differ between runs."
+    },
+    {
+      "field_path": "$.errors[*].timestamp",
+      "normalization_strategy": "placeholder",
+      "description": "Error timestamps are generated and differ between runs."
+    },
+    {
+      "field_path": "$.streaming_chunks[*].delta",
+      "normalization_strategy": "order_normalize",
+      "description": "Streaming chunk order may interleave slightly differently."
+    },
+    {
+      "field_path": "$.model_requests[*].tools[*]",
+      "normalization_strategy": "order_normalize",
+      "description": "Tool ordering in requests may vary by implementation."
+    },
+    {
+      "field_path": "$.model_responses[*].model",
+      "normalization_strategy": "placeholder",
+      "description": "Model provider-specific identifier strings may differ."
+    },
+    {
+      "field_path": "$.final_result",
+      "normalization_strategy": "order_normalize",
+      "description": "Final result object key ordering may differ between languages."
+    }
+  ],
+  "immutable_fields": [
+    "$.events[*].event_type",
+    "$.events[*].sequence_number",
+    "$.tool_calls[*].arguments",
+    "$.tool_calls[*].tool_name",
+    "$.model_responses[*].message.role",
+    "$.model_responses[*].finish_reason",
+    "$.errors[*].category",
+    "$.state_transitions[*]",
+    "$.cancellation",
+    "$.side_effects[*]",
+    "$.memory_mutations[*].operation",
+    "$.tool_calls[*].call_id",
+    "$.model_requests[*].messages[*].role"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "_fixture_name": "Msg-user-text",
+  "_generated_at": "2026-07-28T09:01:05.856531+00:00",
+  "_description": "Golden snapshot fixture for Msg-user-text",
+  "data": {
+    "name": "user1",
+    "content": [
+      {
+        "type": "text",
+        "text": "Hello, what is the weather?"
+      }
+    ],
+    "role": "user",
+    "metadata": {}
+  }
+}

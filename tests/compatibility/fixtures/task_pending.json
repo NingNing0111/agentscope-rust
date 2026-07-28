@@ -1,0 +1,13 @@
+{
+  "_fixture_name": "Task-pending",
+  "_generated_at": "2026-07-28T09:01:05.858713+00:00",
+  "_description": "Golden snapshot fixture for Task-pending",
+  "data": {
+    "subject": "Implement login",
+    "description": "Add OAuth2 authentication flow",
+    "metadata": {},
+    "state": "pending",
+    "blocks": [],
+    "blocked_by": []
+  }
+}

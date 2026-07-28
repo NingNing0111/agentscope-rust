@@ -1,0 +1,32 @@
+//! AgentScope Tool System — [`Tool`] trait, [`FunctionTool`] adapter, and [`ToolKit`] registry.
+//!
+//! # Quick start
+
+#![deny(unsafe_code)]
+//!
+//! ```rust,no_run
+//! use agent_scope_tool::{FunctionTool, ToolKit, Tool};
+//! use schemars::JsonSchema;
+//! use serde::Deserialize;
+//!
+//! #[derive(Debug, Clone, Deserialize, JsonSchema)]
+//! struct SearchInput { query: String }
+//!
+//! async fn search(input: SearchInput) -> String {
+//!     format!("Results for: {}", input.query)
+//! }
+//!
+//! let tool = FunctionTool::new("search", "Search the web", search);
+//! let mut tk = ToolKit::new();
+//! tk.register(tool);
+//! let schemas = tk.get_tool_schemas(); // OpenAI-compatible
+//! ```
+
+pub mod function;
+pub mod tool_trait;
+pub mod toolkit;
+
+// Re-export the most commonly used types.
+pub use function::{FunctionTool, IntoChunk};
+pub use tool_trait::{Tool, ToolChunk, ToolError, ToolExecOutput};
+pub use toolkit::ToolKit;

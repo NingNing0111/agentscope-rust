@@ -1,0 +1,19 @@
+[package]
+name = "agent_scope_state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AgentScope Foundation Layer — AgentState, Task, ToolContext (state management)"
+
+[dependencies]
+agent_scope_types = { path = "../agent_scope_types" }
+agent_scope_message = { path = "../agent_scope_message" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+agent_scope_event = { path = "../agent_scope_event" }

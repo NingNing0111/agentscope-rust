@@ -1,0 +1,12 @@
+{
+  "_fixture_name": "Event-ReplyStart",
+  "_generated_at": "2026-07-28T09:01:05.858054+00:00",
+  "_description": "Golden snapshot fixture for Event-ReplyStart",
+  "data": {
+    "type": "REPLY_START",
+    "session_id": "session-001",
+    "reply_id": "reply-001",
+    "name": "agent",
+    "role": "assistant"
+  }
+}

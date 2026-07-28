@@ -1,0 +1,11 @@
+{
+  "_fixture_name": "Event-ReplyEnd",
+  "_generated_at": "2026-07-28T09:01:05.858139+00:00",
+  "_description": "Golden snapshot fixture for Event-ReplyEnd",
+  "data": {
+    "type": "REPLY_END",
+    "session_id": "session-001",
+    "reply_id": "reply-001",
+    "finished_reason": "completed"
+  }
+}

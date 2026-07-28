@@ -1,0 +1,12 @@
+{
+  "_fixture_name": "ContentBlock-ToolResult",
+  "_generated_at": "2026-07-28T09:01:05.857973+00:00",
+  "_description": "Golden snapshot fixture for ContentBlock-ToolResult",
+  "data": {
+    "type": "tool_result",
+    "id": "result-001",
+    "name": "search",
+    "output": "Found 3 results",
+    "state": "success"
+  }
+}

@@ -1,0 +1,14 @@
+/target
+debug/
+release/
+*.rs.bk
+*.rlib
+*.prof*
+.idea/
+*.log
+.env*
+.DS_Store
+# personal tooling
+.claude/
+.omc/
+agentscope/

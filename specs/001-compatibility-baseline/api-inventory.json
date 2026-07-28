@@ -1,0 +1,5407 @@
+{
+  "schema_version": "1.0.0",
+  "capabilities": [
+    {
+      "capability_id": "agent-acting",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._utils.Acting",
+      "symbol_name": "Acting",
+      "symbol_type": "serialized_structure",
+      "description": "Next action: execute the given tool calls.",
+      "source_location": "src/agentscope/agent/_utils.py:26",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agent-agent",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._agent.Agent",
+      "symbol_name": "Agent",
+      "symbol_type": "class",
+      "description": "The agent class.",
+      "source_location": "src/agentscope/agent/_agent.py:110",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Agent"
+        }
+      ]
+    },
+    {
+      "capability_id": "agent-context-config",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._config.ContextConfig",
+      "symbol_name": "ContextConfig",
+      "symbol_type": "serialized_structure",
+      "description": "The context related configuration in AgentScope",
+      "source_location": "src/agentscope/agent/_config.py:51",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agent-exit",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._utils.Exit",
+      "symbol_name": "Exit",
+      "symbol_type": "serialized_structure",
+      "description": "Next action: end the reply.",
+      "source_location": "src/agentscope/agent/_utils.py:39",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agent-injection-config",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._config.InjectionConfig",
+      "symbol_name": "InjectionConfig",
+      "symbol_type": "serialized_structure",
+      "description": "The state injection related configuration in AgentScope.",
+      "source_location": "src/agentscope/agent/_config.py:142",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agent-model-config",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._config.ModelConfig",
+      "symbol_name": "ModelConfig",
+      "symbol_type": "serialized_structure",
+      "description": "The model related configuration.",
+      "source_location": "src/agentscope/agent/_config.py:335",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agent-re-act-config",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._config.ReActConfig",
+      "symbol_name": "ReActConfig",
+      "symbol_type": "serialized_structure",
+      "description": "The reasoning related configuration",
+      "source_location": "src/agentscope/agent/_config.py:282",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agent-reasoning",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._utils.Reasoning",
+      "symbol_name": "Reasoning",
+      "symbol_type": "serialized_structure",
+      "description": "Next action: another model call, with optional hint and tool choice.",
+      "source_location": "src/agentscope/agent/_utils.py:32",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agent-summary-schema",
+      "category": "agent",
+      "module": "agent",
+      "python_import_path": "agentscope.agent._config.SummarySchema",
+      "symbol_name": "SummarySchema",
+      "symbol_type": "serialized_structure",
+      "description": "The compressed memory model, used to generate summary of old memories",
+      "source_location": "src/agentscope/agent/_config.py:9",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agentscope-logger",
+      "category": "core",
+      "module": "agentscope",
+      "python_import_path": "agentscope._logging.logger",
+      "symbol_name": "logger",
+      "symbol_type": "function",
+      "description": "Public function 'logger' from the agentscope module.",
+      "source_location": "src/agentscope/_logging.py:12",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "agentscope-set-id-factory",
+      "category": "core",
+      "module": "agentscope",
+      "python_import_path": "agentscope._utils.set_id_factory",
+      "symbol_name": "set_id_factory",
+      "symbol_type": "function",
+      "description": "Override the global ID factory used by all AgentScope entities.",
+      "source_location": "src/agentscope/_utils/_common.py:23",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "factory",
+              "type": "Callable[[], str]",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {}
+        }
+      ]
+    },
+    {
+      "capability_id": "agentscope-set-timestamp-factory",
+      "category": "core",
+      "module": "agentscope",
+      "python_import_path": "agentscope._utils.set_timestamp_factory",
+      "symbol_name": "set_timestamp_factory",
+      "symbol_type": "function",
+      "description": "Override the global timestamp factory used by all AgentScope entities.",
+      "source_location": "src/agentscope/_utils/_common.py:52",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "factory",
+              "type": "Callable[[], str]",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {}
+        }
+      ]
+    },
+    {
+      "capability_id": "agentscope-setup-logger",
+      "category": "core",
+      "module": "agentscope",
+      "python_import_path": "agentscope._logging.setup_logger",
+      "symbol_name": "setup_logger",
+      "symbol_type": "function",
+      "description": "Set up the agentscope logger.",
+      "source_location": "src/agentscope/_logging.py:15",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "level",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "filepath",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            }
+          ],
+          "param_defaults": {
+            "filepath": "None"
+          }
+        }
+      ]
+    },
+    {
+      "capability_id": "app-agent-middleware-factory",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._types.AgentMiddlewareFactory",
+      "symbol_name": "AgentMiddlewareFactory",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'AgentMiddlewareFactory' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/app/_types.py:20",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "app-agent-tool-factory",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._types.AgentToolFactory",
+      "symbol_name": "AgentToolFactory",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'AgentToolFactory' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/app/_types.py:27",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "app-event-projector",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._types.EventProjector",
+      "symbol_name": "EventProjector",
+      "symbol_type": "protocol",
+      "description": "Strategy that projects events from one session onto another.",
+      "source_location": "src/agentscope/app/_types.py:35",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "app-sub-agent-template",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._types.SubAgentTemplate",
+      "symbol_name": "SubAgentTemplate",
+      "symbol_type": "serialized_structure",
+      "description": "A reusable blueprint for sub-agent creation within a team.",
+      "source_location": "src/agentscope/app/_types.py:83",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "app-create-app",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._app.create_app",
+      "symbol_name": "create_app",
+      "symbol_type": "function",
+      "description": "Create and configure a FastAPI application.",
+      "source_location": "src/agentscope/app/_app.py:43",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "storage",
+              "type": "StorageBase",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "message_bus",
+              "type": "MessageBus",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "workspace_manager",
+              "type": "WorkspaceManagerBase",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "knowledge_base_manager",
+              "type": "KnowledgeBaseManagerBase | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "knowledge_parsers",
+              "type": "list[ParserBase] | dict[str, ParserBase] | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "knowledge_chunker",
+              "type": "ChunkerBase | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "blob_store",
+              "type": "BlobStoreBase | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "enable_index_worker",
+              "type": "bool",
+              "required": false,
+              "default": "True"
+            }
+          ],
+          "param_defaults": {
+            "knowledge_base_manager": "None",
+            "knowledge_parsers": "None",
+            "knowledge_chunker": "None",
+            "blob_store": "None",
+            "enable_index_worker": "True"
+          }
+        }
+      ]
+    },
+    {
+      "capability_id": "app-enqueue-index-task",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._bus_ops.enqueue_index_task",
+      "symbol_name": "enqueue_index_task",
+      "symbol_type": "function",
+      "description": "Enqueue a knowledge-document indexing task and signal consumers.",
+      "source_location": "src/agentscope/app/_bus_ops.py:132",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "bus",
+              "type": "'MessageBus'",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "user_id",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "knowledge_base_id",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "document_id",
+              "type": "str",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[enqueue_index_task]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-enqueue-run-trigger",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._bus_ops.enqueue_run_trigger",
+      "symbol_name": "enqueue_run_trigger",
+      "symbol_type": "function",
+      "description": "Enqueue a typed run trigger and signal dispatchers.",
+      "source_location": "src/agentscope/app/_bus_ops.py:71",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "bus",
+              "type": "'MessageBus'",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "user_id",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "session_id",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "agent_id",
+              "type": "str",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[enqueue_run_trigger]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-background-task-manager",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_background_task_manager",
+      "symbol_name": "get_background_task_manager",
+      "symbol_type": "function",
+      "description": "Return the application-wide background task manager.",
+      "source_location": "src/agentscope/app/deps.py:140",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_background_task_manager]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-blob-store",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_blob_store",
+      "symbol_name": "get_blob_store",
+      "symbol_type": "function",
+      "description": "Return the application-wide blob store.",
+      "source_location": "src/agentscope/app/deps.py:258",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_blob_store]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-chat-run-registry",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_chat_run_registry",
+      "symbol_name": "get_chat_run_registry",
+      "symbol_type": "function",
+      "description": "Return the per-process chat-run registry.",
+      "source_location": "src/agentscope/app/deps.py:116",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_chat_run_registry]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-chat-service",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_chat_service",
+      "symbol_name": "get_chat_service",
+      "symbol_type": "function",
+      "description": "Return the application-wide chat service.",
+      "source_location": "src/agentscope/app/deps.py:74",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_chat_service]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-current-user-id",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_current_user_id",
+      "symbol_name": "get_current_user_id",
+      "symbol_type": "function",
+      "description": "Return the caller's user ID from the ``X-User-ID`` request header.",
+      "source_location": "src/agentscope/app/deps.py:25",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "x_user_id",
+              "type": "str",
+              "required": false,
+              "default": "Header(description=\"Caller's user ID. Temporary header-based identity; will be replaced by JWT auth.\")"
+            }
+          ],
+          "param_defaults": {
+            "x_user_id": "Header(description=\"Caller's user ID. Temporary header-based identity; will be replaced by JWT auth.\")"
+          },
+          "return_type": "Coroutine[get_current_user_id]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-extra-agent-middlewares",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_extra_agent_middlewares",
+      "symbol_name": "get_extra_agent_middlewares",
+      "symbol_type": "function",
+      "description": "Return the caller-supplied agent middleware factory, if any.",
+      "source_location": "src/agentscope/app/deps.py:167",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_extra_agent_middlewares]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-extra-agent-tools",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_extra_agent_tools",
+      "symbol_name": "get_extra_agent_tools",
+      "symbol_type": "function",
+      "description": "Return the caller-supplied agent tool factory, if any.",
+      "source_location": "src/agentscope/app/deps.py:182",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_extra_agent_tools]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-knowledge-base-manager",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_knowledge_base_manager",
+      "symbol_name": "get_knowledge_base_manager",
+      "symbol_type": "function",
+      "description": "Return the application-wide knowledge base manager.",
+      "source_location": "src/agentscope/app/deps.py:228",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_knowledge_base_manager]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-knowledge-base-service",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_knowledge_base_service",
+      "symbol_name": "get_knowledge_base_service",
+      "symbol_type": "function",
+      "description": "Return the application-wide knowledge base service.",
+      "source_location": "src/agentscope/app/deps.py:197",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_knowledge_base_service]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-knowledge-parsers",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_knowledge_parsers",
+      "symbol_name": "get_knowledge_parsers",
+      "symbol_type": "function",
+      "description": "Return the parser registry configured on the app.",
+      "source_location": "src/agentscope/app/deps.py:287",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_knowledge_parsers]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-message-bus",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_message_bus",
+      "symbol_name": "get_message_bus",
+      "symbol_type": "function",
+      "description": "Return the application-wide message bus.",
+      "source_location": "src/agentscope/app/deps.py:62",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_message_bus]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-resource-access-service",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_resource_access_service",
+      "symbol_name": "get_resource_access_service",
+      "symbol_type": "function",
+      "description": "Return the application-wide resource access service.",
+      "source_location": "src/agentscope/app/deps.py:86",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_resource_access_service]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-scheduler-manager",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_scheduler_manager",
+      "symbol_name": "get_scheduler_manager",
+      "symbol_type": "function",
+      "description": "Return the application-wide scheduler manager.",
+      "source_location": "src/agentscope/app/deps.py:128",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_scheduler_manager]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-session-service",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_session_service",
+      "symbol_name": "get_session_service",
+      "symbol_type": "function",
+      "description": "Return the application-wide session service.",
+      "source_location": "src/agentscope/app/deps.py:103",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_session_service]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-storage",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_storage",
+      "symbol_name": "get_storage",
+      "symbol_type": "function",
+      "description": "Return the application-wide storage backend.",
+      "source_location": "src/agentscope/app/deps.py:50",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_storage]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-get-workspace-manager",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app.deps.get_workspace_manager",
+      "symbol_name": "get_workspace_manager",
+      "symbol_type": "function",
+      "description": "Return the application-wide workspace manager.",
+      "source_location": "src/agentscope/app/deps.py:155",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "request",
+              "type": "Request",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[get_workspace_manager]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-lifespan",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._lifespan.lifespan",
+      "symbol_name": "lifespan",
+      "symbol_type": "function",
+      "description": "Manage startup and shutdown of all application-wide resources.",
+      "source_location": "src/agentscope/app/_lifespan.py:32",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "app",
+              "type": "FastAPI",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[lifespan]"
+        }
+      ]
+    },
+    {
+      "capability_id": "app-publish-session-event",
+      "category": "service",
+      "module": "app",
+      "python_import_path": "agentscope.app._bus_ops.publish_session_event",
+      "symbol_name": "publish_session_event",
+      "symbol_type": "function",
+      "description": "Append event to replay log + fan out live.",
+      "source_location": "src/agentscope/app/_bus_ops.py:39",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "bus",
+              "type": "'MessageBus'",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "session_id",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "event",
+              "type": "dict",
+              "required": true,
+              "default": null
+            }
+          ],
+          "param_defaults": {},
+          "return_type": "Coroutine[publish_session_event]"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-anthropic-credential",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._anthropic.AnthropicCredential",
+      "symbol_name": "AnthropicCredential",
+      "symbol_type": "class",
+      "description": "The Anthropic credential model.",
+      "source_location": "src/agentscope/credential/_anthropic.py:13",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of AnthropicCredential"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-credential-base",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._base.CredentialBase",
+      "symbol_name": "CredentialBase",
+      "symbol_type": "serialized_structure",
+      "description": "The credential base class.",
+      "source_location": "src/agentscope/credential/_base.py:16",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "credential-credential-factory",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._factory.CredentialFactory",
+      "symbol_name": "CredentialFactory",
+      "symbol_type": "class",
+      "description": "Registry and deserializer for :class:`CredentialBase` subclasses.",
+      "source_location": "src/agentscope/credential/_factory.py:18",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of CredentialFactory"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-dash-scope-credential",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._dashscope.DashScopeCredential",
+      "symbol_name": "DashScopeCredential",
+      "symbol_type": "class",
+      "description": "The credential for DashScope API.",
+      "source_location": "src/agentscope/credential/_dashscope.py:17",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DashScopeCredential"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-deep-seek-credential",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._deepseek.DeepSeekCredential",
+      "symbol_name": "DeepSeekCredential",
+      "symbol_type": "class",
+      "description": "The DeepSeek credential model.",
+      "source_location": "src/agentscope/credential/_deepseek.py:15",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DeepSeekCredential"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-gemini-credential",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._gemini.GeminiCredential",
+      "symbol_name": "GeminiCredential",
+      "symbol_type": "class",
+      "description": "The Google Gemini credential model.",
+      "source_location": "src/agentscope/credential/_gemini.py:15",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GeminiCredential"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-moonshot-credential",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._moonshot.MoonshotCredential",
+      "symbol_name": "MoonshotCredential",
+      "symbol_type": "class",
+      "description": "The Moonshot AI credential model.",
+      "source_location": "src/agentscope/credential/_moonshot.py:15",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of MoonshotCredential"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-ollama-credential",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._ollama.OllamaCredential",
+      "symbol_name": "OllamaCredential",
+      "symbol_type": "class",
+      "description": "The Ollama credential model (connection settings).",
+      "source_location": "src/agentscope/credential/_ollama.py:14",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OllamaCredential"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-open-ai-credential",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._openai.OpenAICredential",
+      "symbol_name": "OpenAICredential",
+      "symbol_type": "class",
+      "description": "The OpenAI credential model.",
+      "source_location": "src/agentscope/credential/_openai.py:15",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAICredential"
+        }
+      ]
+    },
+    {
+      "capability_id": "credential-xai-credential",
+      "category": "credential",
+      "module": "credential",
+      "python_import_path": "agentscope.credential._xai.XAICredential",
+      "symbol_name": "XAICredential",
+      "symbol_type": "class",
+      "description": "The xAI credential model.",
+      "source_location": "src/agentscope/credential/_xai.py:13",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of XAICredential"
+        }
+      ]
+    },
+    {
+      "capability_id": "embedding-dash-scope-embedding-model",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._dashscope.DashScopeEmbeddingModel",
+      "symbol_name": "DashScopeEmbeddingModel",
+      "symbol_type": "class",
+      "description": "Unified DashScope embedding model.",
+      "source_location": "src/agentscope/embedding/_dashscope/_model.py:91",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DashScopeEmbeddingModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "embedding-embedding-cache-base",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._cache_base.EmbeddingCacheBase",
+      "symbol_name": "EmbeddingCacheBase",
+      "symbol_type": "class",
+      "description": "Base class for embedding caches, which is responsible for storing and",
+      "source_location": "src/agentscope/embedding/_cache_base.py:12",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of EmbeddingCacheBase"
+        }
+      ]
+    },
+    {
+      "capability_id": "embedding-embedding-model-base",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._embedding_base.EmbeddingModelBase",
+      "symbol_name": "EmbeddingModelBase",
+      "symbol_type": "class",
+      "description": "Base class for embedding models.",
+      "source_location": "src/agentscope/embedding/_embedding_base.py:34",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of EmbeddingModelBase"
+        }
+      ]
+    },
+    {
+      "capability_id": "embedding-embedding-model-card",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._embedding_model_card.EmbeddingModelCard",
+      "symbol_name": "EmbeddingModelCard",
+      "symbol_type": "serialized_structure",
+      "description": "A card describing an embedding model's capabilities.",
+      "source_location": "src/agentscope/embedding/_embedding_model_card.py:12",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "embedding-embedding-response",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._embedding_response.EmbeddingResponse",
+      "symbol_name": "EmbeddingResponse",
+      "symbol_type": "serialized_structure",
+      "description": "The embedding response class.",
+      "source_location": "src/agentscope/embedding/_embedding_response.py:13",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "embedding-embedding-usage",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._embedding_usage.EmbeddingUsage",
+      "symbol_name": "EmbeddingUsage",
+      "symbol_type": "serialized_structure",
+      "description": "The usage of an embedding model API invocation.",
+      "source_location": "src/agentscope/embedding/_embedding_usage.py:10",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "embedding-file-embedding-cache",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._file_cache.FileEmbeddingCache",
+      "symbol_name": "FileEmbeddingCache",
+      "symbol_type": "class",
+      "description": "The embedding cache class that stores each embeddings vector in",
+      "source_location": "src/agentscope/embedding/_file_cache.py:19",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of FileEmbeddingCache"
+        }
+      ]
+    },
+    {
+      "capability_id": "embedding-gemini-embedding-model",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._gemini.GeminiEmbeddingModel",
+      "symbol_name": "GeminiEmbeddingModel",
+      "symbol_type": "class",
+      "description": "Unified Google Gemini embedding model.",
+      "source_location": "src/agentscope/embedding/_gemini/_model.py:67",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GeminiEmbeddingModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "embedding-input-t",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._embedding_base.InputT",
+      "symbol_name": "InputT",
+      "symbol_type": "function",
+      "description": "Public function 'InputT' from the embedding module.",
+      "source_location": "src/agentscope/embedding/_embedding_base.py:31",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "embedding-ollama-embedding-model",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._ollama.OllamaEmbeddingModel",
+      "symbol_name": "OllamaEmbeddingModel",
+      "symbol_type": "class",
+      "description": "Ollama text embedding model.",
+      "source_location": "src/agentscope/embedding/_ollama/_model.py:15",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OllamaEmbeddingModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "embedding-open-ai-embedding-model",
+      "category": "embedding",
+      "module": "embedding",
+      "python_import_path": "agentscope.embedding._openai.OpenAIEmbeddingModel",
+      "symbol_name": "OpenAIEmbeddingModel",
+      "symbol_type": "class",
+      "description": "OpenAI text embedding model.",
+      "source_location": "src/agentscope/embedding/_openai/_model.py:16",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAIEmbeddingModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "event-agent-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event.AgentEvent",
+      "symbol_name": "AgentEvent",
+      "symbol_type": "event",
+      "description": "Core event type for the Agent event loop, emitted during agent execution steps.",
+      "source_location": "src/agentscope/event/__init__.py:__all__",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "event-confirm-result",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ConfirmResult",
+      "symbol_name": "ConfirmResult",
+      "symbol_type": "serialized_structure",
+      "description": "Confirm result for a tool call.",
+      "source_location": "src/agentscope/event/_event.py:434",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "event-custom-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.CustomEvent",
+      "symbol_name": "CustomEvent",
+      "symbol_type": "event",
+      "description": "Generic extensible event for signals that don't fit a specific",
+      "source_location": "src/agentscope/event/_event.py:499",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "CustomEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-data-block-delta-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.DataBlockDeltaEvent",
+      "symbol_name": "DataBlockDeltaEvent",
+      "symbol_type": "event",
+      "description": "Data block delta event.",
+      "source_location": "src/agentscope/event/_event.py:204",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "DataBlockDeltaEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-data-block-end-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.DataBlockEndEvent",
+      "symbol_name": "DataBlockEndEvent",
+      "symbol_type": "event",
+      "description": "Data block end event.",
+      "source_location": "src/agentscope/event/_event.py:219",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "DataBlockEndEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-data-block-start-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.DataBlockStartEvent",
+      "symbol_name": "DataBlockStartEvent",
+      "symbol_type": "event",
+      "description": "Data block start event.",
+      "source_location": "src/agentscope/event/_event.py:191",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "DataBlockStartEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-event-base",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.EventBase",
+      "symbol_name": "EventBase",
+      "symbol_type": "serialized_structure",
+      "description": "Base event class.",
+      "source_location": "src/agentscope/event/_event.py:70",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "event-event-type",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.EventType",
+      "symbol_name": "EventType",
+      "symbol_type": "enum",
+      "description": "Event type enumeration.",
+      "source_location": "src/agentscope/event/_event.py:26",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "event-exceed-max-iters-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ExceedMaxItersEvent",
+      "symbol_name": "ExceedMaxItersEvent",
+      "symbol_type": "event",
+      "description": "Exceeded max iteration event.",
+      "source_location": "src/agentscope/event/_event.py:397",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ExceedMaxItersEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-external-execution-result-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ExternalExecutionResultEvent",
+      "symbol_name": "ExternalExecutionResultEvent",
+      "symbol_type": "event",
+      "description": "External execution result event.",
+      "source_location": "src/agentscope/event/_event.py:486",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ExternalExecutionResultEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-hint-block-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.HintBlockEvent",
+      "symbol_name": "HintBlockEvent",
+      "symbol_type": "event",
+      "description": "One-shot hint block event.",
+      "source_location": "src/agentscope/event/_event.py:269",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "HintBlockEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-model-call-end-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ModelCallEndEvent",
+      "symbol_name": "ModelCallEndEvent",
+      "symbol_type": "event",
+      "description": "Model call end event.",
+      "source_location": "src/agentscope/event/_event.py:139",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ModelCallEndEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-model-call-start-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ModelCallStartEvent",
+      "symbol_name": "ModelCallStartEvent",
+      "symbol_type": "event",
+      "description": "Model call start event.",
+      "source_location": "src/agentscope/event/_event.py:128",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ModelCallStartEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-reply-end-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ReplyEndEvent",
+      "symbol_name": "ReplyEndEvent",
+      "symbol_type": "event",
+      "description": "Reply end event.",
+      "source_location": "src/agentscope/event/_event.py:112",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ReplyEndEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-reply-end-reason",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ReplyEndReason",
+      "symbol_name": "ReplyEndReason",
+      "symbol_type": "enum",
+      "description": "Deprecated alias of :class:`~agentscope.types.ReplyFinishedReason`,",
+      "source_location": "src/agentscope/event/_event.py:102",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "event-reply-finished-reason",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event.ReplyFinishedReason",
+      "symbol_name": "ReplyFinishedReason",
+      "symbol_type": "enum",
+      "description": "Enumeration of reply finish reasons for the Agent event loop.",
+      "source_location": "src/agentscope/event/__init__.py:__all__",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "event-reply-start-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ReplyStartEvent",
+      "symbol_name": "ReplyStartEvent",
+      "symbol_type": "event",
+      "description": "Reply start event.",
+      "source_location": "src/agentscope/event/_event.py:83",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ReplyStartEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-require-external-execution-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.RequireExternalExecutionEvent",
+      "symbol_name": "RequireExternalExecutionEvent",
+      "symbol_type": "event",
+      "description": "Require external execution event.",
+      "source_location": "src/agentscope/event/_event.py:421",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "RequireExternalExecutionEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-require-user-confirm-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.RequireUserConfirmEvent",
+      "symbol_name": "RequireUserConfirmEvent",
+      "symbol_type": "event",
+      "description": "Require user confirm event.",
+      "source_location": "src/agentscope/event/_event.py:408",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "RequireUserConfirmEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-text-block-delta-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.TextBlockDeltaEvent",
+      "symbol_name": "TextBlockDeltaEvent",
+      "symbol_type": "event",
+      "description": "Text block delta event.",
+      "source_location": "src/agentscope/event/_event.py:167",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "TextBlockDeltaEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-text-block-end-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.TextBlockEndEvent",
+      "symbol_name": "TextBlockEndEvent",
+      "symbol_type": "event",
+      "description": "Text block end event.",
+      "source_location": "src/agentscope/event/_event.py:180",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "TextBlockEndEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-text-block-start-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.TextBlockStartEvent",
+      "symbol_name": "TextBlockStartEvent",
+      "symbol_type": "event",
+      "description": "Text block start event.",
+      "source_location": "src/agentscope/event/_event.py:156",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "TextBlockStartEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-thinking-block-delta-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ThinkingBlockDeltaEvent",
+      "symbol_name": "ThinkingBlockDeltaEvent",
+      "symbol_type": "event",
+      "description": "Thinking block delta event.",
+      "source_location": "src/agentscope/event/_event.py:243",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ThinkingBlockDeltaEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-thinking-block-end-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ThinkingBlockEndEvent",
+      "symbol_name": "ThinkingBlockEndEvent",
+      "symbol_type": "event",
+      "description": "Thinking block end event.",
+      "source_location": "src/agentscope/event/_event.py:258",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ThinkingBlockEndEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-thinking-block-start-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ThinkingBlockStartEvent",
+      "symbol_name": "ThinkingBlockStartEvent",
+      "symbol_type": "event",
+      "description": "Thinking block start event.",
+      "source_location": "src/agentscope/event/_event.py:230",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ThinkingBlockStartEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-tool-call-delta-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ToolCallDeltaEvent",
+      "symbol_name": "ToolCallDeltaEvent",
+      "symbol_type": "event",
+      "description": "Tool call delta event.",
+      "source_location": "src/agentscope/event/_event.py:307",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ToolCallDeltaEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-tool-call-end-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ToolCallEndEvent",
+      "symbol_name": "ToolCallEndEvent",
+      "symbol_type": "event",
+      "description": "Tool call end event.",
+      "source_location": "src/agentscope/event/_event.py:320",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ToolCallEndEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-tool-call-start-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ToolCallStartEvent",
+      "symbol_name": "ToolCallStartEvent",
+      "symbol_type": "event",
+      "description": "Tool call start event.",
+      "source_location": "src/agentscope/event/_event.py:294",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ToolCallStartEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-tool-result-data-delta-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ToolResultDataDeltaEvent",
+      "symbol_name": "ToolResultDataDeltaEvent",
+      "symbol_type": "event",
+      "description": "Tool result data delta event.",
+      "source_location": "src/agentscope/event/_event.py:359",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ToolResultDataDeltaEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-tool-result-end-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ToolResultEndEvent",
+      "symbol_name": "ToolResultEndEvent",
+      "symbol_type": "event",
+      "description": "Tool result end event.",
+      "source_location": "src/agentscope/event/_event.py:380",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ToolResultEndEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-tool-result-start-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ToolResultStartEvent",
+      "symbol_name": "ToolResultStartEvent",
+      "symbol_type": "event",
+      "description": "Tool result start event.",
+      "source_location": "src/agentscope/event/_event.py:331",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ToolResultStartEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-tool-result-text-delta-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.ToolResultTextDeltaEvent",
+      "symbol_name": "ToolResultTextDeltaEvent",
+      "symbol_type": "event",
+      "description": "Tool result text delta event.",
+      "source_location": "src/agentscope/event/_event.py:344",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "ToolResultTextDeltaEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-user-confirm-result-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.UserConfirmResultEvent",
+      "symbol_name": "UserConfirmResultEvent",
+      "symbol_type": "event",
+      "description": "User confirm result event.",
+      "source_location": "src/agentscope/event/_event.py:448",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "UserConfirmResultEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "event-user-interrupt-event",
+      "category": "event",
+      "module": "event",
+      "python_import_path": "agentscope.event._event.UserInterruptEvent",
+      "symbol_name": "UserInterruptEvent",
+      "symbol_type": "event",
+      "description": "User-initiated interrupt targeting a parked reply.",
+      "source_location": "src/agentscope/event/_event.py:461",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "event_types": [
+            "UserInterruptEvent"
+          ]
+        }
+      ]
+    },
+    {
+      "capability_id": "exception-agent-oriented-exception",
+      "category": "exception",
+      "module": "exception",
+      "python_import_path": "agentscope.exception._base.AgentOrientedException",
+      "symbol_name": "AgentOrientedException",
+      "symbol_type": "exception",
+      "description": "The base class for all agent-oriented exceptions. These exceptions are",
+      "source_location": "src/agentscope/exception/_base.py:5",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "exception-developer-oriented-exception",
+      "category": "exception",
+      "module": "exception",
+      "python_import_path": "agentscope.exception._base.DeveloperOrientedException",
+      "symbol_name": "DeveloperOrientedException",
+      "symbol_type": "exception",
+      "description": "The exception should be raised to the developers.",
+      "source_location": "src/agentscope/exception/_base.py:21",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "exception-tool-group-inactive-error",
+      "category": "exception",
+      "module": "exception",
+      "python_import_path": "agentscope.exception._tool.ToolGroupInactiveError",
+      "symbol_name": "ToolGroupInactiveError",
+      "symbol_type": "exception",
+      "description": "Exception raised when a tool group is inactive.",
+      "source_location": "src/agentscope/exception/_tool.py:19",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "exception-tool-interrupted-error",
+      "category": "exception",
+      "module": "exception",
+      "python_import_path": "agentscope.exception._tool.ToolInterruptedError",
+      "symbol_name": "ToolInterruptedError",
+      "symbol_type": "exception",
+      "description": "Exception raised when a tool calling was interrupted by the user.",
+      "source_location": "src/agentscope/exception/_tool.py:11",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "exception-tool-json-decode-error",
+      "category": "exception",
+      "module": "exception",
+      "python_import_path": "agentscope.exception._tool.ToolJSONDecodeError",
+      "symbol_name": "ToolJSONDecodeError",
+      "symbol_type": "exception",
+      "description": "Exception raised when tool arguments fail JSON decoding or repair.",
+      "source_location": "src/agentscope/exception/_tool.py:15",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "exception-tool-not-found-error",
+      "category": "exception",
+      "module": "exception",
+      "python_import_path": "agentscope.exception._tool.ToolNotFoundError",
+      "symbol_name": "ToolNotFoundError",
+      "symbol_type": "exception",
+      "description": "Exception raised when a tool was not found.",
+      "source_location": "src/agentscope/exception/_tool.py:7",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "formatter-anthropic-chat-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._anthropic_formatter.AnthropicChatFormatter",
+      "symbol_name": "AnthropicChatFormatter",
+      "symbol_type": "class",
+      "description": "The Anthropic formatter class for chatbot scenario, where only a user",
+      "source_location": "src/agentscope/formatter/_anthropic_formatter.py:371",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of AnthropicChatFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-anthropic-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._anthropic_formatter.AnthropicMultiAgentFormatter",
+      "symbol_name": "AnthropicMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "Anthropic formatter for multi-agent conversations, where more than",
+      "source_location": "src/agentscope/formatter/_anthropic_formatter.py:408",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of AnthropicMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-dash-scope-chat-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._dashscope_formatter.DashScopeChatFormatter",
+      "symbol_name": "DashScopeChatFormatter",
+      "symbol_type": "class",
+      "description": "The DashScope formatter class for chatbot scenario (OpenAI-compatible",
+      "source_location": "src/agentscope/formatter/_dashscope_formatter.py:217",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DashScopeChatFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-dash-scope-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._dashscope_formatter.DashScopeMultiAgentFormatter",
+      "symbol_name": "DashScopeMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "DashScope formatter for multi-agent conversations (OpenAI-compatible",
+      "source_location": "src/agentscope/formatter/_dashscope_formatter.py:406",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DashScopeMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-deep-seek-chat-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._deepseek_formatter.DeepSeekChatFormatter",
+      "symbol_name": "DeepSeekChatFormatter",
+      "symbol_type": "class",
+      "description": "The DeepSeek formatter class for chatbot scenario, where only a user",
+      "source_location": "src/agentscope/formatter/_deepseek_formatter.py:20",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DeepSeekChatFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-deep-seek-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._deepseek_formatter.DeepSeekMultiAgentFormatter",
+      "symbol_name": "DeepSeekMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "DeepSeek formatter for multi-agent conversations, where more than",
+      "source_location": "src/agentscope/formatter/_deepseek_formatter.py:201",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DeepSeekMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-formatter-base",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._formatter_base.FormatterBase",
+      "symbol_name": "FormatterBase",
+      "symbol_type": "serialized_structure",
+      "description": "The base class for formatters.",
+      "source_location": "src/agentscope/formatter/_formatter_base.py:22",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "formatter-gemini-chat-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._gemini_formatter.GeminiChatFormatter",
+      "symbol_name": "GeminiChatFormatter",
+      "symbol_type": "class",
+      "description": "The Gemini formatter class for chatbot scenario, where only a user",
+      "source_location": "src/agentscope/formatter/_gemini_formatter.py:111",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GeminiChatFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-gemini-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._gemini_formatter.GeminiMultiAgentFormatter",
+      "symbol_name": "GeminiMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "The multi-agent formatter for Google Gemini API, where more than a",
+      "source_location": "src/agentscope/formatter/_gemini_formatter.py:286",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GeminiMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-moonshot-chat-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._moonshot_formatter.MoonshotChatFormatter",
+      "symbol_name": "MoonshotChatFormatter",
+      "symbol_type": "class",
+      "description": "The Moonshot AI formatter for chatbot scenario.",
+      "source_location": "src/agentscope/formatter/_moonshot_formatter.py:59",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of MoonshotChatFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-moonshot-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._moonshot_formatter.MoonshotMultiAgentFormatter",
+      "symbol_name": "MoonshotMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "Formatter for the Moonshot AI API in multi-agent conversations.",
+      "source_location": "src/agentscope/formatter/_moonshot_formatter.py:277",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of MoonshotMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-ollama-chat-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._ollama_formatter.OllamaChatFormatter",
+      "symbol_name": "OllamaChatFormatter",
+      "symbol_type": "class",
+      "description": "The Ollama formatter class for chatbot scenario, where only a user",
+      "source_location": "src/agentscope/formatter/_ollama_formatter.py:102",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OllamaChatFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-ollama-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._ollama_formatter.OllamaMultiAgentFormatter",
+      "symbol_name": "OllamaMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "Ollama formatter for multi-agent conversations, where more than",
+      "source_location": "src/agentscope/formatter/_ollama_formatter.py:295",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OllamaMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-open-ai-chat-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._openai_formatter.OpenAIChatFormatter",
+      "symbol_name": "OpenAIChatFormatter",
+      "symbol_type": "class",
+      "description": "The OpenAI formatter class for chatbot scenario, where only a user",
+      "source_location": "src/agentscope/formatter/_openai_formatter.py:189",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAIChatFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-open-ai-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._openai_formatter.OpenAIMultiAgentFormatter",
+      "symbol_name": "OpenAIMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "OpenAI formatter for multi-agent conversations, where more than",
+      "source_location": "src/agentscope/formatter/_openai_formatter.py:369",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAIMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-open-ai-response-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._openai_response_formatter.OpenAIResponseFormatter",
+      "symbol_name": "OpenAIResponseFormatter",
+      "symbol_type": "class",
+      "description": "Formatter for the OpenAI Responses API in chat (single-agent) mode.",
+      "source_location": "src/agentscope/formatter/_openai_response_formatter.py:88",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAIResponseFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-open-ai-response-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._openai_response_formatter.OpenAIResponseMultiAgentFormatter",
+      "symbol_name": "OpenAIResponseMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "Formatter for the OpenAI Responses API in multi-agent mode.",
+      "source_location": "src/agentscope/formatter/_openai_response_formatter.py:334",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAIResponseMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-xai-chat-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._xai_formatter.XAIChatFormatter",
+      "symbol_name": "XAIChatFormatter",
+      "symbol_type": "class",
+      "description": "Formatter for the xAI chat model.",
+      "source_location": "src/agentscope/formatter/_xai_formatter.py:30",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of XAIChatFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "formatter-xai-multi-agent-formatter",
+      "category": "model",
+      "module": "formatter",
+      "python_import_path": "agentscope.formatter._xai_formatter.XAIMultiAgentFormatter",
+      "symbol_name": "XAIMultiAgentFormatter",
+      "symbol_type": "class",
+      "description": "Formatter for the xAI chat model in multi-agent conversations.",
+      "source_location": "src/agentscope/formatter/_xai_formatter.py:374",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of XAIMultiAgentFormatter"
+        }
+      ]
+    },
+    {
+      "capability_id": "mcp-http-mcp-config",
+      "category": "tool",
+      "module": "mcp",
+      "python_import_path": "agentscope.mcp._config.HttpMCPConfig",
+      "symbol_name": "HttpMCPConfig",
+      "symbol_type": "serialized_structure",
+      "description": "The HTTP MCP server configuration.",
+      "source_location": "src/agentscope/mcp/_config.py:44",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "mcp-mcp-client",
+      "category": "tool",
+      "module": "mcp",
+      "python_import_path": "agentscope.mcp._mcp_client.MCPClient",
+      "symbol_name": "MCPClient",
+      "symbol_type": "serialized_structure",
+      "description": "The unified MCP client in AgentScope.",
+      "source_location": "src/agentscope/mcp/_mcp_client.py:24",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "mcp-stdio-mcp-config",
+      "category": "tool",
+      "module": "mcp",
+      "python_import_path": "agentscope.mcp._config.StdioMCPConfig",
+      "symbol_name": "StdioMCPConfig",
+      "symbol_type": "serialized_structure",
+      "description": "The STDIO MCP server configuration.",
+      "source_location": "src/agentscope/mcp/_config.py:9",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-assistant-msg",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._base.AssistantMsg",
+      "symbol_name": "AssistantMsg",
+      "symbol_type": "function",
+      "description": "Create an assistant message with role ``\"assistant\"``.",
+      "source_location": "src/agentscope/message/_base.py:558",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "name",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "content",
+              "type": "str | list[ContentBlock]",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "metadata",
+              "type": "dict | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "created_at",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "finished_at",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "finished_reason",
+              "type": "ReplyFinishedReason | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "structured_output",
+              "type": "dict | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "id",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "usage",
+              "type": "Usage | None",
+              "required": false,
+              "default": "None"
+            }
+          ],
+          "param_defaults": {
+            "metadata": "None",
+            "created_at": "None",
+            "finished_at": "None",
+            "finished_reason": "None",
+            "structured_output": "None",
+            "id": "None",
+            "usage": "None"
+          }
+        }
+      ]
+    },
+    {
+      "capability_id": "message-base64-source",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.Base64Source",
+      "symbol_name": "Base64Source",
+      "symbol_type": "serialized_structure",
+      "description": "The base64 source.",
+      "source_location": "src/agentscope/message/_block.py:56",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-content-block",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message.ContentBlock",
+      "symbol_name": "ContentBlock",
+      "symbol_type": "serialized_structure",
+      "description": "Content block representing a unit of message content (text, image, tool call, tool result).",
+      "source_location": "src/agentscope/message/__init__.py:__all__",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-content-block-types",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message.ContentBlockTypes",
+      "symbol_name": "ContentBlockTypes",
+      "symbol_type": "enum",
+      "description": "Enumeration of content block types (text, image, tool_call, tool_result).",
+      "source_location": "src/agentscope/message/__init__.py:__all__",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-data-block",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.DataBlock",
+      "symbol_name": "DataBlock",
+      "symbol_type": "serialized_structure",
+      "description": "The data block for binary content (images, audio, video, etc.).",
+      "source_location": "src/agentscope/message/_block.py:83",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-hint-block",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.HintBlock",
+      "symbol_name": "HintBlock",
+      "symbol_type": "serialized_structure",
+      "description": "A block used to provide instructions or hints to the LLM during the",
+      "source_location": "src/agentscope/message/_block.py:101",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-msg",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._base.Msg",
+      "symbol_name": "Msg",
+      "symbol_type": "serialized_structure",
+      "description": "The message class in AgentScope, responsible for information storage",
+      "source_location": "src/agentscope/message/_base.py:67",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-system-msg",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._base.SystemMsg",
+      "symbol_name": "SystemMsg",
+      "symbol_type": "function",
+      "description": "Create a system message with role ``\"system\"``.",
+      "source_location": "src/agentscope/message/_base.py:615",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "name",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "content",
+              "type": "str | list[TextBlock]",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "metadata",
+              "type": "dict | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "created_at",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "finished_at",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "finished_reason",
+              "type": "ReplyFinishedReason | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "id",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            }
+          ],
+          "param_defaults": {
+            "metadata": "None",
+            "created_at": "None",
+            "finished_at": "None",
+            "finished_reason": "None",
+            "id": "None"
+          }
+        }
+      ]
+    },
+    {
+      "capability_id": "message-text-block",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.TextBlock",
+      "symbol_name": "TextBlock",
+      "symbol_type": "serialized_structure",
+      "description": "The text block.",
+      "source_location": "src/agentscope/message/_block.py:11",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-thinking-block",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.ThinkingBlock",
+      "symbol_name": "ThinkingBlock",
+      "symbol_type": "serialized_structure",
+      "description": "The thinking block.",
+      "source_location": "src/agentscope/message/_block.py:26",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-tool-call-block",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.ToolCallBlock",
+      "symbol_name": "ToolCallBlock",
+      "symbol_type": "serialized_structure",
+      "description": "The tool call block.",
+      "source_location": "src/agentscope/message/_block.py:138",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-tool-call-state",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.ToolCallState",
+      "symbol_name": "ToolCallState",
+      "symbol_type": "enum",
+      "description": "The state of the tool call.",
+      "source_location": "src/agentscope/message/_block.py:128",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-tool-result-block",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.ToolResultBlock",
+      "symbol_name": "ToolResultBlock",
+      "symbol_type": "serialized_structure",
+      "description": "The tool result block.",
+      "source_location": "src/agentscope/message/_block.py:195",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-tool-result-state",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.ToolResultState",
+      "symbol_name": "ToolResultState",
+      "symbol_type": "enum",
+      "description": "The tool result state.",
+      "source_location": "src/agentscope/message/_block.py:185",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-url-source",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._block.URLSource",
+      "symbol_name": "URLSource",
+      "symbol_type": "serialized_structure",
+      "description": "The URL source.",
+      "source_location": "src/agentscope/message/_block.py:67",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-usage",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._base.Usage",
+      "symbol_name": "Usage",
+      "symbol_type": "serialized_structure",
+      "description": "The token usage information of a message.",
+      "source_location": "src/agentscope/message/_base.py:58",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "message-user-msg",
+      "category": "messaging",
+      "module": "message",
+      "python_import_path": "agentscope.message._base.UserMsg",
+      "symbol_name": "UserMsg",
+      "symbol_type": "function",
+      "description": "Create a user message with role ``\"user\"``.",
+      "source_location": "src/agentscope/message/_base.py:505",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "input_params": [
+            {
+              "name": "name",
+              "type": "str",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "content",
+              "type": "str | list[TextBlock | DataBlock]",
+              "required": true,
+              "default": null
+            },
+            {
+              "name": "metadata",
+              "type": "dict | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "created_at",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "finished_at",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "finished_reason",
+              "type": "ReplyFinishedReason | None",
+              "required": false,
+              "default": "None"
+            },
+            {
+              "name": "id",
+              "type": "str | None",
+              "required": false,
+              "default": "None"
+            }
+          ],
+          "param_defaults": {
+            "metadata": "None",
+            "created_at": "None",
+            "finished_at": "None",
+            "finished_reason": "None",
+            "id": "None"
+          }
+        }
+      ]
+    },
+    {
+      "capability_id": "middleware-agentic-memory-middleware",
+      "category": "middleware",
+      "module": "middleware",
+      "python_import_path": "agentscope.middleware._longterm_memory._agentic_memory.AgenticMemoryMiddleware",
+      "symbol_name": "AgenticMemoryMiddleware",
+      "symbol_type": "class",
+      "description": "The agentic memory, where the LLM decides when and what to save,",
+      "source_location": "src/agentscope/middleware/_longterm_memory/_agentic_memory/_middleware.py:359",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of AgenticMemoryMiddleware"
+        }
+      ]
+    },
+    {
+      "capability_id": "middleware-mem0-middleware",
+      "category": "middleware",
+      "module": "middleware",
+      "python_import_path": "agentscope.middleware._longterm_memory._mem0.Mem0Middleware",
+      "symbol_name": "Mem0Middleware",
+      "symbol_type": "class",
+      "description": "AgentScope middleware that adds long-term memory backed by",
+      "source_location": "src/agentscope/middleware/_longterm_memory/_mem0/_middleware.py:86",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Mem0Middleware"
+        }
+      ]
+    },
+    {
+      "capability_id": "middleware-middleware-base",
+      "category": "middleware",
+      "module": "middleware",
+      "python_import_path": "agentscope.middleware._base.MiddlewareBase",
+      "symbol_name": "MiddlewareBase",
+      "symbol_type": "class",
+      "description": "Base class for all middleware implementations.",
+      "source_location": "src/agentscope/middleware/_base.py:13",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of MiddlewareBase"
+        }
+      ]
+    },
+    {
+      "capability_id": "middleware-rag-middleware",
+      "category": "middleware",
+      "module": "middleware",
+      "python_import_path": "agentscope.middleware._rag.RAGMiddleware",
+      "symbol_name": "RAGMiddleware",
+      "symbol_type": "class",
+      "description": "Middleware that integrates knowledge-base search into the agent.",
+      "source_location": "src/agentscope/middleware/_rag.py:456",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of RAGMiddleware"
+        }
+      ]
+    },
+    {
+      "capability_id": "middleware-re-me-middleware",
+      "category": "middleware",
+      "module": "middleware",
+      "python_import_path": "agentscope.middleware._longterm_memory._reme.ReMeMiddleware",
+      "symbol_name": "ReMeMiddleware",
+      "symbol_type": "class",
+      "description": "AgentScope middleware that adds long-term memory backed by",
+      "source_location": "src/agentscope/middleware/_longterm_memory/_reme/_middleware.py:85",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ReMeMiddleware"
+        }
+      ]
+    },
+    {
+      "capability_id": "middleware-reply-budget-control-middleware",
+      "category": "middleware",
+      "module": "middleware",
+      "python_import_path": "agentscope.middleware._budget.ReplyBudgetControlMiddleware",
+      "symbol_name": "ReplyBudgetControlMiddleware",
+      "symbol_type": "class",
+      "description": "Middleware that enforces a weighted token budget per reply.",
+      "source_location": "src/agentscope/middleware/_budget.py:21",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ReplyBudgetControlMiddleware"
+        }
+      ]
+    },
+    {
+      "capability_id": "middleware-tts-middleware",
+      "category": "middleware",
+      "module": "middleware",
+      "python_import_path": "agentscope.middleware._tts_middleware.TTSMiddleware",
+      "symbol_name": "TTSMiddleware",
+      "symbol_type": "class",
+      "description": "Synthesize speech for every text block produced during reasoning and",
+      "source_location": "src/agentscope/middleware/_tts_middleware.py:21",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of TTSMiddleware"
+        }
+      ]
+    },
+    {
+      "capability_id": "middleware-tracing-middleware",
+      "category": "middleware",
+      "module": "middleware",
+      "python_import_path": "agentscope.middleware._tracing.TracingMiddleware",
+      "symbol_name": "TracingMiddleware",
+      "symbol_type": "class",
+      "description": "Agent middleware that adds OpenTelemetry tracing to the reply,",
+      "source_location": "src/agentscope/middleware/_tracing/_trace.py:116",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of TracingMiddleware"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-anthropic-chat-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._anthropic.AnthropicChatModel",
+      "symbol_name": "AnthropicChatModel",
+      "symbol_type": "class",
+      "description": "The Anthropic chat model.",
+      "source_location": "src/agentscope/model/_anthropic/_model.py:27",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of AnthropicChatModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-chat-model-base",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._base.ChatModelBase",
+      "symbol_name": "ChatModelBase",
+      "symbol_type": "class",
+      "description": "The base class for chat models.",
+      "source_location": "src/agentscope/model/_base.py:36",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ChatModelBase"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-chat-response",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._model_response.ChatResponse",
+      "symbol_name": "ChatResponse",
+      "symbol_type": "serialized_structure",
+      "description": "The response of chat models.",
+      "source_location": "src/agentscope/model/_model_response.py:33",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "model-chat-usage",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._model_usage.ChatUsage",
+      "symbol_name": "ChatUsage",
+      "symbol_type": "serialized_structure",
+      "description": "The usage of a chat model API invocation.",
+      "source_location": "src/agentscope/model/_model_usage.py:10",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "model-dash-scope-chat-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._dashscope.DashScopeChatModel",
+      "symbol_name": "DashScopeChatModel",
+      "symbol_type": "class",
+      "description": "The DashScope chat model (OpenAI-compatible implementation).",
+      "source_location": "src/agentscope/model/_dashscope/_model.py:34",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DashScopeChatModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-deep-seek-chat-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._deepseek.DeepSeekChatModel",
+      "symbol_name": "DeepSeekChatModel",
+      "symbol_type": "class",
+      "description": "The DeepSeek chat model.",
+      "source_location": "src/agentscope/model/_deepseek/_model.py:26",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DeepSeekChatModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-finished-reason",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._model_response.FinishedReason",
+      "symbol_name": "FinishedReason",
+      "symbol_type": "enum",
+      "description": "The finished reason of the model response.",
+      "source_location": "src/agentscope/model/_model_response.py:22",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "model-gemini-chat-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._gemini.GeminiChatModel",
+      "symbol_name": "GeminiChatModel",
+      "symbol_type": "class",
+      "description": "The Google Gemini chat model.",
+      "source_location": "src/agentscope/model/_gemini/_model.py:112",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GeminiChatModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-model-card",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._model_card.ModelCard",
+      "symbol_name": "ModelCard",
+      "symbol_type": "serialized_structure",
+      "description": "The model card class.",
+      "source_location": "src/agentscope/model/_model_card.py:11",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "model-moonshot-chat-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._moonshot.MoonshotChatModel",
+      "symbol_name": "MoonshotChatModel",
+      "symbol_type": "class",
+      "description": "The Moonshot AI chat model.",
+      "source_location": "src/agentscope/model/_moonshot/_model.py:26",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of MoonshotChatModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-ollama-chat-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._ollama.OllamaChatModel",
+      "symbol_name": "OllamaChatModel",
+      "symbol_type": "class",
+      "description": "The Ollama chat model.",
+      "source_location": "src/agentscope/model/_ollama/_model.py:25",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OllamaChatModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-open-ai-chat-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._openai_chat.OpenAIChatModel",
+      "symbol_name": "OpenAIChatModel",
+      "symbol_type": "class",
+      "description": "The OpenAI Chat Completions model.",
+      "source_location": "src/agentscope/model/_openai_chat/_model.py:36",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAIChatModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-open-ai-response-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._openai_response.OpenAIResponseModel",
+      "symbol_name": "OpenAIResponseModel",
+      "symbol_type": "class",
+      "description": "The OpenAI Responses API chat model.",
+      "source_location": "src/agentscope/model/_openai_response/_model.py:31",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAIResponseModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "model-structured-response",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._model_response.StructuredResponse",
+      "symbol_name": "StructuredResponse",
+      "symbol_type": "serialized_structure",
+      "description": "The structured response of chat models.",
+      "source_location": "src/agentscope/model/_model_response.py:322",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "model-xai-chat-model",
+      "category": "model",
+      "module": "model",
+      "python_import_path": "agentscope.model._xai.XAIChatModel",
+      "symbol_name": "XAIChatModel",
+      "symbol_type": "class",
+      "description": "The xAI chat model using the official ``xai_sdk`` gRPC client.",
+      "source_location": "src/agentscope/model/_xai/_model.py:30",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of XAIChatModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "permission-additional-working-directory",
+      "category": "permission",
+      "module": "permission",
+      "python_import_path": "agentscope.permission._context.AdditionalWorkingDirectory",
+      "symbol_name": "AdditionalWorkingDirectory",
+      "symbol_type": "serialized_structure",
+      "description": "An additional directory included in permission scope.",
+      "source_location": "src/agentscope/permission/_context.py:9",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "permission-permission-behavior",
+      "category": "permission",
+      "module": "permission",
+      "python_import_path": "agentscope.permission._types.PermissionBehavior",
+      "symbol_name": "PermissionBehavior",
+      "symbol_type": "enum",
+      "description": "The behavior of permission.",
+      "source_location": "src/agentscope/permission/_types.py:88",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "permission-permission-context",
+      "category": "permission",
+      "module": "permission",
+      "python_import_path": "agentscope.permission._context.PermissionContext",
+      "symbol_name": "PermissionContext",
+      "symbol_type": "serialized_structure",
+      "description": "Context for permission checking.",
+      "source_location": "src/agentscope/permission/_context.py:24",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "permission-permission-decision",
+      "category": "permission",
+      "module": "permission",
+      "python_import_path": "agentscope.permission._decision.PermissionDecision",
+      "symbol_name": "PermissionDecision",
+      "symbol_type": "serialized_structure",
+      "description": "Decision result from permission checking.",
+      "source_location": "src/agentscope/permission/_decision.py:11",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "permission-permission-engine",
+      "category": "permission",
+      "module": "permission",
+      "python_import_path": "agentscope.permission._engine.PermissionEngine",
+      "symbol_name": "PermissionEngine",
+      "symbol_type": "class",
+      "description": "Engine for checking and enforcing permission rules.",
+      "source_location": "src/agentscope/permission/_engine.py:17",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of PermissionEngine"
+        }
+      ]
+    },
+    {
+      "capability_id": "permission-permission-mode",
+      "category": "permission",
+      "module": "permission",
+      "python_import_path": "agentscope.permission._types.PermissionMode",
+      "symbol_name": "PermissionMode",
+      "symbol_type": "enum",
+      "description": "The mode of permission.",
+      "source_location": "src/agentscope/permission/_types.py:18",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "permission-permission-rule",
+      "category": "permission",
+      "module": "permission",
+      "python_import_path": "agentscope.permission._rule.PermissionRule",
+      "symbol_name": "PermissionRule",
+      "symbol_type": "serialized_structure",
+      "description": "Permission rule for tool usage.",
+      "source_location": "src/agentscope/permission/_rule.py:8",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-approx-token-chunker",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._chunker.ApproxTokenChunker",
+      "symbol_name": "ApproxTokenChunker",
+      "symbol_type": "class",
+      "description": "A chunker based on an approximate token counting strategy.",
+      "source_location": "src/agentscope/rag/_chunker/_approx_token_chunker.py:16",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ApproxTokenChunker"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-chunk",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._document.Chunk",
+      "symbol_name": "Chunk",
+      "symbol_type": "serialized_structure",
+      "description": "A final indexable chunk produced by a :class:`ChunkerBase`.",
+      "source_location": "src/agentscope/rag/_document.py:71",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-chunker-base",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._chunker.ChunkerBase",
+      "symbol_name": "ChunkerBase",
+      "symbol_type": "protocol",
+      "description": "Abstract base class for chunkers.",
+      "source_location": "src/agentscope/rag/_chunker/_base.py:24",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-document-summary",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._vdb.DocumentSummary",
+      "symbol_name": "DocumentSummary",
+      "symbol_type": "serialized_structure",
+      "description": "A lightweight description of one source document inside a collection.",
+      "source_location": "src/agentscope/rag/_vdb/_vector_store.py:76",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-elasticsearch-store",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._vdb.ElasticsearchStore",
+      "symbol_name": "ElasticsearchStore",
+      "symbol_type": "class",
+      "description": "Vector store backed by Elasticsearch dense-vector indexes.",
+      "source_location": "src/agentscope/rag/_vdb/_elasticsearch.py:20",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ElasticsearchStore"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-excel-parser",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._parser.ExcelParser",
+      "symbol_name": "ExcelParser",
+      "symbol_type": "class",
+      "description": "Parser for Excel ``.xlsx`` / ``.xls`` files.",
+      "source_location": "src/agentscope/rag/_parser/_excel.py:132",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ExcelParser"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-image-parser",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._parser.ImageParser",
+      "symbol_name": "ImageParser",
+      "symbol_type": "class",
+      "description": "Parser for image files.",
+      "source_location": "src/agentscope/rag/_parser/_image.py:17",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ImageParser"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-knowledge-base",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._knowledge.KnowledgeBase",
+      "symbol_name": "KnowledgeBase",
+      "symbol_type": "class",
+      "description": "Runtime handle for one knowledge base.",
+      "source_location": "src/agentscope/rag/_knowledge.py:44",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of KnowledgeBase"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-milvus-lite-store",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._vdb.MilvusLiteStore",
+      "symbol_name": "MilvusLiteStore",
+      "symbol_type": "class",
+      "description": "Vector store backend backed by Milvus Lite.",
+      "source_location": "src/agentscope/rag/_vdb/_milvus_lite.py:26",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of MilvusLiteStore"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-mongo-db-store",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._vdb.MongoDBStore",
+      "symbol_name": "MongoDBStore",
+      "symbol_type": "class",
+      "description": "Vector store backend backed by `MongoDB Vector Search <https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-overview/>`_.",
+      "source_location": "src/agentscope/rag/_vdb/_mongodb.py:31",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of MongoDBStore"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-pdf-parser",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._parser.PDFParser",
+      "symbol_name": "PDFParser",
+      "symbol_type": "class",
+      "description": "Parser for PDF files.",
+      "source_location": "src/agentscope/rag/_parser/_pdf.py:16",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of PDFParser"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-ppt-parser",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._parser.PPTParser",
+      "symbol_name": "PPTParser",
+      "symbol_type": "class",
+      "description": "Parser for PowerPoint ``.pptx`` files.",
+      "source_location": "src/agentscope/rag/_parser/_ppt.py:85",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of PPTParser"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-parser-base",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._parser.ParserBase",
+      "symbol_name": "ParserBase",
+      "symbol_type": "protocol",
+      "description": "Abstract base class for file-format parsers.",
+      "source_location": "src/agentscope/rag/_parser/_base.py:22",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-qdrant-store",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._vdb.QdrantStore",
+      "symbol_name": "QdrantStore",
+      "symbol_type": "class",
+      "description": "Vector store backend backed by `Qdrant <https://qdrant.tech>`_.",
+      "source_location": "src/agentscope/rag/_vdb/_qdrant.py:31",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of QdrantStore"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-section",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._document.Section",
+      "symbol_name": "Section",
+      "symbol_type": "serialized_structure",
+      "description": "A single natural section produced by a :class:`ParserBase`.",
+      "source_location": "src/agentscope/rag/_document.py:31",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-text-parser",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._parser.TextParser",
+      "symbol_name": "TextParser",
+      "symbol_type": "class",
+      "description": "Parser for plain-text file formats.",
+      "source_location": "src/agentscope/rag/_parser/_text.py:10",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of TextParser"
+        }
+      ]
+    },
+    {
+      "capability_id": "rag-vector-record",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._vdb.VectorRecord",
+      "symbol_name": "VectorRecord",
+      "symbol_type": "serialized_structure",
+      "description": "A single record to insert into a vector store collection.",
+      "source_location": "src/agentscope/rag/_vdb/_vector_store.py:28",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-vector-search-result",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._vdb.VectorSearchResult",
+      "symbol_name": "VectorSearchResult",
+      "symbol_type": "serialized_structure",
+      "description": "A single result returned by a similarity search.",
+      "source_location": "src/agentscope/rag/_vdb/_vector_store.py:53",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-vector-store-base",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._vdb.VectorStoreBase",
+      "symbol_name": "VectorStoreBase",
+      "symbol_type": "protocol",
+      "description": "Abstract base class for vector store backends.",
+      "source_location": "src/agentscope/rag/_vdb/_vector_store.py:102",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "rag-word-parser",
+      "category": "rag",
+      "module": "rag",
+      "python_import_path": "agentscope.rag._parser.WordParser",
+      "symbol_name": "WordParser",
+      "symbol_type": "class",
+      "description": "Parser for Word ``.docx`` files.",
+      "source_location": "src/agentscope/rag/_parser/_word.py:171",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of WordParser"
+        }
+      ]
+    },
+    {
+      "capability_id": "skill-local-skill-loader",
+      "category": "skill",
+      "module": "skill",
+      "python_import_path": "agentscope.skill._local_loader.LocalSkillLoader",
+      "symbol_name": "LocalSkillLoader",
+      "symbol_type": "class",
+      "description": "The skill loader that loads skills from a local directory.",
+      "source_location": "src/agentscope/skill/_local_loader.py:16",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of LocalSkillLoader"
+        }
+      ]
+    },
+    {
+      "capability_id": "skill-skill",
+      "category": "skill",
+      "module": "skill",
+      "python_import_path": "agentscope.skill._base.Skill",
+      "symbol_name": "Skill",
+      "symbol_type": "serialized_structure",
+      "description": "The agent skill class",
+      "source_location": "src/agentscope/skill/_base.py:8",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "skill-skill-loader-base",
+      "category": "skill",
+      "module": "skill",
+      "python_import_path": "agentscope.skill._base.SkillLoaderBase",
+      "symbol_name": "SkillLoaderBase",
+      "symbol_type": "protocol",
+      "description": "The base class for skill loader.",
+      "source_location": "src/agentscope/skill/_base.py:23",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "state-agent-state",
+      "category": "state",
+      "module": "state",
+      "python_import_path": "agentscope.state._state.AgentState",
+      "symbol_name": "AgentState",
+      "symbol_type": "serialized_structure",
+      "description": "The agent state that should be saved and loaded from storage.",
+      "source_location": "src/agentscope/state/_state.py:176",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "state-read-cache-entry",
+      "category": "state",
+      "module": "state",
+      "python_import_path": "agentscope.state._state.ReadCacheEntry",
+      "symbol_name": "ReadCacheEntry",
+      "symbol_type": "serialized_structure",
+      "description": "The read file cache.",
+      "source_location": "src/agentscope/state/_state.py:23",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "state-reply-context",
+      "category": "state",
+      "module": "state",
+      "python_import_path": "agentscope.state._state.ReplyContext",
+      "symbol_name": "ReplyContext",
+      "symbol_type": "serialized_structure",
+      "description": "The context of the current agent reply.",
+      "source_location": "src/agentscope/state/_state.py:149",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "state-task",
+      "category": "state",
+      "module": "state",
+      "python_import_path": "agentscope.state._task.Task",
+      "symbol_name": "Task",
+      "symbol_type": "serialized_structure",
+      "description": "The agent task.",
+      "source_location": "src/agentscope/state/_task.py:11",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "state-task-context",
+      "category": "state",
+      "module": "state",
+      "python_import_path": "agentscope.state._state.TaskContext",
+      "symbol_name": "TaskContext",
+      "symbol_type": "serialized_structure",
+      "description": "The task context.",
+      "source_location": "src/agentscope/state/_state.py:142",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "state-tool-context",
+      "category": "state",
+      "module": "state",
+      "python_import_path": "agentscope.state._state.ToolContext",
+      "symbol_name": "ToolContext",
+      "symbol_type": "serialized_structure",
+      "description": "The tool context, e.g. tool cache",
+      "source_location": "src/agentscope/state/_state.py:32",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-backend-base",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.BackendBase",
+      "symbol_name": "BackendBase",
+      "symbol_type": "protocol",
+      "description": "Filesystem + subprocess interface consumed by builtin tools.",
+      "source_location": "src/agentscope/tool/_builtin/_backend.py:104",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-bash",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.Bash",
+      "symbol_name": "Bash",
+      "symbol_type": "class",
+      "description": "The bash tool.",
+      "source_location": "src/agentscope/tool/_builtin/_bash.py:25",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Bash"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-dangerous-commands",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._constants.DANGEROUS_COMMANDS",
+      "symbol_name": "DANGEROUS_COMMANDS",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DANGEROUS_COMMANDS' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/tool/_constants.py:56",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-dangerous-node-types",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._constants.DANGEROUS_NODE_TYPES",
+      "symbol_name": "DANGEROUS_NODE_TYPES",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DANGEROUS_NODE_TYPES' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/tool/_constants.py:85",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-default-dangerous-directories",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._constants.DEFAULT_DANGEROUS_DIRECTORIES",
+      "symbol_name": "DEFAULT_DANGEROUS_DIRECTORIES",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_DANGEROUS_DIRECTORIES' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/tool/_constants.py:40",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-default-dangerous-files",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._constants.DEFAULT_DANGEROUS_FILES",
+      "symbol_name": "DEFAULT_DANGEROUS_FILES",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_DANGEROUS_FILES' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/tool/_constants.py:4",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-default-meta-tool-response-template",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._toolkit.DEFAULT_META_TOOL_RESPONSE_TEMPLATE",
+      "symbol_name": "DEFAULT_META_TOOL_RESPONSE_TEMPLATE",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_META_TOOL_RESPONSE_TEMPLATE' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/tool/_toolkit.py:44",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-default-skill-instruction",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._toolkit.DEFAULT_SKILL_INSTRUCTION",
+      "symbol_name": "DEFAULT_SKILL_INSTRUCTION",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_SKILL_INSTRUCTION' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/tool/_toolkit.py:51",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-edit",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.Edit",
+      "symbol_name": "Edit",
+      "symbol_type": "class",
+      "description": "The edit tool for performing exact string replacements in files.",
+      "source_location": "src/agentscope/tool/_builtin/_edit.py:25",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Edit"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-exec-result",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.ExecResult",
+      "symbol_name": "ExecResult",
+      "symbol_type": "class",
+      "description": "Result of running a shell command via a backend.",
+      "source_location": "src/agentscope/tool/_builtin/_backend.py:53",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ExecResult"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-function",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool.Function",
+      "symbol_name": "Function",
+      "symbol_type": "class",
+      "description": "Represents a callable function tool that can be invoked by the agent.",
+      "source_location": "src/agentscope/tool/__init__.py:__all__",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-function-tool",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._adapters.FunctionTool",
+      "symbol_name": "FunctionTool",
+      "symbol_type": "class",
+      "description": "Adapter to convert a Python function to ToolProtocol.",
+      "source_location": "src/agentscope/tool/_adapters.py:31",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of FunctionTool"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-glob",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.Glob",
+      "symbol_name": "Glob",
+      "symbol_type": "class",
+      "description": "The glob tool for fast file pattern matching.",
+      "source_location": "src/agentscope/tool/_builtin/_glob.py:42",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Glob"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-grep",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.Grep",
+      "symbol_name": "Grep",
+      "symbol_type": "class",
+      "description": "The grep tool for searching file contents using ripgrep.",
+      "source_location": "src/agentscope/tool/_builtin/_grep.py:39",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Grep"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-local-backend",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.LocalBackend",
+      "symbol_name": "LocalBackend",
+      "symbol_type": "class",
+      "description": "Host-local :class:`BackendBase` implementation.",
+      "source_location": "src/agentscope/tool/_builtin/_backend.py:521",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of LocalBackend"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-mcp-tool",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._adapters.MCPTool",
+      "symbol_name": "MCPTool",
+      "symbol_type": "class",
+      "description": "Adapter to convert an MCP tool to ToolProtocol.",
+      "source_location": "src/agentscope/tool/_adapters.py:167",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of MCPTool"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-params-base",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._base.ParamsBase",
+      "symbol_name": "ParamsBase",
+      "symbol_type": "serialized_structure",
+      "description": "A base class for tool parameters that remove the title field from the",
+      "source_location": "src/agentscope/tool/_base.py:23",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-power-shell",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.PowerShell",
+      "symbol_name": "PowerShell",
+      "symbol_type": "class",
+      "description": "Execute PowerShell commands through a workspace backend.",
+      "source_location": "src/agentscope/tool/_builtin/_powershell.py:23",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of PowerShell"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-read",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.Read",
+      "symbol_name": "Read",
+      "symbol_type": "class",
+      "description": "The read tool.",
+      "source_location": "src/agentscope/tool/_builtin/_read.py:19",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Read"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-registered-tool",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._types.RegisteredTool",
+      "symbol_name": "RegisteredTool",
+      "symbol_type": "serialized_structure",
+      "description": "The registered tool function class, used to store the tool function and",
+      "source_location": "src/agentscope/tool/_types.py:25",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-reset-tools",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.ResetTools",
+      "symbol_name": "ResetTools",
+      "symbol_type": "class",
+      "description": "A meta tool allows agent to self-manage its equipped tools by",
+      "source_location": "src/agentscope/tool/_builtin/_meta.py:21",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ResetTools"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-task-create",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._task.TaskCreate",
+      "symbol_name": "TaskCreate",
+      "symbol_type": "class",
+      "description": "Create a task for the agent to perform.",
+      "source_location": "src/agentscope/tool/_task/_create_task.py:25",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of TaskCreate"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-task-get",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._task.TaskGet",
+      "symbol_name": "TaskGet",
+      "symbol_type": "class",
+      "description": "Retrieve a task by its ID from the task list.",
+      "source_location": "src/agentscope/tool/_task/_get_task.py:18",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of TaskGet"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-task-list",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._task.TaskList",
+      "symbol_name": "TaskList",
+      "symbol_type": "class",
+      "description": "List tasks for the agent to perform.",
+      "source_location": "src/agentscope/tool/_task/_list_task.py:16",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of TaskList"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-task-update",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._task.TaskUpdate",
+      "symbol_name": "TaskUpdate",
+      "symbol_type": "class",
+      "description": "The tool to update the agent task.",
+      "source_location": "src/agentscope/tool/_task/_update_task.py:54",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of TaskUpdate"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-tool-base",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._base.ToolBase",
+      "symbol_name": "ToolBase",
+      "symbol_type": "protocol",
+      "description": "The tool protocol.",
+      "source_location": "src/agentscope/tool/_base.py:94",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-tool-choice",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._types.ToolChoice",
+      "symbol_name": "ToolChoice",
+      "symbol_type": "serialized_structure",
+      "description": "The tool choice configuration.",
+      "source_location": "src/agentscope/tool/_types.py:178",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-tool-chunk",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._response.ToolChunk",
+      "symbol_name": "ToolChunk",
+      "symbol_type": "serialized_structure",
+      "description": "The tool result chunk from a tool execution.",
+      "source_location": "src/agentscope/tool/_response.py:28",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-tool-group",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._tool_group.ToolGroup",
+      "symbol_name": "ToolGroup",
+      "symbol_type": "class",
+      "description": "A group of related tools, mcps, and skills that an agent can activate,",
+      "source_location": "src/agentscope/tool/_tool_group.py:10",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of ToolGroup"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-tool-middleware-base",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._base.ToolMiddlewareBase",
+      "symbol_name": "ToolMiddlewareBase",
+      "symbol_type": "protocol",
+      "description": "Base class for tool middlewares.",
+      "source_location": "src/agentscope/tool/_base.py:36",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-tool-response",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._response.ToolResponse",
+      "symbol_name": "ToolResponse",
+      "symbol_type": "serialized_structure",
+      "description": "The tool response from a tool execution, which contains the completed",
+      "source_location": "src/agentscope/tool/_response.py:50",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tool-toolkit",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._toolkit.Toolkit",
+      "symbol_name": "Toolkit",
+      "symbol_type": "class",
+      "description": "Toolkit is the core module to register, manage and delete tool",
+      "source_location": "src/agentscope/tool/_toolkit.py:66",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Toolkit"
+        }
+      ]
+    },
+    {
+      "capability_id": "tool-write",
+      "category": "tool",
+      "module": "tool",
+      "python_import_path": "agentscope.tool._builtin.Write",
+      "symbol_name": "Write",
+      "symbol_type": "class",
+      "description": "The write tool.",
+      "source_location": "src/agentscope/tool/_builtin/_write.py:26",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of Write"
+        }
+      ]
+    },
+    {
+      "capability_id": "tts-dash-scope-cosy-voice-tts-model",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._dashscope.DashScopeCosyVoiceTTSModel",
+      "symbol_name": "DashScopeCosyVoiceTTSModel",
+      "symbol_type": "class",
+      "description": "DashScope CosyVoice TTS model using the WebSocket SpeechSynthesizer.",
+      "source_location": "src/agentscope/tts/_dashscope/_cosyvoice_model.py:30",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DashScopeCosyVoiceTTSModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "tts-dash-scope-realtime-tts-model",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._dashscope.DashScopeRealtimeTTSModel",
+      "symbol_name": "DashScopeRealtimeTTSModel",
+      "symbol_type": "class",
+      "description": "DashScope Realtime TTS model using the QwenTtsRealtime WebSocket API.",
+      "source_location": "src/agentscope/tts/_dashscope/_realtime_model.py:184",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DashScopeRealtimeTTSModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "tts-dash-scope-tts-model",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._dashscope.DashScopeTTSModel",
+      "symbol_name": "DashScopeTTSModel",
+      "symbol_type": "class",
+      "description": "DashScope TTS model implementation using the MultiModalConversation",
+      "source_location": "src/agentscope/tts/_dashscope/_model.py:51",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DashScopeTTSModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "tts-gemini-tts-model",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._gemini.GeminiTTSModel",
+      "symbol_name": "GeminiTTSModel",
+      "symbol_type": "class",
+      "description": "Gemini TTS model implementation using the ``generateContent`` API",
+      "source_location": "src/agentscope/tts/_gemini/_model.py:51",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GeminiTTSModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "tts-open-aitts-model",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._openai.OpenAITTSModel",
+      "symbol_name": "OpenAITTSModel",
+      "symbol_type": "class",
+      "description": "OpenAI TTS model implementation using the Audio Speech API. For more",
+      "source_location": "src/agentscope/tts/_openai/_model.py:46",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenAITTSModel"
+        }
+      ]
+    },
+    {
+      "capability_id": "tts-tts-model-base",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._tts_base.TTSModelBase",
+      "symbol_name": "TTSModelBase",
+      "symbol_type": "class",
+      "description": "Base class for TTS models in AgentScope.",
+      "source_location": "src/agentscope/tts/_tts_base.py:18",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of TTSModelBase"
+        }
+      ]
+    },
+    {
+      "capability_id": "tts-tts-model-card",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._tts_model_card.TTSModelCard",
+      "symbol_name": "TTSModelCard",
+      "symbol_type": "serialized_structure",
+      "description": "The model card class for TTS models.",
+      "source_location": "src/agentscope/tts/_tts_model_card.py:11",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tts-tts-response",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._tts_response.TTSResponse",
+      "symbol_name": "TTSResponse",
+      "symbol_type": "serialized_structure",
+      "description": "The response of TTS models.",
+      "source_location": "src/agentscope/tts/_tts_response.py:30",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "tts-tts-usage",
+      "category": "model",
+      "module": "tts",
+      "python_import_path": "agentscope.tts._tts_response.TTSUsage",
+      "symbol_name": "TTSUsage",
+      "symbol_type": "serialized_structure",
+      "description": "The usage of a TTS model API invocation.",
+      "source_location": "src/agentscope/tts/_tts_response.py:13",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "types-agent-hook-types",
+      "category": "core",
+      "module": "types",
+      "python_import_path": "agentscope.types._hook.AgentHookTypes",
+      "symbol_name": "AgentHookTypes",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'AgentHookTypes' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/types/_hook.py:5",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "types-embedding",
+      "category": "core",
+      "module": "types",
+      "python_import_path": "agentscope.types._object.Embedding",
+      "symbol_name": "Embedding",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'Embedding' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/types/_object.py:5",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "types-error-info",
+      "category": "core",
+      "module": "types",
+      "python_import_path": "agentscope.types._reply.ErrorInfo",
+      "symbol_name": "ErrorInfo",
+      "symbol_type": "serialized_structure",
+      "description": "Structured, UI-facing description of a fatal reply error.",
+      "source_location": "src/agentscope/types/_reply.py:43",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "types-error-type",
+      "category": "core",
+      "module": "types",
+      "python_import_path": "agentscope.types._reply.ErrorType",
+      "symbol_name": "ErrorType",
+      "symbol_type": "enum",
+      "description": "Classification of a fatal error that terminated a reply.",
+      "source_location": "src/agentscope/types/_reply.py:19",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "types-json-primitive",
+      "category": "core",
+      "module": "types",
+      "python_import_path": "agentscope.types.JSONPrimitive",
+      "symbol_name": "JSONPrimitive",
+      "symbol_type": "serialized_structure",
+      "description": "Type alias for primitive JSON value types (string, number, boolean, null).",
+      "source_location": "src/agentscope/types/__init__.py:__all__",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "types-json-serializable-object",
+      "category": "core",
+      "module": "types",
+      "python_import_path": "agentscope.types.JSONSerializableObject",
+      "symbol_name": "JSONSerializableObject",
+      "symbol_type": "protocol",
+      "description": "Protocol for objects that can be serialized to JSON.",
+      "source_location": "src/agentscope/types/__init__.py:__all__",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "types-re-act-agent-hook-types",
+      "category": "core",
+      "module": "types",
+      "python_import_path": "agentscope.types._hook.ReActAgentHookTypes",
+      "symbol_name": "ReActAgentHookTypes",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'ReActAgentHookTypes' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/types/_hook.py:17",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "types-reply-finished-reason",
+      "category": "core",
+      "module": "types",
+      "python_import_path": "agentscope.types._reply.ReplyFinishedReason",
+      "symbol_name": "ReplyFinishedReason",
+      "symbol_type": "enum",
+      "description": "The reason a reply finished.",
+      "source_location": "src/agentscope/types/_reply.py:10",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-apple-container-backend",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._applecontainer.AppleContainerBackend",
+      "symbol_name": "AppleContainerBackend",
+      "symbol_type": "class",
+      "description": "Backend that delegates to a running Apple container via the",
+      "source_location": "src/agentscope/workspace/_applecontainer/_applecontainer_backend.py:23",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of AppleContainerBackend"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-apple-container-workspace",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._applecontainer.AppleContainerWorkspace",
+      "symbol_name": "AppleContainerWorkspace",
+      "symbol_type": "class",
+      "description": "Workspace backed by Apple's ``container`` CLI.",
+      "source_location": "src/agentscope/workspace/_applecontainer/_applecontainer_workspace.py:75",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of AppleContainerWorkspace"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-body-inline-limit",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._gateway_shim.BODY_INLINE_LIMIT",
+      "symbol_name": "BODY_INLINE_LIMIT",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'BODY_INLINE_LIMIT' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_gateway_shim.py:27",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-bubblewrap-backend",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._bubblewrap.BubblewrapBackend",
+      "symbol_name": "BubblewrapBackend",
+      "symbol_type": "class",
+      "description": "Backend that executes commands inside Bubblewrap sandboxes.",
+      "source_location": "src/agentscope/workspace/_bubblewrap/_bubblewrap_backend.py:23",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of BubblewrapBackend"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-bubblewrap-workspace",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._bubblewrap.BubblewrapWorkspace",
+      "symbol_name": "BubblewrapWorkspace",
+      "symbol_type": "class",
+      "description": "Workspace backed by Linux Bubblewrap.",
+      "source_location": "src/agentscope/workspace/_bubblewrap/_bubblewrap_workspace.py:51",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of BubblewrapWorkspace"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-default-data-dir",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_DATA_DIR",
+      "symbol_name": "DEFAULT_DATA_DIR",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_DATA_DIR' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:81",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-default-gateway-log",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_GATEWAY_LOG",
+      "symbol_name": "DEFAULT_GATEWAY_LOG",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_GATEWAY_LOG' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:93",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-default-gateway-script",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_GATEWAY_SCRIPT",
+      "symbol_name": "DEFAULT_GATEWAY_SCRIPT",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_GATEWAY_SCRIPT' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:94",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-default-gateway-venv",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_GATEWAY_VENV",
+      "symbol_name": "DEFAULT_GATEWAY_VENV",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_GATEWAY_VENV' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:92",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-default-glob-helper-script",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_GLOB_HELPER_SCRIPT",
+      "symbol_name": "DEFAULT_GLOB_HELPER_SCRIPT",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_GLOB_HELPER_SCRIPT' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:95",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-default-mcp-file",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_MCP_FILE",
+      "symbol_name": "DEFAULT_MCP_FILE",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_MCP_FILE' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:90",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-default-sessions-dir",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_SESSIONS_DIR",
+      "symbol_name": "DEFAULT_SESSIONS_DIR",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_SESSIONS_DIR' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:87",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-default-skills-dir",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_SKILLS_DIR",
+      "symbol_name": "DEFAULT_SKILLS_DIR",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_SKILLS_DIR' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:84",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-default-workspace-instructions",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._utils.DEFAULT_WORKSPACE_INSTRUCTIONS",
+      "symbol_name": "DEFAULT_WORKSPACE_INSTRUCTIONS",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'DEFAULT_WORKSPACE_INSTRUCTIONS' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_utils.py:18",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-daytona-backend",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._daytona.DaytonaBackend",
+      "symbol_name": "DaytonaBackend",
+      "symbol_type": "class",
+      "description": "Backend that delegates to a running Daytona sandbox.",
+      "source_location": "src/agentscope/workspace/_daytona/_daytona_backend.py:23",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DaytonaBackend"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-daytona-workspace",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._daytona.DaytonaWorkspace",
+      "symbol_name": "DaytonaWorkspace",
+      "symbol_type": "class",
+      "description": "Workspace backed by a Daytona sandbox.",
+      "source_location": "src/agentscope/workspace/_daytona/_daytona_workspace.py:65",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DaytonaWorkspace"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-docker-backend",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._docker.DockerBackend",
+      "symbol_name": "DockerBackend",
+      "symbol_type": "class",
+      "description": "Backend that delegates to a running Docker container.",
+      "source_location": "src/agentscope/workspace/_docker/_docker_backend.py:25",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DockerBackend"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-docker-workspace",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._docker.DockerWorkspace",
+      "symbol_name": "DockerWorkspace",
+      "symbol_type": "class",
+      "description": "Workspace backed by a Docker container.",
+      "source_location": "src/agentscope/workspace/_docker/_docker_workspace.py:43",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of DockerWorkspace"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-e2-b-backend",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._e2b.E2BBackend",
+      "symbol_name": "E2BBackend",
+      "symbol_type": "class",
+      "description": "Backend that delegates to a running E2B sandbox.",
+      "source_location": "src/agentscope/workspace/_e2b/_e2b_backend.py:22",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of E2BBackend"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-e2-b-workspace",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._e2b.E2BWorkspace",
+      "symbol_name": "E2BWorkspace",
+      "symbol_type": "class",
+      "description": "Workspace backed by an E2B cloud sandbox.",
+      "source_location": "src/agentscope/workspace/_e2b/_e2b_workspace.py:62",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of E2BWorkspace"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-gateway-client",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._gateway_client.GatewayClient",
+      "symbol_name": "GatewayClient",
+      "symbol_type": "class",
+      "description": "Workspace-side facade over the in-sandbox MCP gateway.",
+      "source_location": "src/agentscope/workspace/_gateway_client.py:352",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GatewayClient"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-gateway-mcp-client",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._gateway_client.GatewayMCPClient",
+      "symbol_name": "GatewayMCPClient",
+      "symbol_type": "class",
+      "description": "An :class:`MCPClient` whose protocol logic is replaced by",
+      "source_location": "src/agentscope/workspace/_gateway_client.py:160",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GatewayMCPClient"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-gateway-mcp-tool",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._gateway_client.GatewayMCPTool",
+      "symbol_name": "GatewayMCPTool",
+      "symbol_type": "class",
+      "description": "An MCP tool whose ``__call__`` is one ``exec_shell``-driven",
+      "source_location": "src/agentscope/workspace/_gateway_client.py:56",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of GatewayMCPTool"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-k8s-backend",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._k8s.K8sBackend",
+      "symbol_name": "K8sBackend",
+      "symbol_type": "class",
+      "description": "Backend that delegates to a running Kubernetes Pod.",
+      "source_location": "src/agentscope/workspace/_k8s/_k8s_backend.py:29",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of K8sBackend"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-k8s-workspace",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._k8s.K8sWorkspace",
+      "symbol_name": "K8sWorkspace",
+      "symbol_type": "class",
+      "description": "Workspace backed by a Kubernetes Pod with PVC persistence.",
+      "source_location": "src/agentscope/workspace/_k8s/_k8s_workspace.py:51",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of K8sWorkspace"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-local-workspace",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._local_workspace.LocalWorkspace",
+      "symbol_name": "LocalWorkspace",
+      "symbol_type": "class",
+      "description": "Local-directory workspace.",
+      "source_location": "src/agentscope/workspace/_local_workspace.py:60",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of LocalWorkspace"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-offloader",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._offload_protocol.Offloader",
+      "symbol_name": "Offloader",
+      "symbol_type": "protocol",
+      "description": "The offloader protocol.",
+      "source_location": "src/agentscope/workspace/_offload_protocol.py:8",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-open-sandbox-backend",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._opensandbox.OpenSandboxBackend",
+      "symbol_name": "OpenSandboxBackend",
+      "symbol_type": "class",
+      "description": "Backend that delegates to a running OpenSandbox sandbox.",
+      "source_location": "src/agentscope/workspace/_opensandbox/_opensandbox_backend.py:34",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenSandboxBackend"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-open-sandbox-workspace",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._opensandbox.OpenSandboxWorkspace",
+      "symbol_name": "OpenSandboxWorkspace",
+      "symbol_type": "class",
+      "description": "Workspace backed by an OpenSandbox sandbox.",
+      "source_location": "src/agentscope/workspace/_opensandbox/_opensandbox_workspace.py:36",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of OpenSandboxWorkspace"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-sandbox-tmp-dir",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._gateway_shim.SANDBOX_TMP_DIR",
+      "symbol_name": "SANDBOX_TMP_DIR",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'SANDBOX_TMP_DIR' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_gateway_shim.py:30",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-shim-script",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._gateway_shim.SHIM_SCRIPT",
+      "symbol_name": "SHIM_SCRIPT",
+      "symbol_type": "serialized_structure",
+      "description": "Serializable data structure 'SHIM_SCRIPT' (Pydantic model, dataclass, or TypedDict).",
+      "source_location": "src/agentscope/workspace/_gateway_shim.py:48",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": false,
+      "dependencies": [],
+      "observable_behaviors": []
+    },
+    {
+      "capability_id": "workspace-sandboxed-workspace-base",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._sandboxed_base.SandboxedWorkspaceBase",
+      "symbol_name": "SandboxedWorkspaceBase",
+      "symbol_type": "class",
+      "description": "Base class for workspaces backed by an in-sandbox MCP gateway.",
+      "source_location": "src/agentscope/workspace/_sandboxed_base.py:38",
+      "doc_location": null,
+      "is_public_api": false,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of SandboxedWorkspaceBase"
+        }
+      ]
+    },
+    {
+      "capability_id": "workspace-workspace-base",
+      "category": "workspace",
+      "module": "workspace",
+      "python_import_path": "agentscope.workspace._base.WorkspaceBase",
+      "symbol_name": "WorkspaceBase",
+      "symbol_type": "class",
+      "description": "Abstract base class for all workspace implementations.",
+      "source_location": "src/agentscope/workspace/_base.py:103",
+      "doc_location": null,
+      "is_public_api": true,
+      "has_runtime_behavior": true,
+      "dependencies": [],
+      "observable_behaviors": [
+        {
+          "return_type": "Instance of WorkspaceBase"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "_fixture_name": "AgentState-default",
+  "_generated_at": "2026-07-28T09:01:05.858611+00:00",
+  "_description": "Golden snapshot fixture for AgentState-default",
+  "data": {
+    "session_id": "test-session-001",
+    "summary": "",
+    "context": [],
+    "reply_context": {
+      "reply_id": "reply-001",
+      "cur_iter": 0
+    },
+    "permission_context": {},
+    "tool_context": {
+      "max_cache_files": 100,
+      "max_cache_bytes": 25000.0,
+      "read_file_cache": [],
+      "activated_groups": []
+    },
+    "tasks_context": {
+      "tasks": []
+    },
+    "middle_context": {}
+  }
+}

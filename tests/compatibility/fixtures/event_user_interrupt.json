@@ -1,0 +1,9 @@
+{
+  "_fixture_name": "Event-UserInterrupt",
+  "_generated_at": "2026-07-28T09:01:05.858523+00:00",
+  "_description": "Golden snapshot fixture for Event-UserInterrupt",
+  "data": {
+    "type": "USER_INTERRUPT",
+    "reply_id": "reply-001"
+  }
+}

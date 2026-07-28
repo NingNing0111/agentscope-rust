@@ -1,0 +1,9 @@
+{
+  "_fixture_name": "ContentBlock-Thinking",
+  "_generated_at": "2026-07-28T09:01:05.857436+00:00",
+  "_description": "Golden snapshot fixture for ContentBlock-Thinking",
+  "data": {
+    "type": "thinking",
+    "thinking": "Let me reason about this..."
+  }
+}

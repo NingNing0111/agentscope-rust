@@ -1,0 +1,11 @@
+{
+  "_fixture_name": "Event-TextBlockDelta",
+  "_generated_at": "2026-07-28T09:01:05.858338+00:00",
+  "_description": "Golden snapshot fixture for Event-TextBlockDelta",
+  "data": {
+    "type": "TEXT_BLOCK_DELTA",
+    "reply_id": "reply-001",
+    "block_id": "block-001",
+    "delta": "Hello"
+  }
+}

@@ -1,0 +1,11 @@
+[package]
+name = "agent_scope_utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AgentScope Foundation Layer — internal utilities (ID generation, timestamps)"
+
+[dependencies]
+uuid.workspace = true
+chrono.workspace = true

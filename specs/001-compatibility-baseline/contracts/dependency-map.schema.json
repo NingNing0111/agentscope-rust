@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentscope-rust/schemas/dependency-map.schema.json",
+  "title": "Dependency Map",
+  "description": "Schema for capability dependency graph",
+  "type": "object",
+  "required": ["schema_version", "nodes", "edges", "topological_order"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/DepNode" },
+      "minItems": 1
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/DepEdge" }
+    },
+    "topological_order": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Topologically sorted capability_ids (suggested implementation order)"
+    }
+  },
+  "$defs": {
+    "DepNode": {
+      "type": "object",
+      "required": ["capability_id", "layer", "independent"],
+      "properties": {
+        "capability_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "layer": {
+          "type": "string",
+          "enum": ["foundation", "model", "tool", "agent", "extended"],
+          "description": "Architectural layer this capability belongs to"
+        },
+        "independent": {
+          "type": "boolean",
+          "description": "Whether this capability can be implemented independently"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DepEdge": {
+      "type": "object",
+      "required": ["from", "to", "relation"],
+      "properties": {
+        "from": { "type": "string", "description": "Dependent capability_id" },
+        "to": { "type": "string", "description": "Dependency capability_id" },
+        "relation": {
+          "type": "string",
+          "enum": ["requires", "extends", "uses"],
+          "description": "Type of dependency relationship"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

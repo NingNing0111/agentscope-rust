@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentscope-rust/schemas/exclusion-list.schema.json",
+  "title": "Exclusion List",
+  "description": "Schema for explicitly excluded capabilities",
+  "type": "object",
+  "required": ["schema_version", "exclusions"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "exclusions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ExclusionEntry" }
+    }
+  },
+  "$defs": {
+    "ExclusionEntry": {
+      "type": "object",
+      "required": ["exclusion_id", "capability_name", "reason"],
+      "properties": {
+        "exclusion_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "capability_name": {
+          "type": "string",
+          "description": "Name of the excluded capability or capability group"
+        },
+        "scope": {
+          "type": "string",
+          "description": "Python import path or module scope of the exclusion"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reason for excluding this capability from the current target"
+        },
+        "alternative": {
+          "type": ["string", "null"],
+          "description": "Suggested alternative or workaround"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

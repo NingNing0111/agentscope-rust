@@ -1,0 +1,20 @@
+[package]
+name = "agent_scope_tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AgentScope Tool System — Tool trait, FunctionTool adapter, ToolKit registry"
+
+[dependencies]
+agent_scope_message = { path = "../agent_scope_message" }
+agent_scope_model = { path = "../agent_scope_model" }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+thiserror = "2"
+async-trait = "0.1"
+uuid.workspace = true
+chrono.workspace = true
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"

@@ -1,0 +1,16 @@
+{
+  "_fixture_name": "Msg-system-text",
+  "_generated_at": "2026-07-28T09:01:05.857134+00:00",
+  "_description": "Golden snapshot fixture for Msg-system-text",
+  "data": {
+    "name": "system",
+    "content": [
+      {
+        "type": "text",
+        "text": "You are a helpful assistant."
+      }
+    ],
+    "role": "system",
+    "metadata": {}
+  }
+}

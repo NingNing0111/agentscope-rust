@@ -1,0 +1,12 @@
+{
+  "_fixture_name": "ContentBlock-ToolCall",
+  "_generated_at": "2026-07-28T09:01:05.857891+00:00",
+  "_description": "Golden snapshot fixture for ContentBlock-ToolCall",
+  "data": {
+    "type": "tool_call",
+    "id": "call-abc",
+    "name": "get_weather",
+    "input": "{\"city\": \"Beijing\"}",
+    "state": "pending"
+  }
+}

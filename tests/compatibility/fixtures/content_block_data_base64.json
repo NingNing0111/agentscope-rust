@@ -1,0 +1,13 @@
+{
+  "_fixture_name": "ContentBlock-Data-base64",
+  "_generated_at": "2026-07-28T09:01:05.857725+00:00",
+  "_description": "Golden snapshot fixture for ContentBlock-Data-base64",
+  "data": {
+    "type": "data",
+    "source": {
+      "type": "base64",
+      "data": "SGVsbG8gV29ybGQ=",
+      "media_type": "text/plain"
+    }
+  }
+}

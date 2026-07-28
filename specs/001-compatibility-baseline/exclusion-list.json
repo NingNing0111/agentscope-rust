@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "exclusions": [
+    {
+      "exclusion_id": "excl-app-service-layer",
+      "capability_name": "AgentScope app/ module (FastAPI multi-tenant service layer)",
+      "scope": "agentscope.app",
+      "reason": "The FastAPI multi-tenant service layer is a deployment/infrastructure concern, not a core multi-agent framework capability. It includes APIs for workspace/session/chat management. Deferred to a future feature if multi-tenancy is required.",
+      "alternative": null
+    },
+    {
+      "exclusion_id": "excl-python-internals",
+      "capability_name": "Python-specific type annotations (TypedDict, dataclass decorators)",
+      "scope": "Python language features",
+      "reason": "Python TypedDict and dataclass are language-level features, not AgentScope-specific capabilities. Equivalent functionality will use Rust struct/enum with Serde serialization.",
+      "alternative": "Rust structs with derive(Serialize, Deserialize)"
+    },
+    {
+      "exclusion_id": "excl-tts-providers",
+      "capability_name": "TTS (Text-to-Speech) provider integrations",
+      "scope": "agentscope.tts",
+      "reason": "TTS functionality is a voice-based extension not required for core multi-agent compatibility. Deferred as ADVANCED priority.",
+      "alternative": null
+    }
+  ]
+}

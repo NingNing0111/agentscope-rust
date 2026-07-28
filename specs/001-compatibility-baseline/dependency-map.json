@@ -1,0 +1,1688 @@
+{
+  "schema_version": "1.0.0",
+  "nodes": [
+    {
+      "capability_id": "agent-acting",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agent-agent",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agent-context-config",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agent-exit",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agent-injection-config",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agent-model-config",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agent-re-act-config",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agent-reasoning",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agent-summary-schema",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "agentscope-logger",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "agentscope-set-id-factory",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "agentscope-set-timestamp-factory",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "agentscope-setup-logger",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "app-agent-middleware-factory",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-agent-tool-factory",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-event-projector",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-sub-agent-template",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-create-app",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-enqueue-index-task",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-enqueue-run-trigger",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-background-task-manager",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-blob-store",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-chat-run-registry",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-chat-service",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-current-user-id",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-extra-agent-middlewares",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-extra-agent-tools",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-knowledge-base-manager",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-knowledge-base-service",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-knowledge-parsers",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-message-bus",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-resource-access-service",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-scheduler-manager",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-session-service",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-storage",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-get-workspace-manager",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-lifespan",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "app-publish-session-event",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "credential-anthropic-credential",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-credential-base",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-credential-factory",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-dash-scope-credential",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-deep-seek-credential",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-gemini-credential",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-moonshot-credential",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-ollama-credential",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-open-ai-credential",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "credential-xai-credential",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "embedding-dash-scope-embedding-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-embedding-cache-base",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-embedding-model-base",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-embedding-model-card",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-embedding-response",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-embedding-usage",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-file-embedding-cache",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-gemini-embedding-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-input-t",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-ollama-embedding-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "embedding-open-ai-embedding-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "event-agent-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-confirm-result",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-custom-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-data-block-delta-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-data-block-end-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-data-block-start-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-event-base",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-event-type",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-exceed-max-iters-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-external-execution-result-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-hint-block-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-model-call-end-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-model-call-start-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-reply-end-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-reply-end-reason",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-reply-finished-reason",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-reply-start-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-require-external-execution-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-require-user-confirm-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-text-block-delta-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-text-block-end-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-text-block-start-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-thinking-block-delta-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-thinking-block-end-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-thinking-block-start-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-tool-call-delta-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-tool-call-end-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-tool-call-start-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-tool-result-data-delta-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-tool-result-end-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-tool-result-start-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-tool-result-text-delta-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-user-confirm-result-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "event-user-interrupt-event",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "exception-agent-oriented-exception",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "exception-developer-oriented-exception",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "exception-tool-group-inactive-error",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "exception-tool-interrupted-error",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "exception-tool-json-decode-error",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "exception-tool-not-found-error",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "formatter-anthropic-chat-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-anthropic-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-dash-scope-chat-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-dash-scope-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-deep-seek-chat-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-deep-seek-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-formatter-base",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-gemini-chat-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-gemini-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-moonshot-chat-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-moonshot-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-ollama-chat-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-ollama-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-open-ai-chat-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-open-ai-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-open-ai-response-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-open-ai-response-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-xai-chat-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "formatter-xai-multi-agent-formatter",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "mcp-http-mcp-config",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "mcp-mcp-client",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "mcp-stdio-mcp-config",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "message-assistant-msg",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-base64-source",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-content-block",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-content-block-types",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-data-block",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-hint-block",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-msg",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-system-msg",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-text-block",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-thinking-block",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-tool-call-block",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-tool-call-state",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-tool-result-block",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-tool-result-state",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-url-source",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-usage",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "message-user-msg",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "middleware-agentic-memory-middleware",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "middleware-mem0-middleware",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "middleware-middleware-base",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "middleware-rag-middleware",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "middleware-re-me-middleware",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "middleware-reply-budget-control-middleware",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "middleware-tts-middleware",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "middleware-tracing-middleware",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "model-anthropic-chat-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-chat-model-base",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-chat-response",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-chat-usage",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-dash-scope-chat-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-deep-seek-chat-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-finished-reason",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-gemini-chat-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-model-card",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-moonshot-chat-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-ollama-chat-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-open-ai-chat-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-open-ai-response-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-structured-response",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "model-xai-chat-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "permission-additional-working-directory",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "permission-permission-behavior",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "permission-permission-context",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "permission-permission-decision",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "permission-permission-engine",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "permission-permission-mode",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "permission-permission-rule",
+      "layer": "agent",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-approx-token-chunker",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-chunk",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-chunker-base",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-document-summary",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-elasticsearch-store",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-excel-parser",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-image-parser",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-knowledge-base",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-milvus-lite-store",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-mongo-db-store",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-pdf-parser",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-ppt-parser",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-parser-base",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-qdrant-store",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-section",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-text-parser",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-vector-record",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-vector-search-result",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-vector-store-base",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "rag-word-parser",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "skill-local-skill-loader",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "skill-skill",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "skill-skill-loader-base",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "state-agent-state",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "state-read-cache-entry",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "state-reply-context",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "state-task",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "state-task-context",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "state-tool-context",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "tool-backend-base",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-bash",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-dangerous-commands",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-dangerous-node-types",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-default-dangerous-directories",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-default-dangerous-files",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-default-meta-tool-response-template",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-default-skill-instruction",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-edit",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-exec-result",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-function",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-function-tool",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-glob",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-grep",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-local-backend",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-mcp-tool",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-params-base",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-power-shell",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-read",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-registered-tool",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-reset-tools",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-task-create",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-task-get",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-task-list",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-task-update",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-tool-base",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-tool-choice",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-tool-chunk",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-tool-group",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-tool-middleware-base",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-tool-response",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-toolkit",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tool-write",
+      "layer": "tool",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-dash-scope-cosy-voice-tts-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-dash-scope-realtime-tts-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-dash-scope-tts-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-gemini-tts-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-open-aitts-model",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-tts-model-base",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-tts-model-card",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-tts-response",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "tts-tts-usage",
+      "layer": "model",
+      "independent": false
+    },
+    {
+      "capability_id": "types-agent-hook-types",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "types-embedding",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "types-error-info",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "types-error-type",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "types-json-primitive",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "types-json-serializable-object",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "types-re-act-agent-hook-types",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "types-reply-finished-reason",
+      "layer": "foundation",
+      "independent": true
+    },
+    {
+      "capability_id": "workspace-apple-container-backend",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-apple-container-workspace",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-body-inline-limit",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-bubblewrap-backend",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-bubblewrap-workspace",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-data-dir",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-gateway-log",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-gateway-script",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-gateway-venv",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-glob-helper-script",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-mcp-file",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-sessions-dir",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-skills-dir",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-default-workspace-instructions",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-daytona-backend",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-daytona-workspace",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-docker-backend",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-docker-workspace",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-e2-b-backend",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-e2-b-workspace",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-gateway-client",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-gateway-mcp-client",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-gateway-mcp-tool",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-k8s-backend",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-k8s-workspace",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-local-workspace",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-offloader",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-open-sandbox-backend",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-open-sandbox-workspace",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-sandbox-tmp-dir",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-shim-script",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-sandboxed-workspace-base",
+      "layer": "extended",
+      "independent": false
+    },
+    {
+      "capability_id": "workspace-workspace-base",
+      "layer": "extended",
+      "independent": false
+    }
+  ],
+  "edges": [],
+  "topological_order": [
+    "agent-acting",
+    "agent-agent",
+    "agent-context-config",
+    "agent-exit",
+    "agent-injection-config",
+    "agent-model-config",
+    "agent-re-act-config",
+    "agent-reasoning",
+    "agent-summary-schema",
+    "agentscope-logger",
+    "agentscope-set-id-factory",
+    "agentscope-set-timestamp-factory",
+    "agentscope-setup-logger",
+    "app-agent-middleware-factory",
+    "app-agent-tool-factory",
+    "app-event-projector",
+    "app-sub-agent-template",
+    "app-create-app",
+    "app-enqueue-index-task",
+    "app-enqueue-run-trigger",
+    "app-get-background-task-manager",
+    "app-get-blob-store",
+    "app-get-chat-run-registry",
+    "app-get-chat-service",
+    "app-get-current-user-id",
+    "app-get-extra-agent-middlewares",
+    "app-get-extra-agent-tools",
+    "app-get-knowledge-base-manager",
+    "app-get-knowledge-base-service",
+    "app-get-knowledge-parsers",
+    "app-get-message-bus",
+    "app-get-resource-access-service",
+    "app-get-scheduler-manager",
+    "app-get-session-service",
+    "app-get-storage",
+    "app-get-workspace-manager",
+    "app-lifespan",
+    "app-publish-session-event",
+    "credential-anthropic-credential",
+    "credential-credential-base",
+    "credential-credential-factory",
+    "credential-dash-scope-credential",
+    "credential-deep-seek-credential",
+    "credential-gemini-credential",
+    "credential-moonshot-credential",
+    "credential-ollama-credential",
+    "credential-open-ai-credential",
+    "credential-xai-credential",
+    "embedding-dash-scope-embedding-model",
+    "embedding-embedding-cache-base",
+    "embedding-embedding-model-base",
+    "embedding-embedding-model-card",
+    "embedding-embedding-response",
+    "embedding-embedding-usage",
+    "embedding-file-embedding-cache",
+    "embedding-gemini-embedding-model",
+    "embedding-input-t",
+    "embedding-ollama-embedding-model",
+    "embedding-open-ai-embedding-model",
+    "event-agent-event",
+    "event-confirm-result",
+    "event-custom-event",
+    "event-data-block-delta-event",
+    "event-data-block-end-event",
+    "event-data-block-start-event",
+    "event-event-base",
+    "event-event-type",
+    "event-exceed-max-iters-event",
+    "event-external-execution-result-event",
+    "event-hint-block-event",
+    "event-model-call-end-event",
+    "event-model-call-start-event",
+    "event-reply-end-event",
+    "event-reply-end-reason",
+    "event-reply-finished-reason",
+    "event-reply-start-event",
+    "event-require-external-execution-event",
+    "event-require-user-confirm-event",
+    "event-text-block-delta-event",
+    "event-text-block-end-event",
+    "event-text-block-start-event",
+    "event-thinking-block-delta-event",
+    "event-thinking-block-end-event",
+    "event-thinking-block-start-event",
+    "event-tool-call-delta-event",
+    "event-tool-call-end-event",
+    "event-tool-call-start-event",
+    "event-tool-result-data-delta-event",
+    "event-tool-result-end-event",
+    "event-tool-result-start-event",
+    "event-tool-result-text-delta-event",
+    "event-user-confirm-result-event",
+    "event-user-interrupt-event",
+    "exception-agent-oriented-exception",
+    "exception-developer-oriented-exception",
+    "exception-tool-group-inactive-error",
+    "exception-tool-interrupted-error",
+    "exception-tool-json-decode-error",
+    "exception-tool-not-found-error",
+    "formatter-anthropic-chat-formatter",
+    "formatter-anthropic-multi-agent-formatter",
+    "formatter-dash-scope-chat-formatter",
+    "formatter-dash-scope-multi-agent-formatter",
+    "formatter-deep-seek-chat-formatter",
+    "formatter-deep-seek-multi-agent-formatter",
+    "formatter-formatter-base",
+    "formatter-gemini-chat-formatter",
+    "formatter-gemini-multi-agent-formatter",
+    "formatter-moonshot-chat-formatter",
+    "formatter-moonshot-multi-agent-formatter",
+    "formatter-ollama-chat-formatter",
+    "formatter-ollama-multi-agent-formatter",
+    "formatter-open-ai-chat-formatter",
+    "formatter-open-ai-multi-agent-formatter",
+    "formatter-open-ai-response-formatter",
+    "formatter-open-ai-response-multi-agent-formatter",
+    "formatter-xai-chat-formatter",
+    "formatter-xai-multi-agent-formatter",
+    "mcp-http-mcp-config",
+    "mcp-mcp-client",
+    "mcp-stdio-mcp-config",
+    "message-assistant-msg",
+    "message-base64-source",
+    "message-content-block",
+    "message-content-block-types",
+    "message-data-block",
+    "message-hint-block",
+    "message-msg",
+    "message-system-msg",
+    "message-text-block",
+    "message-thinking-block",
+    "message-tool-call-block",
+    "message-tool-call-state",
+    "message-tool-result-block",
+    "message-tool-result-state",
+    "message-url-source",
+    "message-usage",
+    "message-user-msg",
+    "middleware-agentic-memory-middleware",
+    "middleware-mem0-middleware",
+    "middleware-middleware-base",
+    "middleware-rag-middleware",
+    "middleware-re-me-middleware",
+    "middleware-reply-budget-control-middleware",
+    "middleware-tts-middleware",
+    "middleware-tracing-middleware",
+    "model-anthropic-chat-model",
+    "model-chat-model-base",
+    "model-chat-response",
+    "model-chat-usage",
+    "model-dash-scope-chat-model",
+    "model-deep-seek-chat-model",
+    "model-finished-reason",
+    "model-gemini-chat-model",
+    "model-model-card",
+    "model-moonshot-chat-model",
+    "model-ollama-chat-model",
+    "model-open-ai-chat-model",
+    "model-open-ai-response-model",
+    "model-structured-response",
+    "model-xai-chat-model",
+    "permission-additional-working-directory",
+    "permission-permission-behavior",
+    "permission-permission-context",
+    "permission-permission-decision",
+    "permission-permission-engine",
+    "permission-permission-mode",
+    "permission-permission-rule",
+    "rag-approx-token-chunker",
+    "rag-chunk",
+    "rag-chunker-base",
+    "rag-document-summary",
+    "rag-elasticsearch-store",
+    "rag-excel-parser",
+    "rag-image-parser",
+    "rag-knowledge-base",
+    "rag-milvus-lite-store",
+    "rag-mongo-db-store",
+    "rag-pdf-parser",
+    "rag-ppt-parser",
+    "rag-parser-base",
+    "rag-qdrant-store",
+    "rag-section",
+    "rag-text-parser",
+    "rag-vector-record",
+    "rag-vector-search-result",
+    "rag-vector-store-base",
+    "rag-word-parser",
+    "skill-local-skill-loader",
+    "skill-skill",
+    "skill-skill-loader-base",
+    "state-agent-state",
+    "state-read-cache-entry",
+    "state-reply-context",
+    "state-task",
+    "state-task-context",
+    "state-tool-context",
+    "tool-backend-base",
+    "tool-bash",
+    "tool-dangerous-commands",
+    "tool-dangerous-node-types",
+    "tool-default-dangerous-directories",
+    "tool-default-dangerous-files",
+    "tool-default-meta-tool-response-template",
+    "tool-default-skill-instruction",
+    "tool-edit",
+    "tool-exec-result",
+    "tool-function",
+    "tool-function-tool",
+    "tool-glob",
+    "tool-grep",
+    "tool-local-backend",
+    "tool-mcp-tool",
+    "tool-params-base",
+    "tool-power-shell",
+    "tool-read",
+    "tool-registered-tool",
+    "tool-reset-tools",
+    "tool-task-create",
+    "tool-task-get",
+    "tool-task-list",
+    "tool-task-update",
+    "tool-tool-base",
+    "tool-tool-choice",
+    "tool-tool-chunk",
+    "tool-tool-group",
+    "tool-tool-middleware-base",
+    "tool-tool-response",
+    "tool-toolkit",
+    "tool-write",
+    "tts-dash-scope-cosy-voice-tts-model",
+    "tts-dash-scope-realtime-tts-model",
+    "tts-dash-scope-tts-model",
+    "tts-gemini-tts-model",
+    "tts-open-aitts-model",
+    "tts-tts-model-base",
+    "tts-tts-model-card",
+    "tts-tts-response",
+    "tts-tts-usage",
+    "types-agent-hook-types",
+    "types-embedding",
+    "types-error-info",
+    "types-error-type",
+    "types-json-primitive",
+    "types-json-serializable-object",
+    "types-re-act-agent-hook-types",
+    "types-reply-finished-reason",
+    "workspace-apple-container-backend",
+    "workspace-apple-container-workspace",
+    "workspace-body-inline-limit",
+    "workspace-bubblewrap-backend",
+    "workspace-bubblewrap-workspace",
+    "workspace-default-data-dir",
+    "workspace-default-gateway-log",
+    "workspace-default-gateway-script",
+    "workspace-default-gateway-venv",
+    "workspace-default-glob-helper-script",
+    "workspace-default-mcp-file",
+    "workspace-default-sessions-dir",
+    "workspace-default-skills-dir",
+    "workspace-default-workspace-instructions",
+    "workspace-daytona-backend",
+    "workspace-daytona-workspace",
+    "workspace-docker-backend",
+    "workspace-docker-workspace",
+    "workspace-e2-b-backend",
+    "workspace-e2-b-workspace",
+    "workspace-gateway-client",
+    "workspace-gateway-mcp-client",
+    "workspace-gateway-mcp-tool",
+    "workspace-k8s-backend",
+    "workspace-k8s-workspace",
+    "workspace-local-workspace",
+    "workspace-offloader",
+    "workspace-open-sandbox-backend",
+    "workspace-open-sandbox-workspace",
+    "workspace-sandbox-tmp-dir",
+    "workspace-shim-script",
+    "workspace-sandboxed-workspace-base",
+    "workspace-workspace-base"
+  ]
+}

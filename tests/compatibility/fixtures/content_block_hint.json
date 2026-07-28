@@ -1,0 +1,10 @@
+{
+  "_fixture_name": "ContentBlock-Hint",
+  "_generated_at": "2026-07-28T09:01:05.857530+00:00",
+  "_description": "Golden snapshot fixture for ContentBlock-Hint",
+  "data": {
+    "type": "hint",
+    "hint": "Please respond in JSON format",
+    "source": "system"
+  }
+}

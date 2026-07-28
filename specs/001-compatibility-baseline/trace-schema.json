@@ -1,0 +1,112 @@
+{
+  "schema_version": "1.0.0",
+  "trace_id": "string (auto-generated UUID for test run)",
+  "input": {
+    "scenario_name": "string",
+    "parameters": {},
+    "timestamp": "string (ISO 8601)"
+  },
+  "model_requests": [
+    {
+      "messages": [
+        {
+          "role": "string",
+          "content": "any"
+        }
+      ],
+      "model": "string",
+      "temperature": 0.0,
+      "max_tokens": 0,
+      "tools": [
+        {}
+      ],
+      "stream": true,
+      "extra_params": {}
+    }
+  ],
+  "model_responses": [
+    {
+      "message": {
+        "role": "string",
+        "content": "any"
+      },
+      "finish_reason": "string",
+      "usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0
+      },
+      "model": "string"
+    }
+  ],
+  "streaming_chunks": [
+    {
+      "index": 0,
+      "delta": {
+        "content": "string"
+      },
+      "finish_reason": "string or null"
+    }
+  ],
+  "tool_calls": [
+    {
+      "tool_name": "string",
+      "arguments": {
+        "arg_name": "arg_value"
+      },
+      "call_id": "string"
+    }
+  ],
+  "tool_results": [
+    {
+      "call_id": "string",
+      "result": {},
+      "error": "string or null"
+    }
+  ],
+  "events": [
+    {
+      "event_type": "string",
+      "sequence_number": 0,
+      "payload": {
+        "key": "value"
+      },
+      "timestamp": "string (generated, normalized)"
+    }
+  ],
+  "memory_mutations": [
+    {
+      "operation": "add",
+      "key": "string",
+      "value": {},
+      "query_params": {}
+    }
+  ],
+  "state_transitions": [
+    {
+      "attribute": "string",
+      "old_value": "any",
+      "new_value": "any"
+    }
+  ],
+  "errors": [
+    {
+      "category": "ValidationError",
+      "message": "string",
+      "cause": "string or null",
+      "timestamp": "string (generated, normalized)"
+    }
+  ],
+  "cancellation": {
+    "cancelled": false,
+    "source": "string or null",
+    "reason": "string or null"
+  },
+  "final_result": {},
+  "side_effects": [
+    {
+      "description": "string",
+      "type": "string"
+    }
+  ]
+}

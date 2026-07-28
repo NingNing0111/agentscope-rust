@@ -1,0 +1,16 @@
+{
+  "_fixture_name": "Msg-assistant-text",
+  "_generated_at": "2026-07-28T09:01:05.856958+00:00",
+  "_description": "Golden snapshot fixture for Msg-assistant-text",
+  "data": {
+    "name": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The weather is sunny today."
+      }
+    ],
+    "role": "assistant",
+    "metadata": {}
+  }
+}

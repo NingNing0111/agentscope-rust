@@ -1,0 +1,23 @@
+{
+  "_fixture_name": "Msg-assistant-with-tool-call",
+  "_generated_at": "2026-07-28T09:01:05.857238+00:00",
+  "_description": "Golden snapshot fixture for Msg-assistant-with-tool-call",
+  "data": {
+    "name": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Let me search for that."
+      },
+      {
+        "type": "tool_call",
+        "id": "call-001",
+        "name": "search",
+        "input": "{\"query\": \"weather in Beijing\"}",
+        "state": "submitted"
+      }
+    ],
+    "role": "assistant",
+    "metadata": {}
+  }
+}

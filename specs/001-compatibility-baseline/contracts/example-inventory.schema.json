@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentscope-rust/schemas/example-inventory.schema.json",
+  "title": "Example Inventory",
+  "description": "Schema for AgentScope official example inventory",
+  "type": "object",
+  "required": ["schema_version", "examples"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "examples": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ExampleEntry" }
+    }
+  },
+  "$defs": {
+    "ExampleEntry": {
+      "type": "object",
+      "required": [
+        "example_id", "title", "description",
+        "source_path", "capabilities_used", "complexity"
+      ],
+      "properties": {
+        "example_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "title": { "type": "string" },
+        "description": { "type": "string", "minLength": 1 },
+        "source_path": {
+          "type": "string",
+          "description": "Path to example source in AgentScope repo"
+        },
+        "capabilities_used": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "List of capability_id values used by this example"
+        },
+        "complexity": {
+          "type": "string",
+          "enum": ["simple", "medium", "complex"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentscope-rust/schemas/api-inventory.schema.json",
+  "title": "API Inventory",
+  "description": "Schema for AgentScope public API inventory",
+  "type": "object",
+  "required": ["schema_version", "capabilities"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Capability" },
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "Capability": {
+      "type": "object",
+      "required": [
+        "capability_id",
+        "category",
+        "module",
+        "python_import_path",
+        "symbol_name",
+        "symbol_type",
+        "description",
+        "source_location",
+        "is_public_api",
+        "has_runtime_behavior",
+        "dependencies"
+      ],
+      "properties": {
+        "capability_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "Unique kebab-case identifier"
+        },
+        "category": {
+          "type": "string",
+          "description": "Functional domain, e.g. 'messaging', 'model', 'tool'"
+        },
+        "module": {
+          "type": "string",
+          "description": "AgentScope module name"
+        },
+        "python_import_path": {
+          "type": "string",
+          "description": "Full Python import path, e.g. 'agentscope.message.Msg'"
+        },
+        "symbol_name": {
+          "type": "string",
+          "description": "Symbol name"
+        },
+        "symbol_type": {
+          "type": "string",
+          "enum": [
+            "module", "class", "function", "method", "protocol",
+            "enum", "event", "exception", "serialized_structure",
+            "decorator", "extension_point"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_location": {
+          "type": "string",
+          "description": "File path with line number, e.g. 'agentscope/message.py:45'"
+        },
+        "doc_location": {
+          "type": ["string", "null"],
+          "description": "Documentation URL"
+        },
+        "is_public_api": {
+          "type": "boolean"
+        },
+        "has_runtime_behavior": {
+          "type": "boolean"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "observable_behaviors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ObservableBehavior" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ObservableBehavior": {
+      "type": "object",
+      "properties": {
+        "input_params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ParamSpec" }
+        },
+        "param_defaults": {
+          "type": "object"
+        },
+        "return_type": { "type": "string" },
+        "serialization_format": { "type": "string" },
+        "event_types": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "event_order": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "streaming_order": { "type": "string" },
+        "state_changes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StateChange" }
+        },
+        "tool_calls": { "type": "boolean" },
+        "memory_writes": { "type": "boolean" },
+        "exceptions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "timeout_behavior": { "type": "string" },
+        "cancellation_behavior": { "type": "string" },
+        "side_effects": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ParamSpec": {
+      "type": "object",
+      "required": ["name", "type", "required"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "required": { "type": "boolean" },
+        "default": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "StateChange": {
+      "type": "object",
+      "required": ["attribute", "to"],
+      "properties": {
+        "attribute": { "type": "string" },
+        "from": { "type": "string" },
+        "to": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

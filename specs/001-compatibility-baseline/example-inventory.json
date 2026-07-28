@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0.0",
+  "examples": [
+    {
+      "example_id": "agent-service",
+      "title": "Agent Service (FastAPI multi-tenant)",
+      "description": "Demonstrates running AgentScope as a FastAPI multi-tenant service with MCP clients, storage backends, knowledge base management, and workspace management.",
+      "source_path": "examples/agent_service/main.py",
+      "capabilities_used": [
+        "mcp-mcpclient",
+        "mcp-stdiomcpconfig",
+        "mcp-httpmcpconfig",
+        "app-create-app",
+        "app-subagenttemplate",
+        "app-inmemorymessagebus",
+        "permission-permissioncontext",
+        "permission-permissionmode",
+        "rag-qdrantstore",
+        "workspace-localworkspace",
+        "app-collectionperkbmanager",
+        "app-redisstorage"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "example_id": "rag-integrate-with-agent",
+      "title": "RAG Middleware Integration",
+      "description": "Wires RAGMiddleware into an Agent for knowledge-grounded conversations. Demonstrates static mode (auto-inject hints) and agentic mode (tool-based search).",
+      "source_path": "examples/rag/integrate_with_agent.py",
+      "capabilities_used": [
+        "agent-agent",
+        "event-textblockdeltaevent",
+        "event-toolcalldeltaevent",
+        "event-toolcallstartevent",
+        "event-replystartevent",
+        "middleware-ragmiddleware",
+        "credential-dashscopecredential",
+        "model-dashscopechatmodel",
+        "tool-read",
+        "tool-write",
+        "rag-knowledgebase",
+        "rag-qdrantstore",
+        "rag-textparser",
+        "rag-approxtokenchunker",
+        "embedding-dashscopeembeddingmodel",
+        "message-msg",
+        "state-agentstate"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "example_id": "rag-index-and-search",
+      "title": "RAG Index & Search Pipeline",
+      "description": "Library-mode RAG walk-through: parsing, chunking, embedding, inserting into vector store, and searching — all without FastAPI.",
+      "source_path": "examples/rag/index_and_search.py",
+      "capabilities_used": [
+        "rag-qdrantstore",
+        "rag-textparser",
+        "rag-approxtokenchunker",
+        "rag-knowledgebase",
+        "embedding-dashscopeembeddingmodel",
+        "credential-dashscopecredential",
+        "rag-vectorsearchresult"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "example_id": "agentic-memory",
+      "title": "Agentic Memory Middleware (Filesystem-backed)",
+      "description": "Demonstrates long-term memory using AgenticMemoryMiddleware with filesystem-backed Markdown storage. The agent persists and recalls durable user information across turns.",
+      "source_path": "examples/long_term_memory/agentic_memory/main.py",
+      "capabilities_used": [
+        "agent-agent",
+        "event-textblockdeltaevent",
+        "event-toolcalldeltaevent",
+        "event-toolcallstartevent",
+        "middleware-agenticmemorymiddleware",
+        "credential-dashscopecredential",
+        "model-dashscopechatmodel",
+        "tool-read",
+        "tool-write",
+        "message-msg",
+        "state-agentstate",
+        "event-replystartevent",
+        "tool-taskcreate",
+        "tool-tasklist",
+        "tool-taskget",
+        "tool-taskupdate"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "example_id": "mem0-oss-demo",
+      "title": "Mem0 Middleware (Cross-session Memory)",
+      "description": "Drives two independent agent sessions sharing a mem0 store. Demonstrates cross-session memory: session 1 stores facts, session 2 retrieves them.",
+      "source_path": "examples/long_term_memory/mem0/oss_demo.py",
+      "capabilities_used": [
+        "agent-agent",
+        "event-textblockdeltaevent",
+        "event-replystartevent",
+        "event-toolcallstartevent",
+        "event-toolcallresultrecord",
+        "middleware-mem0middleware",
+        "credential-dashscopecredential",
+        "model-dashscopechatmodel",
+        "state-agentstate",
+        "message-msg"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "example_id": "reme-demo",
+      "title": "ReMe Middleware (Embedded Auto-memory)",
+      "description": "Drives two independent agent sessions sharing one embedded ReMe workspace. Session 1 states a preference, middleware auto-persists it; a fresh session 2 recalls it through ReMe search.",
+      "source_path": "examples/long_term_memory/reme/reme_demo.py",
+      "capabilities_used": [
+        "agent-agent",
+        "event-textblockdeltaevent",
+        "event-replystartevent",
+        "event-toolcallstartevent",
+        "middleware-rememiddleware",
+        "credential-dashscopecredential",
+        "model-dashscopechatmodel",
+        "state-agentstate",
+        "message-msg",
+        "tool-memory-search"
+      ],
+      "complexity": "medium"
+    }
+  ]
+}

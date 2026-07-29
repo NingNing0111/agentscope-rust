@@ -3,12 +3,14 @@
 //! These provide deterministic model responses for testing the agent system
 //! without requiring live LLM API calls (per Constitution Article 6).
 
+use std::pin::Pin;
 use std::sync::Mutex;
 
 use agent_scope_message::{ContentBlock, Msg, TextBlock, ToolCallBlock};
 use agent_scope_model::{
     ChatModel, ChatResponse, ChatUsage, ModelCallResult, ModelError, ToolChoice,
 };
+use futures::{Stream, stream};
 use serde_json::Value as JsonValue;
 
 // ---------------------------------------------------------------------------
@@ -23,6 +25,10 @@ pub struct MockModel {
     response_text: String,
     #[allow(dead_code)]
     block_id: String,
+    /// When true, `call_api` returns `ModelCallResult::Stream` instead of `Complete`.
+    pub stream_mode: bool,
+    /// Number of chunks to split the response into when stream_mode is true.
+    pub stream_chunks: usize,
 }
 
 impl MockModel {
@@ -32,7 +38,18 @@ impl MockModel {
             name: name.into(),
             response_text: response_text.into(),
             block_id: uuid::Uuid::new_v4().as_simple().to_string(),
+            stream_mode: false,
+            stream_chunks: 1,
         }
+    }
+
+    /// Enable streaming mode with the given number of chunks.
+    /// All chunks share the same block_id for StreamAccumulator merging.
+    #[allow(dead_code)]
+    pub fn with_stream(mut self, chunks: usize) -> Self {
+        self.stream_mode = true;
+        self.stream_chunks = chunks.max(1);
+        self
     }
 }
 
@@ -43,7 +60,7 @@ impl ChatModel for MockModel {
     }
 
     fn stream_enabled(&self) -> bool {
-        false
+        self.stream_mode
     }
 
     async fn call_api(
@@ -53,11 +70,44 @@ impl ChatModel for MockModel {
         _tools: Option<&[JsonValue]>,
         _tool_choice: Option<&ToolChoice>,
     ) -> Result<ModelCallResult, ModelError> {
-        let mut resp = ChatResponse::default();
-        let tb = TextBlock::new(self.response_text.clone());
-        resp.content.push(ContentBlock::Text(tb));
-        resp.usage = Some(ChatUsage::default());
-        Ok(ModelCallResult::Complete(resp))
+        if self.stream_mode {
+            let text = self.response_text.clone();
+            let total_chars = text.len();
+            let n_chunks = self.stream_chunks;
+            let chunk_size = (total_chars as f64 / n_chunks as f64).ceil() as usize;
+            // Shared block_id so StreamAccumulator merges all chunks into one TextBlock
+            let shared_block_id = uuid::Uuid::new_v4().as_simple().to_string();
+            let resp_id = uuid::Uuid::new_v4().as_simple().to_string();
+
+            let chunks: Vec<ChatResponse> = text
+                .chars()
+                .collect::<Vec<_>>()
+                .chunks(chunk_size)
+                .enumerate()
+                .map(|(i, chars)| {
+                    let mut resp = ChatResponse::default();
+                    let mut tb = TextBlock::new(chars.iter().collect::<String>());
+                    tb.id = shared_block_id.clone();
+                    resp.content.push(ContentBlock::Text(tb));
+                    resp.id = resp_id.clone();
+                    // Usage on last chunk only (mimics DashScope behavior)
+                    if i == n_chunks - 1 {
+                        resp.usage = Some(ChatUsage::default());
+                    }
+                    resp
+                })
+                .collect();
+
+            let stream: Pin<Box<dyn Stream<Item = Result<ChatResponse, ModelError>> + Send>> =
+                Box::pin(stream::iter(chunks.into_iter().map(Ok)));
+            Ok(ModelCallResult::Stream(stream))
+        } else {
+            let mut resp = ChatResponse::default();
+            let tb = TextBlock::new(self.response_text.clone());
+            resp.content.push(ContentBlock::Text(tb));
+            resp.usage = Some(ChatUsage::default());
+            Ok(ModelCallResult::Complete(resp))
+        }
     }
 }
 

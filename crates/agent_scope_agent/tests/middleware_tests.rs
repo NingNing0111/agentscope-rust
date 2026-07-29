@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use agent_scope_agent::{
     Agent, AgentConfig, AgentError, ContextConfig, Middleware, ReActAgent, ReActConfig,
 };
-use agent_scope_message::factory::user_msg;
 use agent_scope_message::Msg;
+use agent_scope_message::factory::user_msg;
 use serde_json::Value as JsonValue;
 
 mod mocks;

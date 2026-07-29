@@ -147,6 +147,10 @@ impl ReActConfig {
 /// Context window management configuration.
 #[derive(Debug, Clone)]
 pub struct ContextConfig {
+    /// Whether context compression is enabled (default: false).
+    /// When enabled, compression runs each iteration before model.call().
+    /// Corresponds to Python `ContextConfig.enable` in `_react_agent.py`.
+    pub enable: bool,
     /// Fraction of context_size that triggers compression (0 < ratio < 1.0).
     pub trigger_ratio: f64,
     /// Fraction of context_size reserved for model response (0 <= ratio < trigger_ratio).
@@ -160,6 +164,7 @@ pub struct ContextConfig {
 impl Default for ContextConfig {
     fn default() -> Self {
         Self {
+            enable: false,
             trigger_ratio: 0.8,
             reserve_ratio: 0.1,
             compression_prompt: "<STD_CP_PROMPT>".into(),
@@ -294,6 +299,7 @@ mod tests {
     #[test]
     fn test_context_config_defaults() {
         let config = ContextConfig::default();
+        assert!(!config.enable);
         assert_eq!(config.trigger_ratio, 0.8);
         assert_eq!(config.reserve_ratio, 0.1);
         assert_eq!(config.tool_result_limit, 4096);

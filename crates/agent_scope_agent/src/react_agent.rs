@@ -20,9 +20,8 @@ use crate::react_loop;
 struct AgentInner {
     config: AgentConfig,
     react_config: ReActConfig,
-    /// Stored for deferred compression integration.
+    /// Context compression configuration, wired into react_loop.
     /// See Python AgentScope's `Agent.context_config` used in `_compress_memory_if_needed()`.
-    #[allow(dead_code)]
     context_config: ContextConfig,
     state: RwLock<AgentState>,
     middlewares: Vec<Arc<dyn Middleware>>,
@@ -185,6 +184,7 @@ async fn do_reply(inner: &AgentInner, input: Option<Vec<Msg>>) -> Result<Msg, Ag
         session_id: &session_id,
         reply_id: &reply_id,
         react_config: &inner.react_config,
+        context_config: &inner.context_config,
         model: &inner.config.model,
         toolkit: &inner.config.toolkit,
         middlewares: &inner.middlewares,

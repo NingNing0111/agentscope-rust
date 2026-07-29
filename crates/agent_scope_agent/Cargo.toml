@@ -1,0 +1,29 @@
+[package]
+name = "agent_scope_agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent_scope_model = { path = "../agent_scope_model" }
+agent_scope_tool = { path = "../agent_scope_tool" }
+agent_scope_state = { path = "../agent_scope_state" }
+agent_scope_message = { path = "../agent_scope_message" }
+agent_scope_event = { path = "../agent_scope_event" }
+agent_scope_types = { path = "../agent_scope_types" }
+
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
+futures = "0.3"
+async-trait = "0.1"
+async-stream = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+tracing = "0.1"
+thiserror = "2"
+uuid.workspace = true
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[dev-dependencies]
+schemars = { workspace = true }
+uuid = { workspace = true }

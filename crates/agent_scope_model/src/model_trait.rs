@@ -206,7 +206,10 @@ pub trait ChatModel: Send + Sync {
     fn list_models(
         parsed_cards: &[(String, JsonValue)],
         base_parameter_schema: &JsonValue,
-    ) -> Result<Vec<ModelCard>, ModelError> {
+    ) -> Result<Vec<ModelCard>, ModelError>
+    where
+        Self: Sized,
+    {
         let mut cards = Vec::new();
 
         for (_filename, card_value) in parsed_cards {

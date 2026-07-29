@@ -1,0 +1,336 @@
+//! Configuration types for agent construction and behavior.
+//!
+//! Includes [`AgentConfig`] (construction parameters), [`ReActConfig`] (loop behavior),
+//! and [`ContextConfig`] (context window management).
+
+use std::sync::Arc;
+
+use agent_scope_model::ChatModel;
+use agent_scope_tool::ToolKit;
+
+use crate::agent_error::AgentError;
+
+// ---------------------------------------------------------------------------
+// AgentConfig
+// ---------------------------------------------------------------------------
+
+/// Construction configuration for an agent.
+///
+/// Set once at construction time; immutable thereafter.
+pub struct AgentConfig {
+    /// Agent identifier — used in messages and events.
+    pub name: String,
+    /// System prompt prepended to model context.
+    pub system_prompt: String,
+    /// Model for reasoning calls.
+    pub model: Arc<dyn ChatModel>,
+    /// Registered tools for tool-calling (optional).
+    pub toolkit: Option<ToolKit>,
+}
+
+impl AgentConfig {
+    /// Create a new builder.
+    pub fn builder() -> AgentConfigBuilder {
+        AgentConfigBuilder::default()
+    }
+}
+
+/// Builder for [`AgentConfig`].
+#[derive(Default)]
+pub struct AgentConfigBuilder {
+    name: Option<String>,
+    system_prompt: String,
+    model: Option<Arc<dyn ChatModel>>,
+    toolkit: Option<ToolKit>,
+}
+
+impl AgentConfigBuilder {
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = prompt.into();
+        self
+    }
+
+    pub fn model(mut self, model: Arc<dyn ChatModel>) -> Self {
+        self.model = Some(model);
+        self
+    }
+
+    pub fn toolkit(mut self, toolkit: ToolKit) -> Self {
+        self.toolkit = Some(toolkit);
+        self
+    }
+
+    /// Build the config, validating all fields.
+    pub fn build(self) -> Result<AgentConfig, AgentError> {
+        let name = self.name.ok_or_else(|| AgentError::InvalidConfig {
+            field: "name".into(),
+            message: "name is required".into(),
+        })?;
+
+        if name.is_empty() {
+            return Err(AgentError::InvalidConfig {
+                field: "name".into(),
+                message: "name must not be empty".into(),
+            });
+        }
+
+        let model = self.model.ok_or_else(|| AgentError::InvalidConfig {
+            field: "model".into(),
+            message: "model is required".into(),
+        })?;
+
+        Ok(AgentConfig {
+            name,
+            system_prompt: self.system_prompt,
+            model,
+            toolkit: self.toolkit,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReActConfig
+// ---------------------------------------------------------------------------
+
+/// Loop behavior configuration for [`ReActAgent`](super::ReActAgent).
+#[derive(Debug, Clone)]
+pub struct ReActConfig {
+    /// Maximum reasoning-acting iterations per reply.
+    pub max_iters: u32,
+    /// Stop on permission denial (vs. waiting for confirmation).
+    pub stop_on_reject: bool,
+    /// Message returned when the reply is interrupted.
+    pub interruption_message: String,
+    /// Extra iterations allowed when structured output parsing fails.
+    pub structured_output_grace_iters: u32,
+}
+
+impl Default for ReActConfig {
+    fn default() -> Self {
+        Self {
+            max_iters: 20,
+            stop_on_reject: false,
+            interruption_message: "The execution was interrupted.".into(),
+            structured_output_grace_iters: 3,
+        }
+    }
+}
+
+impl ReActConfig {
+    /// Validate configuration.
+    pub fn validate(&self) -> Result<(), AgentError> {
+        if self.max_iters == 0 {
+            return Err(AgentError::InvalidConfig {
+                field: "max_iters".into(),
+                message: "max_iters must be > 0".into(),
+            });
+        }
+        if self.structured_output_grace_iters == 0 {
+            return Err(AgentError::InvalidConfig {
+                field: "structured_output_grace_iters".into(),
+                message: "structured_output_grace_iters must be > 0".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ContextConfig
+// ---------------------------------------------------------------------------
+
+/// Context window management configuration.
+#[derive(Debug, Clone)]
+pub struct ContextConfig {
+    /// Fraction of context_size that triggers compression (0 < ratio < 1.0).
+    pub trigger_ratio: f64,
+    /// Fraction of context_size reserved for model response (0 <= ratio < trigger_ratio).
+    pub reserve_ratio: f64,
+    /// System prompt for compression model calls.
+    pub compression_prompt: String,
+    /// Truncation limit for tool result content (characters).
+    pub tool_result_limit: usize,
+}
+
+impl Default for ContextConfig {
+    fn default() -> Self {
+        Self {
+            trigger_ratio: 0.8,
+            reserve_ratio: 0.1,
+            compression_prompt: "<STD_CP_PROMPT>".into(),
+            tool_result_limit: 4096,
+        }
+    }
+}
+
+impl ContextConfig {
+    /// Validate configuration.
+    pub fn validate(&self) -> Result<(), AgentError> {
+        if self.trigger_ratio <= 0.0 || self.trigger_ratio >= 1.0 {
+            return Err(AgentError::InvalidConfig {
+                field: "trigger_ratio".into(),
+                message: "trigger_ratio must be in (0.0, 1.0)".into(),
+            });
+        }
+        if self.reserve_ratio < 0.0 || self.reserve_ratio >= self.trigger_ratio {
+            return Err(AgentError::InvalidConfig {
+                field: "reserve_ratio".into(),
+                message: "reserve_ratio must be in [0.0, trigger_ratio)".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_scope_message::Msg;
+    use agent_scope_model::{ChatResponse, ModelCallResult, ModelError};
+    use serde_json::Value as JsonValue;
+
+    struct DummyModel {
+        name: String,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatModel for DummyModel {
+        fn model_name(&self) -> &str {
+            &self.name
+        }
+        fn stream_enabled(&self) -> bool {
+            false
+        }
+        async fn call_api(
+            &self,
+            _model: &str,
+            _messages: &[Msg],
+            _tools: Option<&[JsonValue]>,
+            _tool_choice: Option<&agent_scope_model::ToolChoice>,
+        ) -> Result<ModelCallResult, ModelError> {
+            Ok(ModelCallResult::Complete(ChatResponse::default()))
+        }
+    }
+
+    /// T014: Empty name rejected.
+    #[test]
+    fn test_agent_config_empty_name_rejected() {
+        let result = AgentConfig::builder().name("").build();
+        assert!(result.is_err());
+        if let Err(AgentError::InvalidConfig { field, .. }) = result {
+            assert_eq!(field, "name");
+        } else {
+            panic!("expected InvalidConfig");
+        }
+    }
+
+    /// T014: Missing name rejected.
+    #[test]
+    fn test_agent_config_missing_name_rejected() {
+        let result = AgentConfig::builder().build();
+        assert!(result.is_err());
+    }
+
+    /// T014: Missing model rejected.
+    #[test]
+    fn test_agent_config_missing_model_rejected() {
+        let result = AgentConfig::builder().name("test").build();
+        assert!(matches!(result, Err(AgentError::InvalidConfig { .. })));
+    }
+
+    /// T014: Valid config accepted.
+    #[test]
+    fn test_agent_config_valid_accepted() {
+        let model = Arc::new(DummyModel {
+            name: "dummy".into(),
+        });
+        let config = AgentConfig::builder()
+            .name("test-agent")
+            .model(model)
+            .build()
+            .unwrap();
+        assert_eq!(config.name, "test-agent");
+        assert!(config.system_prompt.is_empty());
+        assert!(config.toolkit.is_none());
+    }
+
+    /// T015: ReActConfig default values.
+    #[test]
+    fn test_react_config_defaults() {
+        let config = ReActConfig::default();
+        assert_eq!(config.max_iters, 20);
+        assert!(!config.stop_on_reject);
+        assert_eq!(config.structured_output_grace_iters, 3);
+        assert!(!config.interruption_message.is_empty());
+    }
+
+    /// T015: ReActConfig max_iters=0 rejected.
+    #[test]
+    fn test_react_config_max_iters_zero_rejected() {
+        let config = ReActConfig {
+            max_iters: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    /// T015: ReActConfig valid config passes.
+    #[test]
+    fn test_react_config_valid_passes() {
+        let config = ReActConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    /// ContextConfig defaults.
+    #[test]
+    fn test_context_config_defaults() {
+        let config = ContextConfig::default();
+        assert_eq!(config.trigger_ratio, 0.8);
+        assert_eq!(config.reserve_ratio, 0.1);
+        assert_eq!(config.tool_result_limit, 4096);
+    }
+
+    /// ContextConfig invalid trigger_ratio rejected.
+    #[test]
+    fn test_context_config_invalid_trigger_ratio() {
+        assert!(
+            ContextConfig {
+                trigger_ratio: 0.0,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ContextConfig {
+                trigger_ratio: 1.0,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    /// ContextConfig reserve >= trigger rejected.
+    #[test]
+    fn test_context_config_reserve_ge_trigger_rejected() {
+        assert!(
+            ContextConfig {
+                trigger_ratio: 0.5,
+                reserve_ratio: 0.5,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+}

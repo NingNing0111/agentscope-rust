@@ -4,9 +4,10 @@
 //! authors to implement only the hooks they need.
 
 use agent_scope_message::{Msg, ToolCallBlock};
-use agent_scope_model::ChatResponse;
+use agent_scope_model::{ChatModel, ChatResponse};
 use agent_scope_tool::ToolExecOutput;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 use crate::agent_error::AgentError;
 
@@ -24,6 +25,7 @@ pub trait Middleware: Send + Sync {
         &self,
         _agent_name: &str,
         _input: &mut Option<Vec<Msg>>,
+        _model: &Arc<dyn ChatModel>,
     ) -> Result<(), AgentError> {
         Ok(())
     }
@@ -33,6 +35,15 @@ pub trait Middleware: Send + Sync {
         &self,
         _agent_name: &str,
         _result: &Result<Msg, AgentError>,
+    ) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    /// Called after pre_reply, before the first model call. Can modify system prompt.
+    async fn on_system_prompt(
+        &self,
+        _agent_name: &str,
+        _current_prompt: &mut String,
     ) -> Result<(), AgentError> {
         Ok(())
     }

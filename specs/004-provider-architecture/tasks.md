@@ -1,5 +1,15 @@
 # Tasks: Provider Architecture & DashScope Integration
 
+> **⚠️ SUPERSEDED**: This Feature 004 plan has been replaced by **Feature 005** (`specs/005-provider-extraction-dashscope/`).
+>
+> Key differences in Feature 005:
+> - OpenAI code was **deleted** (not extracted to a separate crate) — `agent_scope_openai/` crate was never created
+> - `ModelCard::from_yaml()` was refactored to `from_value(json_value, base_schema)` — YAML parsing pushed to Provider crates
+> - `agent_scope_model` is now pure (zero HTTP/protocol deps) ✅
+> - `agent_scope_dashscope` is the only Provider crate, ships as a standalone implementation ✅
+> - All 55 tasks below remain unexecuted because Feature 005 took a different approach.
+
+
 **Input**: Design documents from `/specs/004-provider-architecture/`
 
 **Prerequisites**: plan.md (required), spec.md (required), research.md, data-model.md, contracts/

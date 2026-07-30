@@ -8,6 +8,7 @@ use agent_scope_agent::{
 };
 use agent_scope_message::Msg;
 use agent_scope_message::factory::user_msg;
+use agent_scope_model::ChatModel;
 use serde_json::Value as JsonValue;
 
 mod mocks;
@@ -36,6 +37,7 @@ impl Middleware for ReplyTrackingMw {
         &self,
         _agent_name: &str,
         _input: &mut Option<Vec<Msg>>,
+        _model: &Arc<dyn ChatModel>,
     ) -> Result<(), AgentError> {
         self.pre_called.store(true, Ordering::SeqCst);
         Ok(())
@@ -184,6 +186,7 @@ async fn test_middleware_fifo_order() {
             &self,
             _agent_name: &str,
             _input: &mut Option<Vec<Msg>>,
+            _model: &Arc<dyn ChatModel>,
         ) -> Result<(), AgentError> {
             self.order.lock().unwrap().push(self.idx);
             Ok(())
@@ -276,6 +279,7 @@ impl Middleware for FailingPreReplyMw {
         &self,
         _agent_name: &str,
         _input: &mut Option<Vec<Msg>>,
+        _model: &Arc<dyn ChatModel>,
     ) -> Result<(), AgentError> {
         Err(AgentError::ValidationError {
             message: "blocked by middleware".into(),

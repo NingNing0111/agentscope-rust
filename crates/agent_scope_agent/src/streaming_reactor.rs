@@ -17,9 +17,9 @@ use std::sync::atomic::Ordering;
 
 use agent_scope_event::{
     AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
-    ReplyEndEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent,
-    ToolCallDeltaEvent, ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent,
-    ToolResultStartEvent, ToolResultTextDeltaEvent, UserInterruptEvent,
+    ReplyEndEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent, ToolCallDeltaEvent,
+    ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent, ToolResultStartEvent,
+    ToolResultTextDeltaEvent, UserInterruptEvent,
 };
 use agent_scope_message::{
     ContentBlock, Msg, Role, TextBlock, ToolCallBlock, ToolOutput, ToolResultBlock, ToolResultState,
@@ -29,7 +29,9 @@ use agent_scope_tool::{ToolError, ToolExecOutput};
 use agent_scope_types::{ErrorInfo, ErrorType, ReplyFinishedReason};
 use futures::StreamExt;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
+use crate::agent_error::AgentError;
 use crate::react_agent::AgentInner;
 use crate::stream_handle::StreamHandle;
 
@@ -37,8 +39,10 @@ pub(crate) async fn run_streaming_loop(
     inner: Arc<AgentInner>,
     session_id: String,
     reply_id: String,
+    system_prompt: String,
     stream_handle: StreamHandle,
     event_tx: mpsc::Sender<AgentEvent>,
+    cancel_token: CancellationToken,
 ) {
     let base = EventBase::new;
     let mut cur_iter: u32 = 0;
@@ -51,10 +55,43 @@ pub(crate) async fn run_streaming_loop(
     loop {
         if stream_handle.is_cancelled() || inner.interrupted.load(Ordering::SeqCst) {
             emit_interrupted(&event_tx, &reply_id, &session_id, base).await;
+            let result = Ok(Msg::new(
+                inner.config.name.clone(),
+                vec![ContentBlock::Text(TextBlock::new(
+                    inner.react_config.interruption_message.clone(),
+                ))],
+                Role::Assistant,
+            )
+            .unwrap_or_else(|_| {
+                Msg::new(
+                    inner.config.name.clone(),
+                    vec![ContentBlock::Text(TextBlock::new("Interrupted".into()))],
+                    Role::Assistant,
+                )
+                .unwrap()
+            }));
+            invoke_post_reply(&inner, &result).await;
             return;
         }
         if cur_iter >= inner.react_config.max_iters {
             emit_max_iters(&event_tx, &reply_id, &session_id, &inner.config.name, base).await;
+            let result = {
+                let text = collect_context_text(&inner);
+                Ok(Msg::new(
+                    inner.config.name.clone(),
+                    vec![ContentBlock::Text(TextBlock::new(text))],
+                    Role::Assistant,
+                )
+                .unwrap_or_else(|_| {
+                    Msg::new(
+                        inner.config.name.clone(),
+                        vec![ContentBlock::Text(TextBlock::new("".into()))],
+                        Role::Assistant,
+                    )
+                    .unwrap()
+                }))
+            };
+            invoke_post_reply(&inner, &result).await;
             return;
         }
         cur_iter += 1;
@@ -62,6 +99,12 @@ pub(crate) async fn run_streaming_loop(
         // Prep messages + hooks
         let messages = { inner.state.read().unwrap().context.clone() };
         let mut hook_messages = messages.clone();
+        if !system_prompt.is_empty()
+            && let Ok(system_msg) =
+                agent_scope_message::factory::system_msg("system", &system_prompt)
+        {
+            hook_messages.insert(0, system_msg);
+        }
         let mut hook_tools = inner
             .config
             .toolkit
@@ -73,6 +116,10 @@ pub(crate) async fn run_streaming_loop(
                 .await
             {
                 emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
+                let result = Err(AgentError::ValidationError {
+                    message: e.to_string(),
+                });
+                invoke_post_reply(&inner, &result).await;
                 return;
             }
         }
@@ -100,6 +147,10 @@ pub(crate) async fn run_streaming_loop(
                 .await
             {
                 emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
+                let result = Err(AgentError::ContextCompressionFailed {
+                    reason: e.to_string(),
+                });
+                invoke_post_reply(&inner, &result).await;
                 return;
             }
         }
@@ -113,11 +164,31 @@ pub(crate) async fn run_streaming_loop(
             }))
             .await;
 
-        let result = inner
+        let call_future = inner
             .config
             .model
-            .call(&hook_messages, tool_schemas.as_deref(), None)
-            .await;
+            .call(&hook_messages, tool_schemas.as_deref(), None);
+        let result = tokio::select! {
+            r = call_future => r,
+            _ = cancel_token.cancelled() => {
+                emit_interrupted(&event_tx, &reply_id, &session_id, base).await;
+                let result = Ok(Msg::new(
+                    inner.config.name.clone(),
+                    vec![ContentBlock::Text(TextBlock::new(
+                        inner.react_config.interruption_message.clone(),
+                    ))],
+                    Role::Assistant,
+                ).unwrap_or_else(|_| {
+                    Msg::new(
+                        inner.config.name.clone(),
+                        vec![ContentBlock::Text(TextBlock::new("Interrupted".into()))],
+                        Role::Assistant,
+                    ).unwrap()
+                }));
+                invoke_post_reply(&inner, &result).await;
+                return;
+            }
+        };
 
         match result {
             Ok(ModelCallResult::Complete(response)) => {
@@ -134,6 +205,23 @@ pub(crate) async fn run_streaming_loop(
                     .await
                     .is_done()
                 {
+                    let result = {
+                        let text = collect_context_text(&inner);
+                        Ok(Msg::new(
+                            inner.config.name.clone(),
+                            vec![ContentBlock::Text(TextBlock::new(text))],
+                            Role::Assistant,
+                        )
+                        .unwrap_or_else(|_| {
+                            Msg::new(
+                                inner.config.name.clone(),
+                                vec![ContentBlock::Text(TextBlock::new("".into()))],
+                                Role::Assistant,
+                            )
+                            .unwrap()
+                        }))
+                    };
+                    invoke_post_reply(&inner, &result).await;
                     emit_completed_reply_end(&event_tx, &session_id, &reply_id, base).await;
                     return;
                 }
@@ -147,6 +235,7 @@ pub(crate) async fn run_streaming_loop(
                     &event_tx,
                     &reply_id,
                     &session_id,
+                    &cancel_token,
                     base,
                 )
                 .await;
@@ -158,13 +247,7 @@ pub(crate) async fn run_streaming_loop(
                         tool_calls,
                     } => {
                         // Emit ModelCallEnd if we haven't already (is_last-based)
-                        emit_model_call_end_with_usage(
-                            &event_tx,
-                            &reply_id,
-                            &usage,
-                            base,
-                        )
-                        .await;
+                        emit_model_call_end_with_usage(&event_tx, &reply_id, &usage, base).await;
                         for mw in inner.middlewares.iter() {
                             let _ = mw.post_reasoning(&inner.config.name, &response).await;
                         }
@@ -186,27 +269,52 @@ pub(crate) async fn run_streaming_loop(
                         } else {
                             // No tool calls — write text to context and end
                             add_text_to_context(&inner, &response);
-                            emit_completed_reply_end(
-                                &event_tx,
-                                &session_id,
-                                &reply_id,
-                                base,
-                            )
-                            .await;
+                            let result = {
+                                let text = collect_context_text(&inner);
+                                Ok(Msg::new(
+                                    inner.config.name.clone(),
+                                    vec![ContentBlock::Text(TextBlock::new(text))],
+                                    Role::Assistant,
+                                )
+                                .unwrap_or_else(|_| {
+                                    Msg::new(
+                                        inner.config.name.clone(),
+                                        vec![ContentBlock::Text(TextBlock::new("".into()))],
+                                        Role::Assistant,
+                                    )
+                                    .unwrap()
+                                }))
+                            };
+                            invoke_post_reply(&inner, &result).await;
+                            emit_completed_reply_end(&event_tx, &session_id, &reply_id, base).await;
                             return;
                         }
                     }
                     StreamOutcome::Error { message } => {
                         emit_error_end(&event_tx, &reply_id, &session_id, &message, base).await;
+                        let result: Result<Msg, AgentError> = Err(AgentError::ModelError {
+                            source: agent_scope_model::ModelError::ApiError {
+                                status: 0,
+                                message,
+                                provider: inner.config.model.model_name().into(),
+                            },
+                        });
+                        invoke_post_reply(&inner, &result).await;
                         return;
                     }
                     StreamOutcome::Cancelled => {
+                        let result: Result<Msg, AgentError> = Err(AgentError::CancellationError {
+                            reply_id: reply_id.clone(),
+                        });
+                        invoke_post_reply(&inner, &result).await;
                         return;
                     }
                 }
             }
             Err(e) => {
                 emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
+                let result: Result<Msg, AgentError> = Err(AgentError::ModelError { source: e });
+                invoke_post_reply(&inner, &result).await;
                 return;
             }
         }
@@ -266,13 +374,15 @@ async fn consume_stream_progressive(
     event_tx: &mpsc::Sender<AgentEvent>,
     reply_id: &str,
     session_id: &str,
+    cancel_token: &CancellationToken,
     base: fn() -> EventBase,
 ) -> StreamOutcome {
     let mut acc = StreamAccumulator::new();
     let mut tracker = BlockTracker::new();
     let mut final_usage: Option<ChatUsage> = None;
 
-    while let Some(chunk_result) = stream.next().await {
+    loop {
+        // Check for stream_handle cancellation before each poll.
         if stream_handle.is_cancelled() {
             let _ = event_tx
                 .send(AgentEvent::ReplyEnd(ReplyEndEvent {
@@ -286,8 +396,27 @@ async fn consume_stream_progressive(
             return StreamOutcome::Cancelled;
         }
 
+        // Use select! to allow CancellationToken-based interruption during stream poll.
+        let chunk_result = tokio::select! {
+            r = stream.next() => r,
+            _ = cancel_token.cancelled() => {
+                close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
+                close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+                let _ = event_tx
+                    .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                        base: base(),
+                        session_id: session_id.into(),
+                        reply_id: reply_id.into(),
+                        finished_reason: ReplyFinishedReason::Interrupted,
+                        error: None,
+                    }))
+                    .await;
+                return StreamOutcome::Cancelled;
+            }
+        };
+
         match chunk_result {
-            Ok(chunk) => {
+            Some(Ok(chunk)) => {
                 let is_last = chunk.is_last;
                 let usage = chunk.usage.clone();
 
@@ -317,13 +446,8 @@ async fn consume_stream_progressive(
                                 // First chunk for this tool call — emit start
                                 // Close any open text blocks first (block-type transition)
                                 if had_text {
-                                    close_all_text_blocks(
-                                        &mut tracker,
-                                        event_tx,
-                                        reply_id,
-                                        base,
-                                    )
-                                    .await;
+                                    close_all_text_blocks(&mut tracker, event_tx, reply_id, base)
+                                        .await;
                                 }
 
                                 let _ = event_tx
@@ -340,40 +464,16 @@ async fn consume_stream_progressive(
                         ContentBlock::Text(tb) => {
                             // Check if this signals a tool→text transition:
                             // close active tool blocks
-                            close_active_tool_blocks(
-                                &mut tracker,
-                                event_tx,
-                                reply_id,
-                                base,
-                            )
-                            .await;
+                            close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
 
-                            process_text_block_chunk(
-                                &mut tracker,
-                                tb,
-                                event_tx,
-                                reply_id,
-                                base,
-                            )
-                            .await;
+                            process_text_block_chunk(&mut tracker, tb, event_tx, reply_id, base)
+                                .await;
                         }
                         _ => {
                             // Unknown block type → close tool blocks (transition)
-                            close_active_tool_blocks(
-                                &mut tracker,
-                                event_tx,
-                                reply_id,
-                                base,
-                            )
-                            .await;
+                            close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
                             // Close text blocks too
-                            close_all_text_blocks(
-                                &mut tracker,
-                                event_tx,
-                                reply_id,
-                                base,
-                            )
-                            .await;
+                            close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
                         }
                     }
                 }
@@ -396,13 +496,17 @@ async fn consume_stream_progressive(
                     break;
                 }
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 // Close all tracking before returning error
                 close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
                 close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
                 return StreamOutcome::Error {
                     message: e.to_string(),
                 };
+            }
+            None => {
+                // Stream ended naturally (EOF without is_last)
+                break;
             }
         }
     }
@@ -610,6 +714,20 @@ async fn execute_tool_calls(
             })
         };
 
+        // Call post_acting for Complete results (P2-11 fix).
+        // Extract chunk before .await to avoid holding a borrow on exec_result
+        // (ToolExecOutput::Stream is not Sync, making the future !Send).
+        let post_acting_chunk = match &exec_result {
+            Ok(ToolExecOutput::Complete(chunk)) => Some(chunk.clone()),
+            _ => None,
+        };
+        if let Some(chunk) = post_acting_chunk {
+            let result_clone = ToolExecOutput::Complete(chunk);
+            for mw in inner.middlewares.iter() {
+                let _ = mw.post_acting(&inner.config.name, &result_clone).await;
+            }
+        }
+
         // Emit tool result events and collect output text for context
         let output_text = emit_tool_result_and_collect(
             event_tx,
@@ -620,6 +738,12 @@ async fn execute_tool_calls(
             _base,
         )
         .await;
+
+        // Call post_acting on success (P2-11 fix).
+        // We do this after the result was consumed by emit_tool_result_and_collect
+        // to avoid holding a reference across an await boundary.
+        // post_acting only fires for the Complete variant since Stream is consumed.
+        // The batch path (react_loop.rs) follows the same pattern.
 
         // Feed tool result to context with the ACTUAL collected output
         add_tool_result_to_context(inner, &tc_mut, &output_text);
@@ -656,6 +780,42 @@ fn add_text_to_context(inner: &Arc<AgentInner>, response: &ChatResponse) {
 }
 
 // ---------------------------------------------------------------------------
+// Middleware helpers (P2-11 fix)
+// ---------------------------------------------------------------------------
+
+/// Collect all text from the agent's context to build a result `Msg` for
+/// `post_reply` middleware hooks when the streaming reply completes normally.
+fn collect_context_text(inner: &Arc<AgentInner>) -> String {
+    let state = inner.state.read().unwrap();
+    let mut texts = Vec::new();
+    for msg in &state.context {
+        for block in &msg.content {
+            if let ContentBlock::Text(tb) = block {
+                texts.push(tb.text.clone());
+            }
+        }
+    }
+    texts.join("")
+}
+
+/// Call `post_reply` on every registered middleware.
+///
+/// Error results from middleware hooks are logged (via tracing) but not
+/// propagated — unlike the batch path, streaming exit paths must emit
+/// terminal events even if middleware errors occur.
+async fn invoke_post_reply(inner: &Arc<AgentInner>, result: &Result<Msg, AgentError>) {
+    for mw in inner.middlewares.iter() {
+        if let Err(e) = mw.post_reply(&inner.config.name, result).await {
+            tracing::warn!(
+                agent_name = %inner.config.name,
+                error = %e,
+                "post_reply middleware hook failed"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Outcome
 // ---------------------------------------------------------------------------
 
@@ -664,9 +824,10 @@ enum Outcome {
     Done,
     Continue,
 }
+
 impl Outcome {
     fn is_done(&self) -> bool {
-        *self == Outcome::Done
+        matches!(*self, Outcome::Done)
     }
 }
 
@@ -839,7 +1000,6 @@ async fn emit_text_events_only(
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Tool result emission (US3: streaming tool output)
 // ---------------------------------------------------------------------------
@@ -892,12 +1052,6 @@ async fn emit_tool_result_and_collect(
                 }))
                 .await;
 
-            // Post-acting hook for Complete tools
-            let result_clone = ToolExecOutput::Complete(chunk);
-            // We can't easily call post_acting here without inner reference.
-            // The caller (execute_tool_calls) handles middleware.
-            let _ = result_clone;
-
             text
         }
         Ok(ToolExecOutput::Stream(mut stream)) => {
@@ -937,14 +1091,12 @@ async fn emit_tool_result_and_collect(
                         };
                         collected.push_str(&txt);
                         let _ = tx
-                            .send(AgentEvent::ToolResultTextDelta(
-                                ToolResultTextDeltaEvent {
-                                    base: b(),
-                                    reply_id: rid.into(),
-                                    tool_call_id: tc.id.clone(),
-                                    delta: txt,
-                                },
-                            ))
+                            .send(AgentEvent::ToolResultTextDelta(ToolResultTextDeltaEvent {
+                                base: b(),
+                                reply_id: rid.into(),
+                                tool_call_id: tc.id.clone(),
+                                delta: txt,
+                            }))
                             .await;
                         if chunk.is_last {
                             is_done = true;

@@ -34,6 +34,11 @@ pub enum EventType {
     RequireExternalExecution,
     ExternalExecutionResult,
     Custom,
+    SessionCreated,
+    SessionClosed,
+    SessionSaved,
+    SessionLoaded,
+    SessionTrimmed,
 }
 
 #[cfg(test)]
@@ -90,8 +95,13 @@ mod tests {
             EventType::RequireExternalExecution,
             EventType::ExternalExecutionResult,
             EventType::Custom,
+            EventType::SessionCreated,
+            EventType::SessionClosed,
+            EventType::SessionSaved,
+            EventType::SessionLoaded,
+            EventType::SessionTrimmed,
         ];
-        assert_eq!(variants.len(), 28, "should have 28 event types");
+        assert_eq!(variants.len(), 33, "should have 33 event types");
         for v in variants {
             let json = serde_json::to_string(&v).unwrap();
             let restored: EventType = serde_json::from_str(&json).unwrap();

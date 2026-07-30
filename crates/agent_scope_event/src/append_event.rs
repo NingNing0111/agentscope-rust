@@ -227,7 +227,12 @@ impl AppendEvent for Msg {
             | AgentEvent::UserConfirmResult(_)
             | AgentEvent::RequireExternalExecution(_)
             | AgentEvent::ExternalExecutionResult(_)
-            | AgentEvent::Custom(_) => {}
+            | AgentEvent::Custom(_)
+            | AgentEvent::SessionCreated(_)
+            | AgentEvent::SessionClosed(_)
+            | AgentEvent::SessionSaved(_)
+            | AgentEvent::SessionLoaded(_)
+            | AgentEvent::SessionTrimmed(_) => {}
         }
         Ok(())
     }

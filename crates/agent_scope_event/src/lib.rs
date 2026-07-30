@@ -13,6 +13,7 @@ pub mod custom;
 pub mod event_type;
 pub mod model_events;
 pub mod reply_events;
+pub mod session_events;
 pub mod tool_events;
 
 // Re-export EventBase and EventType
@@ -33,6 +34,10 @@ pub use control_events::{
 pub use custom::CustomEvent;
 pub use model_events::{ModelCallEndEvent, ModelCallStartEvent};
 pub use reply_events::{ReplyEndEvent, ReplyStartEvent};
+pub use session_events::{
+    SessionClosedEvent, SessionCreatedEvent, SessionLoadedEvent, SessionSavedEvent,
+    SessionTrimmedEvent,
+};
 pub use tool_events::{
     ToolCallDeltaEvent, ToolCallEndEvent, ToolCallStartEvent, ToolResultDataDeltaEvent,
     ToolResultEndEvent, ToolResultStartEvent, ToolResultTextDeltaEvent,
@@ -102,6 +107,16 @@ pub enum AgentEvent {
     ExternalExecutionResult(ExternalExecutionResultEvent),
     #[serde(rename = "CUSTOM")]
     Custom(CustomEvent),
+    #[serde(rename = "SESSION_CREATED")]
+    SessionCreated(SessionCreatedEvent),
+    #[serde(rename = "SESSION_CLOSED")]
+    SessionClosed(SessionClosedEvent),
+    #[serde(rename = "SESSION_SAVED")]
+    SessionSaved(SessionSavedEvent),
+    #[serde(rename = "SESSION_LOADED")]
+    SessionLoaded(SessionLoadedEvent),
+    #[serde(rename = "SESSION_TRIMMED")]
+    SessionTrimmed(SessionTrimmedEvent),
 }
 
 #[cfg(test)]

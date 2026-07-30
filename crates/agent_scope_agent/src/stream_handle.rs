@@ -5,8 +5,8 @@
 //! [`StreamHandle::is_cancelled()`] before each model call and tool execution.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::oneshot;
 
 /// Handle passed to the reactor loop for cancellation detection.

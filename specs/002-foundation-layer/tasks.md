@@ -50,17 +50,17 @@
 - [X] T008 [P] [US4] Implement `ReplyFinishedReason` enum (4 variants: Completed, Interrupted, ExceedMaxIters, Error) with `#[serde(rename_all = "snake_case")]` in `crates/agent_scope_types/src/reply.rs`
 - [X] T009 [P] [US4] Implement `ErrorType` enum (8 variants: Authentication, Permission, RateLimit, InvalidRequest, Upstream, Connection, Internal, Unknown) with `#[serde(rename_all = "snake_case")]` in `crates/agent_scope_types/src/error.rs`
 - [X] T010 [US4] Implement `ErrorInfo` struct with `error_type: ErrorType` (default Unknown) and `message: String` in `crates/agent_scope_types/src/error.rs`
-- [X] T01- [ ] T011 [P] [US4] Define `Embedding` type alias (`pub type Embedding = Vec<f64>`) in `crates/agent_scope_types/src/lib.rs`
-- [X] T01- [ ] T012 [P] [US4] Define `JsonValue` type alias (`pub type JsonValue = serde_json::Value`) and implement `JSONSerializableObject` as serde_json::Value in `crates/agent_scope_types/src/json.rs`
-- [X] T01- [ ] T013 [P] [US4] Define agent hook constants (`PRE_REPLY`, `POST_REPLY`, `PRE_PRINT`, `POST_PRINT`, `PRE_OBSERVE`, `POST_OBSERVE`) in `crates/agent_scope_types/src/hook.rs`
-- [X] T01- [ ] T014 [US4] Define ReAct agent hook constants (agent hooks + `PRE_REASONING`, `POST_REASONING`, `PRE_ACTING`, `POST_ACTING`) in `crates/agent_scope_types/src/hook.rs`
-- [X] T01- [ ] T015 [US4] Update `crates/agent_scope_types/src/lib.rs` with public module exports: `pub mod reply; pub mod error; pub mod json; pub mod hook;` and re-export key types
+- [X] T01- [x] T011 [P] [US4] Define `Embedding` type alias (`pub type Embedding = Vec<f64>`) in `crates/agent_scope_types/src/lib.rs`
+- [X] T01- [x] T012 [P] [US4] Define `JsonValue` type alias (`pub type JsonValue = serde_json::Value`) and implement `JSONSerializableObject` as serde_json::Value in `crates/agent_scope_types/src/json.rs`
+- [X] T01- [x] T013 [P] [US4] Define agent hook constants (`PRE_REPLY`, `POST_REPLY`, `PRE_PRINT`, `POST_PRINT`, `PRE_OBSERVE`, `POST_OBSERVE`) in `crates/agent_scope_types/src/hook.rs`
+- [X] T01- [x] T014 [US4] Define ReAct agent hook constants (agent hooks + `PRE_REASONING`, `POST_REASONING`, `PRE_ACTING`, `POST_ACTING`) in `crates/agent_scope_types/src/hook.rs`
+- [X] T01- [x] T015 [US4] Update `crates/agent_scope_types/src/lib.rs` with public module exports: `pub mod reply; pub mod error; pub mod json; pub mod hook;` and re-export key types
 
 ### Tests for User Story 4
 
-- [X] T01- [ ] T016 [P] [US4] Write unit tests for `ReplyFinishedReason` JSON serialization (verify each variant → snake_case string, all 4 variants) in `crates/agent_scope_types/src/reply.rs` (`#[cfg(test)] mod tests`)
-- [X] T01- [ ] T017 [P] [US4] Write unit tests for `ErrorType` serialization (verify each variant → snake_case string) and `ErrorInfo` JSON round-trip in `crates/agent_scope_types/src/error.rs`
-- [X] T01- [ ] T018 [P] [US4] Write unit tests for hook constants (verify all 6 agent hook string values, all 10 ReAct hook values) in `crates/agent_scope_types/src/hook.rs`
+- [X] T01- [x] T016 [P] [US4] Write unit tests for `ReplyFinishedReason` JSON serialization (verify each variant → snake_case string, all 4 variants) in `crates/agent_scope_types/src/reply.rs` (`#[cfg(test)] mod tests`)
+- [X] T01- [x] T017 [P] [US4] Write unit tests for `ErrorType` serialization (verify each variant → snake_case string) and `ErrorInfo` JSON round-trip in `crates/agent_scope_types/src/error.rs`
+- [X] T01- [x] T018 [P] [US4] Write unit tests for hook constants (verify all 6 agent hook string values, all 10 ReAct hook values) in `crates/agent_scope_types/src/hook.rs`
 
 **Checkpoint**: `cargo test -p agent_scope_types` passes all tests. Types module is complete and ready for downstream consumption.
 
@@ -76,7 +76,7 @@
 
 #### ContentBlock Sub-Types
 
-- [X] T01- [ ] T019 [P] [US1] Implement `TextBlock` struct (fields: `text`, `id`, `created_at`, `finished_at`) with `new()` constructor using auto-generated id/timestamp in `crates/agent_scope_message/src/block.rs`
+- [X] T01- [x] T019 [P] [US1] Implement `TextBlock` struct (fields: `text`, `id`, `created_at`, `finished_at`) with `new()` constructor using auto-generated id/timestamp in `crates/agent_scope_message/src/block.rs`
 - [X] T020 [P] [US1] Implement `ThinkingBlock` struct (fields: `thinking`, `id`, `created_at`, `finished_at`) with `#[serde(flatten)] extras: HashMap<String, JsonValue>` for provider-specific field passthrough in `crates/agent_scope_message/src/block.rs`
 - [X] T021 [P] [US1] Implement `HintContent` enum (untagged: `Text(String)`, `Blocks(Vec<HintBlockItem>)`) and `HintBlock` struct (fields: `hint`, `source`, `id`, `created_at`, `finished_at`) in `crates/agent_scope_message/src/block.rs`
 - [X] T022 [P] [US1] Implement `Base64Source` struct (tag `"base64"`, fields: `data`, `media_type`) in `crates/agent_scope_message/src/source.rs`

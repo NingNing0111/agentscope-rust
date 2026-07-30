@@ -11,6 +11,7 @@ agent_scope_tool = { path = "../agent_scope_tool" }
 agent_scope_state = { path = "../agent_scope_state" }
 agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_event = { path = "../agent_scope_event" }
+agent_scope_memory = { path = "../agent_scope_memory" }
 agent_scope_types = { path = "../agent_scope_types" }
 
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
@@ -27,3 +28,4 @@ tokio-util = { version = "0.7", features = ["rt"] }
 [dev-dependencies]
 schemars = { workspace = true }
 uuid = { workspace = true }
+tempfile = "3"

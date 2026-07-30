@@ -18,6 +18,7 @@ use agent_scope_tool::{ToolError, ToolExecOutput, ToolKit};
 use agent_scope_types::ReplyFinishedReason;
 use futures::StreamExt;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::agent_error::AgentError;
 use crate::config::{ContextConfig, ReActConfig};
@@ -30,6 +31,7 @@ pub(crate) struct ReactLoopContext<'a> {
     pub agent_name: &'a str,
     pub session_id: &'a str,
     pub reply_id: &'a str,
+    pub system_prompt: &'a str,
     pub react_config: &'a ReActConfig,
     pub context_config: &'a ContextConfig,
     pub model: &'a Arc<dyn agent_scope_model::ChatModel>,
@@ -37,6 +39,9 @@ pub(crate) struct ReactLoopContext<'a> {
     pub middlewares: &'a [Arc<dyn Middleware>],
     pub state: &'a std::sync::RwLock<AgentState>,
     pub interrupted: &'a AtomicBool,
+    /// Cancellation token — checked via `select!` during model calls and stream
+    /// consumption to interrupt in-progress LLM API calls.
+    pub cancel_token: &'a CancellationToken,
 }
 
 #[derive(Debug)]
@@ -119,6 +124,12 @@ pub(crate) async fn run_react_loop(
         };
 
         let mut hook_messages = messages.clone();
+        if !ctx.system_prompt.is_empty()
+            && let Ok(system_msg) =
+                agent_scope_message::factory::system_msg("system", ctx.system_prompt)
+        {
+            hook_messages.insert(0, system_msg);
+        }
         let mut hook_tools = ctx.toolkit.as_ref().map(|tk| tk.get_tool_schemas());
         for mw in ctx.middlewares.iter() {
             mw.pre_reasoning(ctx.agent_name, &mut hook_messages, &mut hook_tools)
@@ -147,20 +158,76 @@ pub(crate) async fn run_react_loop(
             }))
             .await;
 
-        let result = ctx
+        // Use select! to allow cancellation during the model call.
+        let call_future = ctx
             .model
-            .call(&hook_messages, tool_schemas.as_deref(), None)
-            .await?;
+            .call(&hook_messages, tool_schemas.as_deref(), None);
+        let result = tokio::select! {
+            r = call_future => r?,
+            _ = ctx.cancel_token.cancelled() => {
+                let _ = event_tx
+                    .send(AgentEvent::UserInterrupt(UserInterruptEvent {
+                        base: base(),
+                        reply_id: ctx.reply_id.into(),
+                    }))
+                    .await;
+                let _ = event_tx
+                    .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                        base: base(),
+                        session_id: ctx.session_id.into(),
+                        reply_id: ctx.reply_id.into(),
+                        finished_reason: ReplyFinishedReason::Interrupted,
+                        error: None,
+                    }))
+                    .await;
+                return Ok(build_interruption_msg(
+                    &ctx.react_config.interruption_message,
+                ));
+            }
+        };
 
         // Accumulate stream chunks into a complete response via StreamAccumulator,
         // so DashScope (default stream=true) works with ReActAgent without change.
+        // Each stream poll is also cancellable.
         let response = match result {
             ModelCallResult::Complete(resp) => resp,
             ModelCallResult::Stream(mut stream) => {
                 let mut acc = StreamAccumulator::new();
-                while let Some(chunk_result) = stream.next().await {
-                    let chunk = chunk_result?;
-                    acc.append_chat_response(&chunk);
+                loop {
+                    let chunk_result = tokio::select! {
+                        r = stream.next() => r,
+                        _ = ctx.cancel_token.cancelled() => None,
+                    };
+                    match chunk_result {
+                        Some(Ok(chunk)) => {
+                            acc.append_chat_response(&chunk);
+                        }
+                        Some(Err(e)) => return Err(e.into()),
+                        None => {
+                            // Stream ended or cancelled — check which
+                            if ctx.interrupted.load(Ordering::SeqCst) {
+                                let _ = event_tx
+                                    .send(AgentEvent::UserInterrupt(UserInterruptEvent {
+                                        base: base(),
+                                        reply_id: ctx.reply_id.into(),
+                                    }))
+                                    .await;
+                                let _ = event_tx
+                                    .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                                        base: base(),
+                                        session_id: ctx.session_id.into(),
+                                        reply_id: ctx.reply_id.into(),
+                                        finished_reason: ReplyFinishedReason::Interrupted,
+                                        error: None,
+                                    }))
+                                    .await;
+                                return Ok(build_interruption_msg(
+                                    &ctx.react_config.interruption_message,
+                                ));
+                            }
+                            break;
+                        }
+                    }
                 }
                 acc.build()
             }

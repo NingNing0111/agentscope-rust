@@ -2,7 +2,7 @@
 
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use agent_scope_event::AgentEvent;
 use agent_scope_message::Msg;
@@ -18,6 +18,7 @@ use crate::react_loop;
 use crate::stream_handle::StreamHandle;
 use crate::streaming_reactor;
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 
 /// Shared inner state that can be cloned for spawned tasks.
 pub(crate) struct AgentInner {
@@ -29,6 +30,10 @@ pub(crate) struct AgentInner {
     pub(crate) event_emitter: EventEmitter,
     pub(crate) interrupted: Arc<AtomicBool>,
     pub(crate) is_streaming: Arc<AtomicBool>,
+    /// Cancellation token for interrupting in-progress model calls / stream consumption.
+    /// Wrapped in Mutex so it can be replaced with a fresh token after cancellation
+    /// (CancellationToken::cancel() is irreversible).
+    pub(crate) cancel_token: Mutex<CancellationToken>,
 }
 
 /// The primary agent type — Reasoning + Acting loop with tool execution.
@@ -60,13 +65,20 @@ impl ReActAgent {
                 event_emitter: EventEmitter::new(stream_channel_capacity),
                 interrupted: Arc::new(AtomicBool::new(false)),
                 is_streaming: Arc::new(AtomicBool::new(false)),
+                cancel_token: Mutex::new(CancellationToken::new()),
             }),
         })
     }
 
-    /// Interrupt a running reply. Safe to call from any thread.
+    /// Interrupt a running reply (streaming or batch).
+    ///
+    /// Sets the `interrupted` flag and cancels the current token. After the
+    /// current reply terminates, the next `reply()` / `reply_stream()` call
+    /// will automatically create a fresh token so it can run normally.
+    /// Safe to call from any thread.
     pub fn interrupt(&self) {
         self.inner.interrupted.store(true, Ordering::SeqCst);
+        self.inner.cancel_token.lock().unwrap().cancel();
     }
 
     /// Lock-aware state accessor.
@@ -175,8 +187,23 @@ impl Drop for StreamingGuard {
     }
 }
 
+/// Get (or reset) the cancel token for a new reply.
+///
+/// `CancellationToken::cancel()` is one-shot and irreversible, so if the
+/// previous token has been cancelled we replace it with a fresh one so the
+/// next `reply()` / `reply_stream()` can run normally.
+fn fresh_cancel_token(inner: &Arc<AgentInner>) -> CancellationToken {
+    let mut guard = inner.cancel_token.lock().unwrap();
+    if guard.is_cancelled() {
+        *guard = CancellationToken::new();
+    }
+    guard.clone()
+}
+
 /// Batch reply: uses react_loop with mpsc channel.
 async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg, AgentError> {
+    let cancel_token = fresh_cancel_token(&inner);
+
     if inner.interrupted.swap(false, Ordering::SeqCst) {
         return Ok(build_interruption_msg_inline(
             &inner.react_config.interruption_message,
@@ -199,7 +226,8 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
 
     let mut input = input;
     for mw in inner.middlewares.iter() {
-        mw.pre_reply(&inner.config.name, &mut input).await?;
+        mw.pre_reply(&inner.config.name, &mut input, &inner.config.model)
+            .await?;
     }
 
     if input.is_none() {
@@ -212,6 +240,12 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
     if let Some(ref msgs) = input {
         let mut state = inner.state.write().unwrap();
         state.context.extend(msgs.clone());
+    }
+
+    let mut system_prompt = inner.config.system_prompt.clone();
+    for mw in inner.middlewares.iter() {
+        mw.on_system_prompt(&inner.config.name, &mut system_prompt)
+            .await?;
     }
 
     let (event_tx, event_rx) = inner.event_emitter.create_channel();
@@ -228,6 +262,7 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
         agent_name: &inner.config.name,
         session_id: &session_id,
         reply_id: &reply_id,
+        system_prompt: &system_prompt,
         react_config: &inner.react_config,
         context_config: &inner.context_config,
         model: &inner.config.model,
@@ -235,6 +270,7 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
         middlewares: &inner.middlewares,
         state: &inner.state,
         interrupted: &inner.interrupted,
+        cancel_token: &cancel_token,
     };
 
     let result = react_loop::run_react_loop(ctx, &event_tx).await;
@@ -261,6 +297,8 @@ async fn do_reply_stream(
     inner: Arc<AgentInner>,
     input: Option<Vec<Msg>>,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
+    let cancel_token = fresh_cancel_token(&inner);
+
     if inner.interrupted.swap(false, Ordering::SeqCst) {
         return Err(AgentError::CancellationError {
             reply_id: "pre-reply-interrupted".into(),
@@ -283,7 +321,8 @@ async fn do_reply_stream(
 
     let mut input = input;
     for mw in inner.middlewares.iter() {
-        mw.pre_reply(&inner.config.name, &mut input).await?;
+        mw.pre_reply(&inner.config.name, &mut input, &inner.config.model)
+            .await?;
     }
 
     if input.is_none() {
@@ -298,6 +337,12 @@ async fn do_reply_stream(
         state.context.extend(msgs.clone());
     }
 
+    let mut system_prompt = inner.config.system_prompt.clone();
+    for mw in inner.middlewares.iter() {
+        mw.on_system_prompt(&inner.config.name, &mut system_prompt)
+            .await?;
+    }
+
     let (event_tx, event_rx) = inner.event_emitter.create_channel();
     let (stream_handle, cancel_tx) = StreamHandle::new(Arc::clone(&inner.is_streaming));
     let is_streaming = Arc::clone(&inner.is_streaming);
@@ -307,13 +352,16 @@ async fn do_reply_stream(
     let session_id_for_spawn = session_id.clone();
     let reply_id_for_spawn = reply_id.clone();
 
+    let spawned_cancel = cancel_token.clone();
     tokio::spawn(async move {
         streaming_reactor::run_streaming_loop(
             spawned_inner,
             session_id_for_spawn,
             reply_id_for_spawn,
+            system_prompt,
             stream_handle,
             event_tx,
+            spawned_cancel,
         )
         .await;
     });

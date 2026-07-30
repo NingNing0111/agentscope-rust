@@ -1,50 +1,52 @@
 //! AgentEvent emission helper.
 //!
-//! Internal (`pub(crate)`) wrapper around `tokio::sync::broadcast` for
-//! publishing [`AgentEvent`] items during the agent lifecycle.
+//! Internal (`pub(crate)`) factory for creating per-reply mpsc channels.
+//! Each `reply()` / `reply_stream()` call creates a fresh channel pair via
+//! [`EventEmitter::create_channel()`].
+//!
+//! The sender half is passed to the reactor loop; the receiver half is either
+//! wrapped in [`EventStream`](super::react_agent::EventStream) (streaming) or
+//! consumed by a background drainer (batch).
 
 use agent_scope_event::AgentEvent;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
-/// Wraps a bounded broadcast channel for agent event publishing.
+/// Factory for per-reply event channels.
+///
+/// Stores the capacity preference; actual channels are created on demand.
+#[derive(Clone)]
 pub(crate) struct EventEmitter {
-    tx: broadcast::Sender<AgentEvent>,
+    /// Channel capacity: `None` = effectively unbounded, `Some(n)` = bounded.
+    /// Validated at construction: `Some(0)` panics.
+    capacity: Option<usize>,
 }
 
 impl EventEmitter {
-    /// Create a new emitter with the given buffer capacity.
-    pub(crate) fn new(capacity: usize) -> Self {
-        let (tx, _) = broadcast::channel(capacity);
-        Self { tx }
-    }
-
-    /// Publish an event to all subscribers.
+    /// Create a new factory.
     ///
-    /// Non-blocking: if the channel is full, the oldest event is dropped
-    /// (broadcast behavior). A `tracing::warn` is emitted when send lags.
-    pub(crate) fn emit(&self, event: impl Into<AgentEvent>) {
-        let event = event.into();
-        if self.tx.receiver_count() > 0
-            && let Err(e) = self.tx.send(event)
-        {
-            tracing::warn!(
-                dropped_event = ?e,
-                "EventEmitter: failed to send event (no active receivers?)"
-            );
+    /// - `None` → effectively unbounded (large internal capacity)
+    /// - `Some(cap)` → bounded channel with `cap` slots (must be > 0)
+    ///
+    /// **Panics**: if `Some(0)` is passed (P1-8 fix).
+    pub(crate) fn new(capacity: Option<usize>) -> Self {
+        if let Some(0) = capacity {
+            panic!("EventEmitter: capacity `Some(0)` is invalid; use `None` for unbounded");
         }
-        // If no receivers, silently drop — events only consumed by reply_stream()
+        Self { capacity }
     }
 
-    /// Create a new subscriber to the event stream.
-    pub(crate) fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
-        self.tx.subscribe()
-    }
-}
-
-impl Clone for EventEmitter {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
+    /// Create a new `(sender, receiver)` pair.
+    pub(crate) fn create_channel(&self) -> (mpsc::Sender<AgentEvent>, mpsc::Receiver<AgentEvent>) {
+        match self.capacity {
+            Some(cap) => {
+                debug_assert!(cap > 0);
+                mpsc::channel::<AgentEvent>(cap)
+            }
+            None => {
+                // Large capacity for effectively unbounded behavior.
+                // The concurrent drainer in do_reply prevents deadlock.
+                mpsc::channel::<AgentEvent>(262_144)
+            }
         }
     }
 }

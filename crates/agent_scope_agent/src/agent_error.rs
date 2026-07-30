@@ -43,6 +43,10 @@ pub enum AgentError {
 
     /// Config validation failed at build time.
     InvalidConfig { field: String, message: String },
+
+    /// A streaming reply is already in progress.
+    /// Callers must consume or drop the existing stream before starting a new reply.
+    AlreadyStreaming,
 }
 
 impl fmt::Display for AgentError {
@@ -74,6 +78,9 @@ impl fmt::Display for AgentError {
             }
             Self::InvalidConfig { field, message } => {
                 write!(f, "Invalid config field '{field}': {message}")
+            }
+            Self::AlreadyStreaming => {
+                write!(f, "A streaming reply is already in progress")
             }
         }
     }
@@ -172,5 +179,14 @@ mod tests {
         };
         assert!(err.to_string().contains("dangerous_tool"));
         assert!(err.to_string().contains("blocked by policy"));
+    }
+
+    /// T009: AlreadyStreaming error format.
+    #[test]
+    fn test_already_streaming_display() {
+        let err = AgentError::AlreadyStreaming;
+        let msg = err.to_string();
+        assert!(msg.contains("streaming reply"));
+        assert!(!msg.is_empty());
     }
 }

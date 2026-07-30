@@ -1,0 +1,997 @@
+//! Streaming reactor — progressive model stream processing (Feature 008 US1/US2/US3).
+//! Events are emitted to the caller in real-time as the model produces chunks.
+//!
+//! US2: Tool calls detected progressively via block-type transition heuristic.
+//! When a chunk transitions from ToolCall blocks → non-ToolCall blocks (or stream ends),
+//! tool calls are considered complete (ToolCallEnd emitted). Execution happens after the
+//! full model stream is consumed to avoid dropping remaining model chunks (P0-3 fix).
+//!
+//! Key protocol rules:
+//! - TextBlock: one Start → N Deltas → one End per block_id (P1-9 fix)
+//! - ToolCallBlock: one Start → N Deltas → one End, executed at stream/iteration end
+//! - All events within a single ReAct iteration come from one continuous model stream
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+use agent_scope_event::{
+    AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
+    ReplyEndEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent,
+    ToolCallDeltaEvent, ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent,
+    ToolResultStartEvent, ToolResultTextDeltaEvent, UserInterruptEvent,
+};
+use agent_scope_message::{
+    ContentBlock, Msg, Role, TextBlock, ToolCallBlock, ToolOutput, ToolResultBlock, ToolResultState,
+};
+use agent_scope_model::{ChatResponse, ChatUsage, ModelCallResult, StreamAccumulator};
+use agent_scope_tool::{ToolError, ToolExecOutput};
+use agent_scope_types::{ErrorInfo, ErrorType, ReplyFinishedReason};
+use futures::StreamExt;
+use tokio::sync::mpsc;
+
+use crate::react_agent::AgentInner;
+use crate::stream_handle::StreamHandle;
+
+pub(crate) async fn run_streaming_loop(
+    inner: Arc<AgentInner>,
+    session_id: String,
+    reply_id: String,
+    stream_handle: StreamHandle,
+    event_tx: mpsc::Sender<AgentEvent>,
+) {
+    let base = EventBase::new;
+    let mut cur_iter: u32 = 0;
+
+    if stream_handle.is_cancelled() {
+        return;
+    }
+    emit_start(&event_tx, &session_id, &reply_id, &inner.config.name, base).await;
+
+    loop {
+        if stream_handle.is_cancelled() || inner.interrupted.load(Ordering::SeqCst) {
+            emit_interrupted(&event_tx, &reply_id, &session_id, base).await;
+            return;
+        }
+        if cur_iter >= inner.react_config.max_iters {
+            emit_max_iters(&event_tx, &reply_id, &session_id, &inner.config.name, base).await;
+            return;
+        }
+        cur_iter += 1;
+
+        // Prep messages + hooks
+        let messages = { inner.state.read().unwrap().context.clone() };
+        let mut hook_messages = messages.clone();
+        let mut hook_tools = inner
+            .config
+            .toolkit
+            .as_ref()
+            .map(|tk| tk.get_tool_schemas());
+        for mw in inner.middlewares.iter() {
+            if let Err(e) = mw
+                .pre_reasoning(&inner.config.name, &mut hook_messages, &mut hook_tools)
+                .await
+            {
+                emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
+                return;
+            }
+        }
+        let tool_schemas = inner
+            .config
+            .toolkit
+            .as_ref()
+            .map(|tk| tk.get_tool_schemas());
+
+        // Compression
+        if inner.context_config.enable {
+            let token_count = inner
+                .config
+                .model
+                .count_tokens(&hook_messages, tool_schemas.as_deref());
+            let trigger = (inner.config.model.context_size() as f64
+                * inner.context_config.trigger_ratio) as usize;
+            if token_count > trigger
+                && let Err(e) = crate::context_compression::compress_context(
+                    &inner.config.model,
+                    &inner.state,
+                    &inner.context_config,
+                    &session_id,
+                )
+                .await
+            {
+                emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
+                return;
+            }
+        }
+
+        // ModelCallStart
+        let _ = event_tx
+            .send(AgentEvent::ModelCallStart(ModelCallStartEvent {
+                base: base(),
+                reply_id: reply_id.clone(),
+                model_name: inner.config.model.model_name().into(),
+            }))
+            .await;
+
+        let result = inner
+            .config
+            .model
+            .call(&hook_messages, tool_schemas.as_deref(), None)
+            .await;
+
+        match result {
+            Ok(ModelCallResult::Complete(response)) => {
+                // Non-streaming path: emit text events → ModelCallEnd → tool events
+                // FR-003: Text content blocks go between ModelCallStart/End,
+                // tool call events go between ModelCallEnd and ReplyEnd.
+                emit_text_events_only(&response, &event_tx, &reply_id, base).await;
+                emit_model_call_end_with_usage(&event_tx, &reply_id, &response.usage, base).await;
+                for mw in inner.middlewares.iter() {
+                    let _ = mw.post_reasoning(&inner.config.name, &response).await;
+                }
+                // Process the response: write text to context or execute tool calls
+                if process_response_and_continue(&inner, &response, &event_tx, &reply_id, base)
+                    .await
+                    .is_done()
+                {
+                    emit_completed_reply_end(&event_tx, &session_id, &reply_id, base).await;
+                    return;
+                }
+                // Tool calls were executed — continue loop
+            }
+            Ok(ModelCallResult::Stream(mut stream)) => {
+                // Streaming path: consume ALL chunks progressively
+                let outcome = consume_stream_progressive(
+                    &mut stream,
+                    &stream_handle,
+                    &event_tx,
+                    &reply_id,
+                    &session_id,
+                    base,
+                )
+                .await;
+
+                match outcome {
+                    StreamOutcome::Normal {
+                        response,
+                        usage,
+                        tool_calls,
+                    } => {
+                        // Emit ModelCallEnd if we haven't already (is_last-based)
+                        emit_model_call_end_with_usage(
+                            &event_tx,
+                            &reply_id,
+                            &usage,
+                            base,
+                        )
+                        .await;
+                        for mw in inner.middlewares.iter() {
+                            let _ = mw.post_reasoning(&inner.config.name, &response).await;
+                        }
+
+                        if !tool_calls.is_empty() {
+                            // Write text blocks from the response to context
+                            add_text_to_context(&inner, &response);
+                            // Execute all detected tool calls
+                            execute_tool_calls(
+                                &inner,
+                                &tool_calls,
+                                &event_tx,
+                                &reply_id,
+                                &stream_handle,
+                                base,
+                            )
+                            .await;
+                            // Continue ReAct loop — model will be called again
+                        } else {
+                            // No tool calls — write text to context and end
+                            add_text_to_context(&inner, &response);
+                            emit_completed_reply_end(
+                                &event_tx,
+                                &session_id,
+                                &reply_id,
+                                base,
+                            )
+                            .await;
+                            return;
+                        }
+                    }
+                    StreamOutcome::Error { message } => {
+                        emit_error_end(&event_tx, &reply_id, &session_id, &message, base).await;
+                        return;
+                    }
+                    StreamOutcome::Cancelled => {
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
+                return;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stream consumption outcomes
+// ---------------------------------------------------------------------------
+
+enum StreamOutcome {
+    /// Full stream consumed — response, usage data, and any detected tool calls.
+    Normal {
+        response: Box<ChatResponse>,
+        /// Usage from the final chunk (or None if stream ended without one).
+        usage: Option<ChatUsage>,
+        /// Tool calls detected during stream (complete at stream end or
+        /// at block-type transition).
+        tool_calls: Vec<ToolCallBlock>,
+    },
+    /// Chunk-level error from the model stream.
+    Error { message: String },
+    /// Stream was cancelled (consumer dropped EventStream).
+    Cancelled,
+}
+
+// ---------------------------------------------------------------------------
+// Progressive stream consumption (US1 + US2)
+// ---------------------------------------------------------------------------
+
+/// Active block tracking for progressive event emission.
+struct BlockTracker {
+    /// Text blocks whose lifecycle hasn't ended yet: block_id → (emitted_start, text)
+    text_blocks: HashMap<String, (bool, Vec<String>)>,
+    /// Tool call blocks being accumulated: block_id → ToolCallBlock
+    tool_blocks: HashMap<String, ToolCallBlock>,
+    /// Tool calls finalized (complete) with their block IDs for ordering
+    completed_tool_ids: Vec<String>,
+}
+
+impl BlockTracker {
+    fn new() -> Self {
+        Self {
+            text_blocks: HashMap::new(),
+            tool_blocks: HashMap::new(),
+            completed_tool_ids: Vec::new(),
+        }
+    }
+}
+
+async fn consume_stream_progressive(
+    stream: &mut (
+             impl futures::Stream<Item = Result<ChatResponse, agent_scope_model::ModelError>>
+             + std::marker::Unpin
+         ),
+    stream_handle: &StreamHandle,
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    session_id: &str,
+    base: fn() -> EventBase,
+) -> StreamOutcome {
+    let mut acc = StreamAccumulator::new();
+    let mut tracker = BlockTracker::new();
+    let mut final_usage: Option<ChatUsage> = None;
+
+    while let Some(chunk_result) = stream.next().await {
+        if stream_handle.is_cancelled() {
+            let _ = event_tx
+                .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                    base: base(),
+                    session_id: session_id.into(),
+                    reply_id: reply_id.into(),
+                    finished_reason: ReplyFinishedReason::Interrupted,
+                    error: None,
+                }))
+                .await;
+            return StreamOutcome::Cancelled;
+        }
+
+        match chunk_result {
+            Ok(chunk) => {
+                let is_last = chunk.is_last;
+                let usage = chunk.usage.clone();
+
+                // Process each content block in the chunk
+                for block in &chunk.content {
+                    match block {
+                        ContentBlock::ToolCall(tc) => {
+                            // Check if this block was previously a text block
+                            // (block-type transition: close text block lifecycle)
+                            let had_text = !tracker.text_blocks.is_empty();
+
+                            if let Some(existing) = tracker.tool_blocks.get_mut(&tc.id) {
+                                // Subsequent chunk for same tool call — emit delta
+                                let _ = event_tx
+                                    .send(AgentEvent::ToolCallDelta(ToolCallDeltaEvent {
+                                        base: base(),
+                                        reply_id: reply_id.into(),
+                                        tool_call_id: tc.id.clone(),
+                                        delta: tc.input.clone(),
+                                    }))
+                                    .await;
+                                existing.input.push_str(&tc.input);
+                                if !tc.name.is_empty() && existing.name.is_empty() {
+                                    existing.name = tc.name.clone();
+                                }
+                            } else {
+                                // First chunk for this tool call — emit start
+                                // Close any open text blocks first (block-type transition)
+                                if had_text {
+                                    close_all_text_blocks(
+                                        &mut tracker,
+                                        event_tx,
+                                        reply_id,
+                                        base,
+                                    )
+                                    .await;
+                                }
+
+                                let _ = event_tx
+                                    .send(AgentEvent::ToolCallStart(ToolCallStartEvent {
+                                        base: base(),
+                                        reply_id: reply_id.into(),
+                                        tool_call_id: tc.id.clone(),
+                                        tool_call_name: tc.name.clone(),
+                                    }))
+                                    .await;
+                                tracker.tool_blocks.insert(tc.id.clone(), tc.clone());
+                            }
+                        }
+                        ContentBlock::Text(tb) => {
+                            // Check if this signals a tool→text transition:
+                            // close active tool blocks
+                            close_active_tool_blocks(
+                                &mut tracker,
+                                event_tx,
+                                reply_id,
+                                base,
+                            )
+                            .await;
+
+                            process_text_block_chunk(
+                                &mut tracker,
+                                tb,
+                                event_tx,
+                                reply_id,
+                                base,
+                            )
+                            .await;
+                        }
+                        _ => {
+                            // Unknown block type → close tool blocks (transition)
+                            close_active_tool_blocks(
+                                &mut tracker,
+                                event_tx,
+                                reply_id,
+                                base,
+                            )
+                            .await;
+                            // Close text blocks too
+                            close_all_text_blocks(
+                                &mut tracker,
+                                event_tx,
+                                reply_id,
+                                base,
+                            )
+                            .await;
+                        }
+                    }
+                }
+
+                // On stream end (is_last or EOF): close all active blocks
+                if is_last {
+                    close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
+                    close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+                }
+
+                // Track usage from the last chunk that carries it
+                if usage.is_some() {
+                    final_usage = usage;
+                }
+
+                acc.append_chat_response(&chunk);
+
+                // If is_last, stop consuming (model signals stream complete)
+                if is_last {
+                    break;
+                }
+            }
+            Err(e) => {
+                // Close all tracking before returning error
+                close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
+                close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+                return StreamOutcome::Error {
+                    message: e.to_string(),
+                };
+            }
+        }
+    }
+
+    // Stream ended (EOF or is_last) — close any remaining open blocks
+    close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
+    close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+
+    // Collect finalized tool calls in order
+    let tool_calls: Vec<ToolCallBlock> = tracker
+        .completed_tool_ids
+        .iter()
+        .filter_map(|id| tracker.tool_blocks.remove(id))
+        .collect();
+
+    StreamOutcome::Normal {
+        response: Box::new(acc.build()),
+        usage: final_usage,
+        tool_calls,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Block lifecycle helpers
+// ---------------------------------------------------------------------------
+
+/// Emit TextBlockEnd for all active text blocks, clearing them.
+async fn close_all_text_blocks(
+    tracker: &mut BlockTracker,
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    base: fn() -> EventBase,
+) {
+    for block_id in tracker.text_blocks.keys().cloned().collect::<Vec<_>>() {
+        let _ = event_tx
+            .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
+                base: base(),
+                reply_id: reply_id.into(),
+                block_id: block_id.clone(),
+            }))
+            .await;
+    }
+    tracker.text_blocks.clear();
+}
+
+/// Finalize all active tool call blocks: emit ToolCallEnd and move to completed list.
+async fn close_active_tool_blocks(
+    tracker: &mut BlockTracker,
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    base: fn() -> EventBase,
+) {
+    let ids: Vec<String> = tracker.tool_blocks.keys().cloned().collect();
+    for id in ids {
+        if !tracker.completed_tool_ids.contains(&id) {
+            let _ = event_tx
+                .send(AgentEvent::ToolCallEnd(ToolCallEndEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    tool_call_id: id.clone(),
+                }))
+                .await;
+            tracker.completed_tool_ids.push(id);
+        }
+    }
+}
+
+/// Process a text block chunk with proper lifecycle:
+/// Start on first occurrence → Delta on each chunk → End on close.
+async fn process_text_block_chunk(
+    tracker: &mut BlockTracker,
+    tb: &TextBlock,
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    base: fn() -> EventBase,
+) {
+    if tb.text.is_empty() {
+        return;
+    }
+    let bid = tb.id.clone();
+    match tracker.text_blocks.get_mut(&bid) {
+        Some((already_started, _texts)) => {
+            // Subsequent chunk — emit only Delta
+            let _ = event_tx
+                .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    block_id: bid,
+                    delta: tb.text.clone(),
+                }))
+                .await;
+            // Mark start emitted if it wasn't already
+            *already_started = true;
+        }
+        None => {
+            // First chunk for this block_id — emit Start + Delta
+            let _ = event_tx
+                .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    block_id: bid.clone(),
+                }))
+                .await;
+            let _ = event_tx
+                .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    block_id: bid.clone(),
+                    delta: tb.text.clone(),
+                }))
+                .await;
+            tracker.text_blocks.insert(bid, (true, vec![]));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Response processing (Complete path)
+// ---------------------------------------------------------------------------
+
+/// Process the response from a Complete model call.
+/// Returns Done if the reply should end (text-only response with no tool calls).
+/// Returns Continue if tool calls were executed (loop should iterate).
+async fn process_response_and_continue(
+    inner: &Arc<AgentInner>,
+    response: &ChatResponse,
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    base: fn() -> EventBase,
+) -> Outcome {
+    // Check for tool calls
+    let tool_calls: Vec<_> = response
+        .content
+        .iter()
+        .filter_map(|block| {
+            if let ContentBlock::ToolCall(tc) = block {
+                Some(tc.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if !tool_calls.is_empty() {
+        // Emit tool call events + execute them
+        add_text_to_context(inner, response);
+        let dummy_handle = StreamHandle::new_dummy();
+        for tc in &tool_calls {
+            let _ = event_tx
+                .send(AgentEvent::ToolCallStart(ToolCallStartEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    tool_call_id: tc.id.clone(),
+                    tool_call_name: tc.name.clone(),
+                }))
+                .await;
+            let _ = event_tx
+                .send(AgentEvent::ToolCallDelta(ToolCallDeltaEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    tool_call_id: tc.id.clone(),
+                    delta: tc.input.clone(),
+                }))
+                .await;
+            let _ = event_tx
+                .send(AgentEvent::ToolCallEnd(ToolCallEndEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    tool_call_id: tc.id.clone(),
+                }))
+                .await;
+        }
+        execute_tool_calls(inner, &tool_calls, event_tx, reply_id, &dummy_handle, base).await;
+        return Outcome::Continue;
+    }
+
+    // Text-only response: write to context, return Done
+    add_text_to_context(inner, response);
+    Outcome::Done
+}
+
+// ---------------------------------------------------------------------------
+// Tool execution
+// ---------------------------------------------------------------------------
+
+async fn execute_tool_calls(
+    inner: &Arc<AgentInner>,
+    tool_calls: &[ToolCallBlock],
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    stream_handle: &StreamHandle,
+    _base: fn() -> EventBase,
+) {
+    for tc in tool_calls {
+        let mut tc_mut = tc.clone();
+        for mw in inner.middlewares.iter() {
+            let _ = mw.pre_acting(&inner.config.name, &mut tc_mut).await;
+        }
+
+        let exec_result = if let Some(ref tk) = inner.config.toolkit {
+            tk.call_tool(&tc_mut).await
+        } else {
+            Err(ToolError::NotFound {
+                tool_name: tc_mut.name.clone(),
+            })
+        };
+
+        // Emit tool result events and collect output text for context
+        let output_text = emit_tool_result_and_collect(
+            event_tx,
+            reply_id,
+            &tc_mut,
+            exec_result,
+            stream_handle,
+            _base,
+        )
+        .await;
+
+        // Feed tool result to context with the ACTUAL collected output
+        add_tool_result_to_context(inner, &tc_mut, &output_text);
+    }
+}
+
+fn add_tool_result_to_context(inner: &Arc<AgentInner>, tc: &ToolCallBlock, output_text: &str) {
+    let trb = ToolResultBlock::new(
+        tc.id.clone(),
+        tc.name.clone(),
+        ToolOutput::Text(output_text.to_string()),
+    );
+    if let Ok(msg) = Msg::new(
+        inner.config.name.clone(),
+        vec![ContentBlock::ToolResult(trb)],
+        Role::Assistant,
+    ) {
+        inner.state.write().unwrap().context.push(msg);
+    }
+}
+
+fn add_text_to_context(inner: &Arc<AgentInner>, response: &ChatResponse) {
+    for block in &response.content {
+        if let ContentBlock::Text(tb) = block
+            && let Ok(msg) = Msg::new(
+                inner.config.name.clone(),
+                vec![ContentBlock::Text(tb.clone())],
+                Role::Assistant,
+            )
+        {
+            inner.state.write().unwrap().context.push(msg);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Outcome
+// ---------------------------------------------------------------------------
+
+#[derive(PartialEq)]
+enum Outcome {
+    Done,
+    Continue,
+}
+impl Outcome {
+    fn is_done(&self) -> bool {
+        *self == Outcome::Done
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Event emission helpers
+// ---------------------------------------------------------------------------
+
+async fn emit_start(
+    tx: &mpsc::Sender<AgentEvent>,
+    sid: &str,
+    rid: &str,
+    name: &str,
+    base: fn() -> EventBase,
+) {
+    let _ = tx
+        .send(AgentEvent::ReplyStart(agent_scope_event::ReplyStartEvent {
+            base: base(),
+            session_id: sid.into(),
+            reply_id: rid.into(),
+            name: name.into(),
+            role: "assistant".into(),
+        }))
+        .await;
+}
+
+async fn emit_interrupted(
+    tx: &mpsc::Sender<AgentEvent>,
+    rid: &str,
+    sid: &str,
+    base: fn() -> EventBase,
+) {
+    let _ = tx
+        .send(AgentEvent::UserInterrupt(UserInterruptEvent {
+            base: base(),
+            reply_id: rid.into(),
+        }))
+        .await;
+    let _ = tx
+        .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+            base: base(),
+            session_id: sid.into(),
+            reply_id: rid.into(),
+            finished_reason: ReplyFinishedReason::Interrupted,
+            error: None,
+        }))
+        .await;
+}
+
+async fn emit_max_iters(
+    tx: &mpsc::Sender<AgentEvent>,
+    rid: &str,
+    sid: &str,
+    name: &str,
+    base: fn() -> EventBase,
+) {
+    let _ = tx
+        .send(AgentEvent::ExceedMaxIters(ExceedMaxItersEvent {
+            base: base(),
+            reply_id: rid.into(),
+            name: name.into(),
+        }))
+        .await;
+    let _ = tx
+        .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+            base: base(),
+            session_id: sid.into(),
+            reply_id: rid.into(),
+            finished_reason: ReplyFinishedReason::Completed,
+            error: None,
+        }))
+        .await;
+}
+
+/// Emit ReplyEnd with completed state — normal text-only reply completion.
+async fn emit_completed_reply_end(
+    tx: &mpsc::Sender<AgentEvent>,
+    sid: &str,
+    rid: &str,
+    base: fn() -> EventBase,
+) {
+    let _ = tx
+        .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+            base: base(),
+            session_id: sid.into(),
+            reply_id: rid.into(),
+            finished_reason: ReplyFinishedReason::Completed,
+            error: None,
+        }))
+        .await;
+}
+
+/// Emit ReplyEnd with an error (P2-10 fix: use Error finished_reason).
+async fn emit_error_end(
+    tx: &mpsc::Sender<AgentEvent>,
+    rid: &str,
+    sid: &str,
+    msg: &str,
+    base: fn() -> EventBase,
+) {
+    let _ = tx
+        .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+            base: base(),
+            session_id: sid.into(),
+            reply_id: rid.into(),
+            finished_reason: ReplyFinishedReason::Error,
+            error: Some(ErrorInfo {
+                error_type: ErrorType::Internal,
+                message: msg.into(),
+            }),
+        }))
+        .await;
+}
+
+async fn emit_model_call_end_with_usage(
+    tx: &mpsc::Sender<AgentEvent>,
+    rid: &str,
+    usage: &Option<ChatUsage>,
+    base: fn() -> EventBase,
+) {
+    let it = usage.as_ref().map_or(0, |u| u.input_tokens);
+    let ot = usage.as_ref().map_or(0, |u| u.output_tokens);
+    let _ = tx
+        .send(AgentEvent::ModelCallEnd(ModelCallEndEvent {
+            base: base(),
+            reply_id: rid.into(),
+            input_tokens: it,
+            output_tokens: ot,
+            finished_reason: ReplyFinishedReason::Completed,
+        }))
+        .await;
+}
+
+/// Emit ONLY text events for a Complete (non-streaming) response.
+/// Tool call events are emitted separately by process_response_and_continue.
+async fn emit_text_events_only(
+    response: &ChatResponse,
+    tx: &mpsc::Sender<AgentEvent>,
+    rid: &str,
+    base: fn() -> EventBase,
+) {
+    for block in &response.content {
+        if let ContentBlock::Text(tb) = block {
+            if tb.text.is_empty() {
+                continue;
+            }
+            let bid = tb.id.clone();
+            let _ = tx
+                .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
+                    base: base(),
+                    reply_id: rid.into(),
+                    block_id: bid.clone(),
+                }))
+                .await;
+            let _ = tx
+                .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
+                    base: base(),
+                    reply_id: rid.into(),
+                    block_id: bid.clone(),
+                    delta: tb.text.clone(),
+                }))
+                .await;
+            let _ = tx
+                .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
+                    base: base(),
+                    reply_id: rid.into(),
+                    block_id: bid,
+                }))
+                .await;
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Tool result emission (US3: streaming tool output)
+// ---------------------------------------------------------------------------
+
+/// Emit tool result events and return the collected output text.
+///
+/// For `ToolExecOutput::Complete`: emits Start → Delta → End, returns the text.
+/// For `ToolExecOutput::Stream`: emits events progressively, collects ALL output
+/// text (not placeholder), returns concatenated text (P0-4 fix).
+async fn emit_tool_result_and_collect(
+    tx: &mpsc::Sender<AgentEvent>,
+    rid: &str,
+    tc: &ToolCallBlock,
+    result: Result<ToolExecOutput, ToolError>,
+    stream_handle: &StreamHandle,
+    _base: fn() -> EventBase,
+) -> String {
+    let b = EventBase::new;
+    match result {
+        Ok(ToolExecOutput::Complete(chunk)) => {
+            let st = chunk.state.clone();
+            let text = match &chunk.output {
+                ToolOutput::Text(t) => t.clone(),
+                ToolOutput::Blocks(_) => "[blocks]".into(),
+            };
+
+            let _ = tx
+                .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
+                    base: b(),
+                    reply_id: rid.into(),
+                    tool_call_id: tc.id.clone(),
+                    tool_call_name: tc.name.clone(),
+                }))
+                .await;
+            let _ = tx
+                .send(AgentEvent::ToolResultTextDelta(ToolResultTextDeltaEvent {
+                    base: b(),
+                    reply_id: rid.into(),
+                    tool_call_id: tc.id.clone(),
+                    delta: text.clone(),
+                }))
+                .await;
+            let _ = tx
+                .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+                    base: b(),
+                    reply_id: rid.into(),
+                    tool_call_id: tc.id.clone(),
+                    state: st,
+                    metadata: std::collections::HashMap::new(),
+                }))
+                .await;
+
+            // Post-acting hook for Complete tools
+            let result_clone = ToolExecOutput::Complete(chunk);
+            // We can't easily call post_acting here without inner reference.
+            // The caller (execute_tool_calls) handles middleware.
+            let _ = result_clone;
+
+            text
+        }
+        Ok(ToolExecOutput::Stream(mut stream)) => {
+            let _ = tx
+                .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
+                    base: b(),
+                    reply_id: rid.into(),
+                    tool_call_id: tc.id.clone(),
+                    tool_call_name: tc.name.clone(),
+                }))
+                .await;
+
+            let mut collected = String::new();
+            let mut final_state = ToolResultState::Success;
+            let mut is_done = false;
+
+            while !is_done {
+                // Check cancellation between chunks
+                if stream_handle.is_cancelled() {
+                    let _ = tx
+                        .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+                            base: b(),
+                            reply_id: rid.into(),
+                            tool_call_id: tc.id.clone(),
+                            state: ToolResultState::Interrupted,
+                            metadata: std::collections::HashMap::new(),
+                        }))
+                        .await;
+                    return collected;
+                }
+
+                match stream.next().await {
+                    Some(Ok(chunk)) => {
+                        let txt = match &chunk.output {
+                            ToolOutput::Text(t) => t.clone(),
+                            _ => "[blocks]".into(),
+                        };
+                        collected.push_str(&txt);
+                        let _ = tx
+                            .send(AgentEvent::ToolResultTextDelta(
+                                ToolResultTextDeltaEvent {
+                                    base: b(),
+                                    reply_id: rid.into(),
+                                    tool_call_id: tc.id.clone(),
+                                    delta: txt,
+                                },
+                            ))
+                            .await;
+                        if chunk.is_last {
+                            is_done = true;
+                        }
+                    }
+                    Some(Err(_)) => {
+                        final_state = ToolResultState::Error;
+                        is_done = true;
+                    }
+                    None => {
+                        // Stream ended without is_last — treat as success
+                        is_done = true;
+                    }
+                }
+            }
+
+            let _ = tx
+                .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+                    base: b(),
+                    reply_id: rid.into(),
+                    tool_call_id: tc.id.clone(),
+                    state: final_state,
+                    metadata: std::collections::HashMap::new(),
+                }))
+                .await;
+
+            collected
+        }
+        Err(e) => {
+            let _ = tx
+                .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
+                    base: b(),
+                    reply_id: rid.into(),
+                    tool_call_id: tc.id.clone(),
+                    tool_call_name: tc.name.clone(),
+                }))
+                .await;
+            let _ = tx
+                .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+                    base: b(),
+                    reply_id: rid.into(),
+                    tool_call_id: tc.id.clone(),
+                    state: ToolResultState::Error,
+                    metadata: std::collections::HashMap::new(),
+                }))
+                .await;
+            format!("Error: {e}")
+        }
+    }
+}

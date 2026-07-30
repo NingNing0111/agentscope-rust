@@ -41,6 +41,8 @@ pub mod middleware;
 pub mod permission;
 pub mod react_agent;
 pub(crate) mod react_loop;
+pub(crate) mod stream_handle;
+pub(crate) mod streaming_reactor;
 pub(crate) mod token_counter;
 
 // Re-exports

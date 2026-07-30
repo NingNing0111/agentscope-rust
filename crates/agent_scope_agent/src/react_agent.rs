@@ -15,18 +15,20 @@ use crate::config::{AgentConfig, ContextConfig, ReActConfig};
 use crate::event_emitter::EventEmitter;
 use crate::middleware::Middleware;
 use crate::react_loop;
+use crate::stream_handle::StreamHandle;
+use crate::streaming_reactor;
+use tokio::sync::{mpsc, oneshot};
 
 /// Shared inner state that can be cloned for spawned tasks.
-struct AgentInner {
-    config: AgentConfig,
-    react_config: ReActConfig,
-    /// Context compression configuration, wired into react_loop.
-    /// See Python AgentScope's `Agent.context_config` used in `_compress_memory_if_needed()`.
-    context_config: ContextConfig,
-    state: RwLock<AgentState>,
-    middlewares: Vec<Arc<dyn Middleware>>,
-    event_emitter: EventEmitter,
-    interrupted: AtomicBool,
+pub(crate) struct AgentInner {
+    pub(crate) config: AgentConfig,
+    pub(crate) react_config: ReActConfig,
+    pub(crate) context_config: ContextConfig,
+    pub(crate) state: RwLock<AgentState>,
+    pub(crate) middlewares: Vec<Arc<dyn Middleware>>,
+    pub(crate) event_emitter: EventEmitter,
+    pub(crate) interrupted: Arc<AtomicBool>,
+    pub(crate) is_streaming: Arc<AtomicBool>,
 }
 
 /// The primary agent type — Reasoning + Acting loop with tool execution.
@@ -46,6 +48,7 @@ impl ReActAgent {
         context_config.validate()?;
 
         let agent_state = AgentState::new();
+        let stream_channel_capacity = config.stream_channel_capacity;
 
         Ok(Self {
             inner: Arc::new(AgentInner {
@@ -54,15 +57,14 @@ impl ReActAgent {
                 context_config,
                 state: RwLock::new(agent_state),
                 middlewares,
-                event_emitter: EventEmitter::new(256),
-                interrupted: AtomicBool::new(false),
+                event_emitter: EventEmitter::new(stream_channel_capacity),
+                interrupted: Arc::new(AtomicBool::new(false)),
+                is_streaming: Arc::new(AtomicBool::new(false)),
             }),
         })
     }
 
     /// Interrupt a running reply. Safe to call from any thread.
-    ///
-    /// The interrupted flag is automatically reset at the start of each `reply()` call.
     pub fn interrupt(&self) {
         self.inner.interrupted.store(true, Ordering::SeqCst);
     }
@@ -73,59 +75,86 @@ impl ReActAgent {
     }
 }
 
+/// Consumer-facing event stream returned by `reply_stream()`.
+pub struct EventStream {
+    rx: mpsc::Receiver<AgentEvent>,
+    cancel_tx: Option<oneshot::Sender<()>>,
+    /// Keeps a reference to the shared is_streaming flag so it can be
+    /// inspected elsewhere, though cleanup is now handled by StreamHandle::Drop.
+    #[allow(dead_code)]
+    is_streaming: Arc<AtomicBool>,
+}
+
+impl Stream for EventStream {
+    type Item = AgentEvent;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
+    }
+}
+
+impl Drop for EventStream {
+    fn drop(&mut self) {
+        // Fire the cancellation signal (drop oneshot sender).
+        // The reactor checks StreamHandle::is_cancelled() each iteration
+        // and will exit shortly. is_streaming is cleared when the reactor
+        // task's StreamHandle is dropped — NOT here, to prevent the race
+        // where a new reply()/reply_stream() starts before the old reactor
+        // has actually exited (P0-2 fix).
+        drop(self.cancel_tx.take());
+    }
+}
+
 #[async_trait::async_trait]
 impl Agent for ReActAgent {
     async fn reply(&self, input: Option<Vec<Msg>>) -> Result<Msg, AgentError> {
-        do_reply(&self.inner, input).await
+        if self
+            .inner
+            .is_streaming
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(AgentError::AlreadyStreaming);
+        }
+
+        let _guard = StreamingGuard(Arc::clone(&self.inner.is_streaming));
+        do_reply(Arc::clone(&self.inner), input).await
     }
 
     async fn reply_stream(
         &self,
         input: Option<Vec<Msg>>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
-        let mut rx = self.inner.event_emitter.subscribe();
-        let inner_clone = Arc::clone(&self.inner);
+        if self
+            .inner
+            .is_streaming
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(AgentError::AlreadyStreaming);
+        }
 
-        tokio::spawn(async move {
-            let _ = do_reply(&inner_clone, input).await;
-        });
-
-        let stream = async_stream::stream! {
-            loop {
-                match rx.recv().await {
-                    Ok(event) => {
-                        let is_reply_end = matches!(event, AgentEvent::ReplyEnd(_));
-                        yield event;
-                        if is_reply_end {
-                            break;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        break;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(lagged = n, "Event stream lagged");
-                        continue;
-                    }
-                }
+        match do_reply_stream(Arc::clone(&self.inner), input).await {
+            Ok(stream) => Ok(stream),
+            Err(e) => {
+                self.inner.is_streaming.store(false, Ordering::SeqCst);
+                Err(e)
             }
-        };
-
-        Ok(Box::pin(stream))
+        }
     }
 
     async fn observe(&self, input: Option<Vec<Msg>>) -> Result<(), AgentError> {
         let mut input = input;
-
         for mw in self.inner.middlewares.iter() {
             mw.pre_observe(&self.inner.config.name, &mut input).await?;
         }
-
         if let Some(msgs) = input {
             let mut state = self.inner.state.write().unwrap();
             state.context.extend(msgs);
         }
-
         Ok(())
     }
 
@@ -138,9 +167,16 @@ impl Agent for ReActAgent {
     }
 }
 
-/// Shared reply implementation.
-async fn do_reply(inner: &AgentInner, input: Option<Vec<Msg>>) -> Result<Msg, AgentError> {
-    // Check interruption at start — clear flag after handling
+struct StreamingGuard(Arc<AtomicBool>);
+
+impl Drop for StreamingGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Batch reply: uses react_loop with mpsc channel.
+async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg, AgentError> {
     if inner.interrupted.swap(false, Ordering::SeqCst) {
         return Ok(build_interruption_msg_inline(
             &inner.react_config.interruption_message,
@@ -151,7 +187,6 @@ async fn do_reply(inner: &AgentInner, input: Option<Vec<Msg>>) -> Result<Msg, Ag
         let state = inner.state.read().unwrap();
         state.session_id.clone()
     };
-
     let reply_id = uuid::Uuid::new_v4().as_simple().to_string();
 
     {
@@ -179,7 +214,17 @@ async fn do_reply(inner: &AgentInner, input: Option<Vec<Msg>>) -> Result<Msg, Ag
         state.context.extend(msgs.clone());
     }
 
-    let result = react_loop::run_react_loop(react_loop::ReactLoopContext {
+    let (event_tx, event_rx) = inner.event_emitter.create_channel();
+
+    // Spawn a background drainer to prevent deadlock when a bounded channel
+    // fills up. The reactor `send().await` blocks until there is capacity;
+    // the drainer consumes events concurrently so the reactor never stalls.
+    let drain_handle = tokio::spawn(async move {
+        let mut rx = event_rx;
+        while rx.recv().await.is_some() {}
+    });
+
+    let ctx = react_loop::ReactLoopContext {
         agent_name: &inner.config.name,
         session_id: &session_id,
         reply_id: &reply_id,
@@ -189,10 +234,14 @@ async fn do_reply(inner: &AgentInner, input: Option<Vec<Msg>>) -> Result<Msg, Ag
         toolkit: &inner.config.toolkit,
         middlewares: &inner.middlewares,
         state: &inner.state,
-        event_emitter: &inner.event_emitter,
         interrupted: &inner.interrupted,
-    })
-    .await;
+    };
+
+    let result = react_loop::run_react_loop(ctx, &event_tx).await;
+
+    drop(event_tx);
+    // Drainer exits when the sender is dropped (channel closed).
+    let _ = drain_handle.await;
 
     for mw in inner.middlewares.iter() {
         let dummy: Result<Msg, AgentError> = match &result {
@@ -205,6 +254,75 @@ async fn do_reply(inner: &AgentInner, input: Option<Vec<Msg>>) -> Result<Msg, Ag
     }
 
     result
+}
+
+/// Streaming reply: spawns reactor in background, returns EventStream.
+async fn do_reply_stream(
+    inner: Arc<AgentInner>,
+    input: Option<Vec<Msg>>,
+) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
+    if inner.interrupted.swap(false, Ordering::SeqCst) {
+        return Err(AgentError::CancellationError {
+            reply_id: "pre-reply-interrupted".into(),
+        });
+    }
+
+    let session_id = {
+        let state = inner.state.read().unwrap();
+        state.session_id.clone()
+    };
+    let reply_id = uuid::Uuid::new_v4().as_simple().to_string();
+
+    {
+        let mut state = inner.state.write().unwrap();
+        state.reply_context.reply_id = reply_id.clone();
+        state.reply_context.cur_iter = 0;
+        state.reply_context.structured_schema = None;
+        state.reply_context.structured_output = None;
+    }
+
+    let mut input = input;
+    for mw in inner.middlewares.iter() {
+        mw.pre_reply(&inner.config.name, &mut input).await?;
+    }
+
+    if input.is_none() {
+        let state = inner.state.read().unwrap();
+        if state.context.is_empty() {
+            return Err(AgentError::NoContentToReply);
+        }
+    }
+
+    if let Some(ref msgs) = input {
+        let mut state = inner.state.write().unwrap();
+        state.context.extend(msgs.clone());
+    }
+
+    let (event_tx, event_rx) = inner.event_emitter.create_channel();
+    let (stream_handle, cancel_tx) = StreamHandle::new(Arc::clone(&inner.is_streaming));
+    let is_streaming = Arc::clone(&inner.is_streaming);
+
+    // Clone inner for the spawned task
+    let spawned_inner = Arc::clone(&inner);
+    let session_id_for_spawn = session_id.clone();
+    let reply_id_for_spawn = reply_id.clone();
+
+    tokio::spawn(async move {
+        streaming_reactor::run_streaming_loop(
+            spawned_inner,
+            session_id_for_spawn,
+            reply_id_for_spawn,
+            stream_handle,
+            event_tx,
+        )
+        .await;
+    });
+
+    Ok(Box::pin(EventStream {
+        rx: event_rx,
+        cancel_tx: Some(cancel_tx),
+        is_streaming,
+    }))
 }
 
 fn build_interruption_msg_inline(message: &str) -> Msg {

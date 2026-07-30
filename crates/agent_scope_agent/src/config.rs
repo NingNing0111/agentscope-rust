@@ -26,6 +26,8 @@ pub struct AgentConfig {
     pub model: Arc<dyn ChatModel>,
     /// Registered tools for tool-calling (optional).
     pub toolkit: Option<ToolKit>,
+    /// Streaming channel capacity: `None` = unbounded (default), `Some(N)` = bounded.
+    pub stream_channel_capacity: Option<usize>,
 }
 
 impl AgentConfig {
@@ -42,6 +44,7 @@ pub struct AgentConfigBuilder {
     system_prompt: String,
     model: Option<Arc<dyn ChatModel>>,
     toolkit: Option<ToolKit>,
+    stream_channel_capacity: Option<usize>,
 }
 
 impl AgentConfigBuilder {
@@ -62,6 +65,20 @@ impl AgentConfigBuilder {
 
     pub fn toolkit(mut self, toolkit: ToolKit) -> Self {
         self.toolkit = Some(toolkit);
+        self
+    }
+
+    /// Set the streaming channel capacity.
+    ///
+    /// - `None` = unbounded channel (default, per FR-019)
+    /// - `Some(n)` = bounded channel with capacity `n`
+    ///
+    /// **Panics**: if `Some(0)` is passed (capacity must be > 0).
+    pub fn with_stream_channel_capacity(mut self, cap: Option<usize>) -> Self {
+        if let Some(0) = cap {
+            panic!("stream_channel_capacity: `Some(0)` is invalid; use `None` for unbounded");
+        }
+        self.stream_channel_capacity = cap;
         self
     }
 
@@ -89,6 +106,7 @@ impl AgentConfigBuilder {
             system_prompt: self.system_prompt,
             model,
             toolkit: self.toolkit,
+            stream_channel_capacity: self.stream_channel_capacity,
         })
     }
 }

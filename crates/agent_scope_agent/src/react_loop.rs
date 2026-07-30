@@ -17,14 +17,14 @@ use agent_scope_state::AgentState;
 use agent_scope_tool::{ToolError, ToolExecOutput, ToolKit};
 use agent_scope_types::ReplyFinishedReason;
 use futures::StreamExt;
+use tokio::sync::mpsc;
 
 use crate::agent_error::AgentError;
 use crate::config::{ContextConfig, ReActConfig};
 use crate::context_compression::compress_context;
-use crate::event_emitter::EventEmitter;
 use crate::middleware::Middleware;
 
-/// Aggregated context for `run_react_loop`, grouping the 10+ parameters
+/// Aggregated context for `run_react_loop`, grouping the parameters
 /// that are threaded through every reasoning→acting iteration.
 pub(crate) struct ReactLoopContext<'a> {
     pub agent_name: &'a str,
@@ -36,7 +36,6 @@ pub(crate) struct ReactLoopContext<'a> {
     pub toolkit: &'a Option<ToolKit>,
     pub middlewares: &'a [Arc<dyn Middleware>],
     pub state: &'a std::sync::RwLock<AgentState>,
-    pub event_emitter: &'a EventEmitter,
     pub interrupted: &'a AtomicBool,
 }
 
@@ -47,54 +46,68 @@ enum LoopOutcome {
     Empty,
 }
 
-pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, AgentError> {
+/// Run the ReAct loop, emitting events through `event_tx`.
+///
+/// This is the **batch** / `reply()` path — it accumulates internally but
+/// sends events through an mpsc channel so `do_reply` can collect them.
+pub(crate) async fn run_react_loop(
+    ctx: ReactLoopContext<'_>,
+    event_tx: &mpsc::Sender<AgentEvent>,
+) -> Result<Msg, AgentError> {
     let base = || EventBase::new();
 
-    ctx.event_emitter
-        .emit(AgentEvent::ReplyStart(ReplyStartEvent {
+    let _ = event_tx
+        .send(AgentEvent::ReplyStart(ReplyStartEvent {
             base: base(),
             session_id: ctx.session_id.into(),
             reply_id: ctx.reply_id.into(),
             name: ctx.agent_name.into(),
             role: "assistant".into(),
-        }));
+        }))
+        .await;
 
     let mut accumulated_texts: Vec<String> = Vec::new();
     let mut cur_iter: u32 = 0;
 
     loop {
         if ctx.interrupted.load(Ordering::SeqCst) {
-            ctx.event_emitter
-                .emit(AgentEvent::UserInterrupt(UserInterruptEvent {
+            let _ = event_tx
+                .send(AgentEvent::UserInterrupt(UserInterruptEvent {
                     base: base(),
                     reply_id: ctx.reply_id.into(),
-                }));
-            ctx.event_emitter.emit(AgentEvent::ReplyEnd(ReplyEndEvent {
-                base: base(),
-                session_id: ctx.session_id.into(),
-                reply_id: ctx.reply_id.into(),
-                finished_reason: ReplyFinishedReason::Interrupted,
-                error: None,
-            }));
+                }))
+                .await;
+            let _ = event_tx
+                .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                    base: base(),
+                    session_id: ctx.session_id.into(),
+                    reply_id: ctx.reply_id.into(),
+                    finished_reason: ReplyFinishedReason::Interrupted,
+                    error: None,
+                }))
+                .await;
             return Ok(build_interruption_msg(
                 &ctx.react_config.interruption_message,
             ));
         }
 
         if cur_iter >= ctx.react_config.max_iters {
-            ctx.event_emitter
-                .emit(AgentEvent::ExceedMaxIters(ExceedMaxItersEvent {
+            let _ = event_tx
+                .send(AgentEvent::ExceedMaxIters(ExceedMaxItersEvent {
                     base: base(),
                     reply_id: ctx.reply_id.into(),
                     name: ctx.agent_name.into(),
-                }));
-            ctx.event_emitter.emit(AgentEvent::ReplyEnd(ReplyEndEvent {
-                base: base(),
-                session_id: ctx.session_id.into(),
-                reply_id: ctx.reply_id.into(),
-                finished_reason: ReplyFinishedReason::Completed,
-                error: None,
-            }));
+                }))
+                .await;
+            let _ = event_tx
+                .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                    base: base(),
+                    session_id: ctx.session_id.into(),
+                    reply_id: ctx.reply_id.into(),
+                    finished_reason: ReplyFinishedReason::Completed,
+                    error: None,
+                }))
+                .await;
             return Ok(build_final_msg(&accumulated_texts));
         }
 
@@ -126,12 +139,13 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
             }
         }
 
-        ctx.event_emitter
-            .emit(AgentEvent::ModelCallStart(ModelCallStartEvent {
+        let _ = event_tx
+            .send(AgentEvent::ModelCallStart(ModelCallStartEvent {
                 base: base(),
                 reply_id: ctx.reply_id.into(),
                 model_name: ctx.model.model_name().into(),
-            }));
+            }))
+            .await;
 
         let result = ctx
             .model
@@ -152,14 +166,15 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
             }
         };
 
-        ctx.event_emitter
-            .emit(AgentEvent::ModelCallEnd(ModelCallEndEvent {
+        let _ = event_tx
+            .send(AgentEvent::ModelCallEnd(ModelCallEndEvent {
                 base: base(),
                 reply_id: ctx.reply_id.into(),
                 input_tokens: response.usage.as_ref().map_or(0, |u| u.input_tokens),
                 output_tokens: response.usage.as_ref().map_or(0, |u| u.output_tokens),
                 finished_reason: ReplyFinishedReason::Completed,
-            }));
+            }))
+            .await;
 
         for mw in ctx.middlewares.iter() {
             mw.post_reasoning(ctx.agent_name, &response).await?;
@@ -173,27 +188,28 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
                     for block in &msg.content {
                         if let ContentBlock::Text(tb) = block {
                             let block_id = uuid::Uuid::new_v4().as_simple().to_string();
-                            ctx.event_emitter.emit(AgentEvent::TextBlockStart(
-                                TextBlockStartEvent {
+                            let _ = event_tx
+                                .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     block_id: block_id.clone(),
-                                },
-                            ));
-                            ctx.event_emitter.emit(AgentEvent::TextBlockDelta(
-                                TextBlockDeltaEvent {
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     block_id: block_id.clone(),
                                     delta: tb.text.clone(),
-                                },
-                            ));
-                            ctx.event_emitter
-                                .emit(AgentEvent::TextBlockEnd(TextBlockEndEvent {
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     block_id,
-                                }));
+                                }))
+                                .await;
                             accumulated_texts.push(tb.text.clone());
                         }
                     }
@@ -206,13 +222,15 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
                     }
                 }
 
-                ctx.event_emitter.emit(AgentEvent::ReplyEnd(ReplyEndEvent {
-                    base: base(),
-                    session_id: ctx.session_id.into(),
-                    reply_id: ctx.reply_id.into(),
-                    finished_reason: ReplyFinishedReason::Completed,
-                    error: None,
-                }));
+                let _ = event_tx
+                    .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                        base: base(),
+                        session_id: ctx.session_id.into(),
+                        reply_id: ctx.reply_id.into(),
+                        finished_reason: ReplyFinishedReason::Completed,
+                        error: None,
+                    }))
+                    .await;
 
                 return Ok(build_final_msg(&accumulated_texts));
             }
@@ -224,13 +242,14 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
                         mw.pre_acting(ctx.agent_name, &mut tc_mut).await?;
                     }
 
-                    ctx.event_emitter
-                        .emit(AgentEvent::ToolCallStart(ToolCallStartEvent {
+                    let _ = event_tx
+                        .send(AgentEvent::ToolCallStart(ToolCallStartEvent {
                             base: base(),
                             reply_id: ctx.reply_id.into(),
                             tool_call_id: tc_mut.id.clone(),
                             tool_call_name: tc_mut.name.clone(),
-                        }));
+                        }))
+                        .await;
 
                     let exec_result = if let Some(tk) = ctx.toolkit {
                         tk.call_tool(&tc_mut).await
@@ -240,12 +259,13 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
                         })
                     };
 
-                    ctx.event_emitter
-                        .emit(AgentEvent::ToolCallEnd(ToolCallEndEvent {
+                    let _ = event_tx
+                        .send(AgentEvent::ToolCallEnd(ToolCallEndEvent {
                             base: base(),
                             reply_id: ctx.reply_id.into(),
                             tool_call_id: tc_mut.id.clone(),
-                        }));
+                        }))
+                        .await;
 
                     match exec_result {
                         Ok(ToolExecOutput::Complete(chunk)) => {
@@ -255,30 +275,31 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
                                 ToolOutput::Blocks(_) => "[blocks]".into(),
                             };
 
-                            ctx.event_emitter.emit(AgentEvent::ToolResultStart(
-                                ToolResultStartEvent {
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     tool_call_id: tc_mut.id.clone(),
                                     tool_call_name: tc_mut.name.clone(),
-                                },
-                            ));
-                            ctx.event_emitter.emit(AgentEvent::ToolResultTextDelta(
-                                ToolResultTextDeltaEvent {
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResultTextDelta(ToolResultTextDeltaEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     tool_call_id: tc_mut.id.clone(),
                                     delta: output_text.clone(),
-                                },
-                            ));
-                            ctx.event_emitter
-                                .emit(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     tool_call_id: tc_mut.id.clone(),
                                     state: result_state,
                                     metadata: std::collections::HashMap::new(),
-                                }));
+                                }))
+                                .await;
 
                             let result_clone = ToolExecOutput::Complete(chunk.clone());
                             for mw in ctx.middlewares.iter() {
@@ -302,22 +323,23 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
                             }
                         }
                         Err(tool_err) => {
-                            ctx.event_emitter.emit(AgentEvent::ToolResultStart(
-                                ToolResultStartEvent {
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     tool_call_id: tc_mut.id.clone(),
                                     tool_call_name: tc_mut.name.clone(),
-                                },
-                            ));
-                            ctx.event_emitter
-                                .emit(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     tool_call_id: tc_mut.id.clone(),
                                     state: ToolResultState::Error,
                                     metadata: std::collections::HashMap::new(),
-                                }));
+                                }))
+                                .await;
 
                             {
                                 let mut state_write = ctx.state.write().unwrap();
@@ -341,13 +363,15 @@ pub(crate) async fn run_react_loop(ctx: ReactLoopContext<'_>) -> Result<Msg, Age
             }
 
             LoopOutcome::Empty => {
-                ctx.event_emitter.emit(AgentEvent::ReplyEnd(ReplyEndEvent {
-                    base: base(),
-                    session_id: ctx.session_id.into(),
-                    reply_id: ctx.reply_id.into(),
-                    finished_reason: ReplyFinishedReason::Completed,
-                    error: None,
-                }));
+                let _ = event_tx
+                    .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                        base: base(),
+                        session_id: ctx.session_id.into(),
+                        reply_id: ctx.reply_id.into(),
+                        finished_reason: ReplyFinishedReason::Completed,
+                        error: None,
+                    }))
+                    .await;
                 return Ok(build_final_msg(&accumulated_texts));
             }
         }

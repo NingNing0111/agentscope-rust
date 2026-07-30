@@ -2,14 +2,24 @@
 //!
 //! These provide deterministic model responses for testing the agent system
 //! without requiring live LLM API calls (per Constitution Article 6).
+//!
+//! NOTE: This file is compiled both as a standalone integration test binary
+//! and via `mod mocks` from streaming_tests.rs. We allow dead_code/unused_imports
+//! to avoid warnings in the standalone mode.
+
+#![allow(dead_code)]
+#![allow(unused_imports)]
 
 use std::pin::Pin;
 use std::sync::Mutex;
 
-use agent_scope_message::{ContentBlock, Msg, TextBlock, ToolCallBlock};
+use agent_scope_message::{
+    ContentBlock, Msg, TextBlock, ToolCallBlock, ToolOutput, ToolResultBlock, ToolResultState,
+};
 use agent_scope_model::{
     ChatModel, ChatResponse, ChatUsage, ModelCallResult, ModelError, ToolChoice,
 };
+use agent_scope_tool::{Tool, ToolError, ToolExecOutput};
 use futures::{Stream, stream};
 use serde_json::Value as JsonValue;
 
@@ -193,6 +203,142 @@ impl ChatModel for ScriptedModel {
 
         resp.usage = Some(ChatUsage::default());
         Ok(ModelCallResult::Complete(resp))
+    }
+}
+
+/// A mock ChatModel that streams a pre-built sequence of ChatResponse chunks.
+///
+/// Each chunk can contain mixed content blocks (ToolCall + Text interleaved),
+/// enabling US2 tool call detection tests.
+///
+/// On the first call, streams the configured chunks. On subsequent calls,
+/// returns an empty Complete response (allowing ReAct loop termination).
+pub struct MockStreamingModel {
+    name: String,
+    chunks: Vec<ChatResponse>,
+    call_count: Mutex<usize>,
+}
+
+impl MockStreamingModel {
+    /// Create a new MockStreamingModel with the given chunks.
+    /// First call streams chunks; subsequent calls return empty Complete.
+    pub fn new(name: impl Into<String>, chunks: Vec<ChatResponse>) -> Self {
+        Self {
+            name: name.into(),
+            chunks,
+            call_count: Mutex::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ChatModel for MockStreamingModel {
+    fn model_name(&self) -> &str {
+        &self.name
+    }
+
+    fn stream_enabled(&self) -> bool {
+        // Only stream on first call; subsequent calls are Complete
+        *self.call_count.lock().unwrap() == 0
+    }
+
+    async fn call_api(
+        &self,
+        _model: &str,
+        _messages: &[Msg],
+        _tools: Option<&[JsonValue]>,
+        _tool_choice: Option<&ToolChoice>,
+    ) -> Result<ModelCallResult, ModelError> {
+        let mut count = self.call_count.lock().unwrap();
+        let idx = *count;
+        *count += 1;
+
+        if idx == 0 {
+            // First call: stream chunks
+            let resp_id = uuid::Uuid::new_v4().as_simple().to_string();
+            let chunks: Vec<_> = self
+                .chunks
+                .iter()
+                .enumerate()
+                .map(|(i, chunk)| {
+                    let mut c = chunk.clone();
+                    c.id = resp_id.clone();
+                    if i == self.chunks.len() - 1 {
+                        c.usage = Some(ChatUsage::default());
+                    }
+                    c
+                })
+                .collect();
+            let stream: Pin<Box<dyn Stream<Item = Result<ChatResponse, ModelError>> + Send>> =
+                Box::pin(stream::iter(chunks.into_iter().map(Ok)));
+            Ok(ModelCallResult::Stream(stream))
+        } else {
+            // Subsequent calls: empty Complete response (stops loop)
+            let resp = ChatResponse {
+                usage: Some(ChatUsage::default()),
+                ..Default::default()
+            };
+            Ok(ModelCallResult::Complete(resp))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MockStreamingTool
+// ---------------------------------------------------------------------------
+
+/// A mock Tool that returns `ToolExecOutput::Stream` with configurable chunks.
+///
+/// Used in US3 tests for progressive tool output delivery.
+#[allow(dead_code)] // Used via mod mocks in streaming_tests.rs
+pub struct MockStreamingTool {
+    name: String,
+    chunks: Vec<Result<ToolResultBlock, ToolError>>,
+}
+
+impl MockStreamingTool {
+    pub fn new(name: impl Into<String>, chunks: Vec<Result<ToolResultBlock, ToolError>>) -> Self {
+        Self {
+            name: name.into(),
+            chunks,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for MockStreamingTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        "A mock streaming tool"
+    }
+
+    fn input_schema(&self) -> JsonValue {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"}
+            },
+            "required": ["text"]
+        })
+    }
+
+    async fn call(&self, _input: JsonValue) -> Result<ToolExecOutput, ToolError> {
+        let chunks: Vec<Result<ToolResultBlock, ToolError>> = self
+            .chunks
+            .iter()
+            .map(|r| {
+                r.clone().map_err(|e| ToolError::Execution {
+                    tool_name: self.name.clone(),
+                    reason: e.to_string(),
+                })
+            })
+            .collect();
+        let stream: Pin<Box<dyn Stream<Item = Result<ToolResultBlock, ToolError>> + Send>> =
+            Box::pin(stream::iter(chunks));
+        Ok(ToolExecOutput::Stream(stream))
     }
 }
 

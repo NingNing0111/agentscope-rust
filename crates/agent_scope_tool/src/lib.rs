@@ -23,10 +23,14 @@
 //! ```
 
 pub mod function;
+pub mod skill_loader;
+pub mod skill_viewer;
 pub mod tool_trait;
 pub mod toolkit;
 
 // Re-export the most commonly used types.
 pub use function::{FunctionTool, IntoChunk};
+pub use skill_loader::{LocalSkillLoader, SkillLoader, SkillOrLoader};
+pub use skill_viewer::{DEFAULT_SKILL_INSTRUCTION, ListSkillsCallback, SkillViewer};
 pub use tool_trait::{Tool, ToolChunk, ToolError, ToolExecOutput};
 pub use toolkit::ToolKit;

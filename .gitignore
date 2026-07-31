@@ -12,3 +12,4 @@ release/
 .claude/
 .omc/
 agentscope/
+.claude/settings.local.json

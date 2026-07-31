@@ -382,10 +382,13 @@ impl DashScopeChatModel {
                                     } else if let Some(choice) = choices_arr.first() {
                                         let delta = choice.get("delta");
 
-                                        // Text delta
+                                        // Text delta — skip empty text to avoid triggering
+                                        // empty TextBlock creation which causes
+                                        // premature ToolCallEnd in streaming (P1-12 fix)
                                         if let Some(content) = delta
                                             .and_then(|d| d.get("content"))
                                             .and_then(|v| v.as_str())
+                                            && !content.is_empty()
                                         {
                                             resp.append_text(content, Some("text_0"));
                                         }
@@ -412,12 +415,12 @@ impl DashScopeChatModel {
                                                     .get("index")
                                                     .and_then(|v| v.as_u64())
                                                     .unwrap_or(0);
-                                                let tc_id = tc
-                                                    .get("id")
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("")
-                                                    .to_string();
-                                                let block_id = format!("tc_{idx}_{tc_id}");
+                                                // Use index-only block_id for stable streaming
+                                                // accumulation. The tool_call `id` field may
+                                                // arrive in a later SSE chunk, which would
+                                                // cause StreamAccumulator to treat them as
+                                                // separate tool calls if we included it here.
+                                                let block_id = format!("tc_{idx}");
 
                                                 let func = tc.get("function");
                                                 let name = func

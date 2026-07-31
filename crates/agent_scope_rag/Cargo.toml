@@ -1,0 +1,24 @@
+[package]
+name = "agent_scope_rag"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AgentScope RAG System — Parser, Chunker, VectorStore, KnowledgeBase, RAGMiddleware"
+
+[dependencies]
+agent_scope_types = { path = "../agent_scope_types" }
+agent_scope_embedding = { path = "../agent_scope_embedding" }
+agent_scope_model = { path = "../agent_scope_model" }
+agent_scope_agent = { path = "../agent_scope_agent" }
+agent_scope_message = { path = "../agent_scope_message" }
+agent_scope_tool = { path = "../agent_scope_tool" }
+serde.workspace = true
+serde_json.workspace = true
+async-trait = "0.1"
+futures = "0.3"
+uuid.workspace = true
+tokio = { version = "1", features = ["sync", "rt"] }
+
+[dev-dependencies]
+tempfile = "3"

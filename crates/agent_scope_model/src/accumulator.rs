@@ -98,6 +98,11 @@ impl AccToolCallBlock {
         if !block.name.is_empty() && self.name.is_empty() {
             self.name = block.name.clone();
         }
+        // Update id when it arrives in a later SSE chunk (DashScope streams
+        // send id after the first chunk without it)
+        if !block.id.is_empty() {
+            self.id = block.id.clone();
+        }
     }
     fn build(self) -> ToolCallBlock {
         ToolCallBlock::new(self.id, self.name, self.input.concat())

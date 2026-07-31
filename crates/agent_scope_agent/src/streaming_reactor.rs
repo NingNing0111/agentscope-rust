@@ -17,12 +17,14 @@ use std::sync::atomic::Ordering;
 
 use agent_scope_event::{
     AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
-    ReplyEndEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent, ToolCallDeltaEvent,
-    ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent, ToolResultStartEvent,
-    ToolResultTextDeltaEvent, UserInterruptEvent,
+    ReplyEndEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent,
+    ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent,
+    ToolCallDeltaEvent, ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent,
+    ToolResultStartEvent, ToolResultTextDeltaEvent, UserInterruptEvent,
 };
 use agent_scope_message::{
-    ContentBlock, Msg, Role, TextBlock, ToolCallBlock, ToolOutput, ToolResultBlock, ToolResultState,
+    ContentBlock, Msg, Role, TextBlock, ThinkingBlock, ToolCallBlock, ToolOutput, ToolResultBlock,
+    ToolResultState,
 };
 use agent_scope_model::{ChatResponse, ChatUsage, ModelCallResult, StreamAccumulator};
 use agent_scope_tool::{ToolError, ToolExecOutput};
@@ -255,6 +257,8 @@ pub(crate) async fn run_streaming_loop(
                         if !tool_calls.is_empty() {
                             // Write text blocks from the response to context
                             add_text_to_context(&inner, &response);
+                            // Store assistant tool_call message BEFORE tool results
+                            add_tool_calls_to_context(&inner, &tool_calls);
                             // Execute all detected tool calls
                             execute_tool_calls(
                                 &inner,
@@ -349,6 +353,8 @@ enum StreamOutcome {
 struct BlockTracker {
     /// Text blocks whose lifecycle hasn't ended yet: block_id → (emitted_start, text)
     text_blocks: HashMap<String, (bool, Vec<String>)>,
+    /// Thinking blocks being accumulated: block_id → (emitted_start, texts)
+    thinking_blocks: HashMap<String, (bool, Vec<String>)>,
     /// Tool call blocks being accumulated: block_id → ToolCallBlock
     tool_blocks: HashMap<String, ToolCallBlock>,
     /// Tool calls finalized (complete) with their block IDs for ordering
@@ -359,6 +365,7 @@ impl BlockTracker {
     fn new() -> Self {
         Self {
             text_blocks: HashMap::new(),
+            thinking_blocks: HashMap::new(),
             tool_blocks: HashMap::new(),
             completed_tool_ids: Vec::new(),
         }
@@ -402,6 +409,7 @@ async fn consume_stream_progressive(
             _ = cancel_token.cancelled() => {
                 close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
                 close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+                close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base).await;
                 let _ = event_tx
                     .send(AgentEvent::ReplyEnd(ReplyEndEvent {
                         base: base(),
@@ -424,9 +432,18 @@ async fn consume_stream_progressive(
                 for block in &chunk.content {
                     match block {
                         ContentBlock::ToolCall(tc) => {
-                            // Check if this block was previously a text block
-                            // (block-type transition: close text block lifecycle)
+                            // Defense-in-depth (P1-12): if this tool call was already
+                            // finalized (ToolCallEnd emitted), silently drop any further
+                            // chunks for it. Without this guard, late-arriving deltas
+                            // would appear after ToolCallEnd.
+                            if tracker.completed_tool_ids.contains(&tc.id) {
+                                continue;
+                            }
+
+                            // Check if this block was previously a text block or
+                            // thinking block (block-type transition: close their lifecycles)
                             let had_text = !tracker.text_blocks.is_empty();
+                            let had_thinking = !tracker.thinking_blocks.is_empty();
 
                             if let Some(existing) = tracker.tool_blocks.get_mut(&tc.id) {
                                 // Subsequent chunk for same tool call — emit delta
@@ -443,8 +460,18 @@ async fn consume_stream_progressive(
                                     existing.name = tc.name.clone();
                                 }
                             } else {
-                                // First chunk for this tool call — emit start
-                                // Close any open text blocks first (block-type transition)
+                                // First chunk for this tool call — emit start.
+                                // Close thinking and text blocks BEFORE ToolCallStart
+                                // so the event sequence reads:
+                                //   ThinkingBlockEnd → ToolCallStart → ToolCallDelta...
+                                // instead of:
+                                //   ToolCallStart → ToolCallEnd → ThinkingBlockEnd
+                                if had_thinking {
+                                    close_all_thinking_blocks(
+                                        &mut tracker, event_tx, reply_id, base,
+                                    )
+                                    .await;
+                                }
                                 if had_text {
                                     close_all_text_blocks(&mut tracker, event_tx, reply_id, base)
                                         .await;
@@ -458,22 +485,62 @@ async fn consume_stream_progressive(
                                         tool_call_name: tc.name.clone(),
                                     }))
                                     .await;
+                                // Emit delta for the first chunk's input (P0-11 fix:
+                                // first-chunk args were previously dropped from display)
+                                if !tc.input.is_empty() {
+                                    let _ = event_tx
+                                        .send(AgentEvent::ToolCallDelta(ToolCallDeltaEvent {
+                                            base: base(),
+                                            reply_id: reply_id.into(),
+                                            tool_call_id: tc.id.clone(),
+                                            delta: tc.input.clone(),
+                                        }))
+                                        .await;
+                                }
                                 tracker.tool_blocks.insert(tc.id.clone(), tc.clone());
                             }
                         }
                         ContentBlock::Text(tb) => {
-                            // Check if this signals a tool→text transition:
-                            // close active tool blocks
+                            // Check if this signals a tool→text or thinking→text transition:
+                            // close active tool and thinking blocks first so their End events
+                            // appear before TextBlockStart.
                             close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
+                            if !tracker.thinking_blocks.is_empty() {
+                                close_all_thinking_blocks(
+                                    &mut tracker, event_tx, reply_id, base,
+                                )
+                                .await;
+                            }
 
                             process_text_block_chunk(&mut tracker, tb, event_tx, reply_id, base)
                                 .await;
                         }
+                        ContentBlock::Thinking(thb) => {
+                            // Close any active tool blocks first — if the model goes
+                            // tool_call → thinking (common in DashScope thinking mode),
+                            // ToolCallEnd must appear before ThinkingBlockDelta.
+                            if !tracker.tool_blocks.is_empty() {
+                                close_active_tool_blocks(
+                                    &mut tracker, event_tx, reply_id, base,
+                                )
+                                .await;
+                            }
+
+                            process_thinking_block_chunk(
+                                &mut tracker,
+                                thb,
+                                event_tx,
+                                reply_id,
+                                base,
+                            )
+                            .await;
+                        }
                         _ => {
-                            // Unknown block type → close tool blocks (transition)
+                            // Unknown block type → close all active blocks (transition)
                             close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
-                            // Close text blocks too
                             close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+                            close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base)
+                                .await;
                         }
                     }
                 }
@@ -482,6 +549,7 @@ async fn consume_stream_progressive(
                 if is_last {
                     close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
                     close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+                    close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base).await;
                 }
 
                 // Track usage from the last chunk that carries it
@@ -500,6 +568,7 @@ async fn consume_stream_progressive(
                 // Close all tracking before returning error
                 close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
                 close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+                close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base).await;
                 return StreamOutcome::Error {
                     message: e.to_string(),
                 };
@@ -514,6 +583,7 @@ async fn consume_stream_progressive(
     // Stream ended (EOF or is_last) — close any remaining open blocks
     close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
     close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+    close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base).await;
 
     // Collect finalized tool calls in order
     let tool_calls: Vec<ToolCallBlock> = tracker
@@ -553,6 +623,9 @@ async fn close_all_text_blocks(
 }
 
 /// Finalize all active tool call blocks: emit ToolCallEnd and move to completed list.
+/// Note: blocks are NOT removed from tracker.tool_blocks here — they are needed for
+/// final collection in consume_stream_progressive(). Subsequent ToolCallDelta chunks
+/// for completed blocks are guarded by a check in the ToolCall handler (P1-12).
 async fn close_active_tool_blocks(
     tracker: &mut BlockTracker,
     event_tx: &mpsc::Sender<AgentEvent>,
@@ -623,6 +696,73 @@ async fn process_text_block_chunk(
     }
 }
 
+/// Emit ThinkingBlockEnd for all active thinking blocks, clearing them.
+async fn close_all_thinking_blocks(
+    tracker: &mut BlockTracker,
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    base: fn() -> EventBase,
+) {
+    for block_id in tracker.thinking_blocks.keys().cloned().collect::<Vec<_>>() {
+        let _ = event_tx
+            .send(AgentEvent::ThinkingBlockEnd(ThinkingBlockEndEvent {
+                base: base(),
+                reply_id: reply_id.into(),
+                block_id: block_id.clone(),
+            }))
+            .await;
+    }
+    tracker.thinking_blocks.clear();
+}
+
+/// Process a thinking block chunk with proper lifecycle:
+/// Start on first occurrence → Delta on each chunk → End on close.
+async fn process_thinking_block_chunk(
+    tracker: &mut BlockTracker,
+    thb: &ThinkingBlock,
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    base: fn() -> EventBase,
+) {
+    if thb.thinking.is_empty() {
+        return;
+    }
+    let bid = thb.id.clone();
+    match tracker.thinking_blocks.get_mut(&bid) {
+        Some((already_started, _texts)) => {
+            // Subsequent chunk — emit only Delta
+            let _ = event_tx
+                .send(AgentEvent::ThinkingBlockDelta(ThinkingBlockDeltaEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    block_id: bid,
+                    delta: thb.thinking.clone(),
+                }))
+                .await;
+            *already_started = true;
+        }
+        None => {
+            // First chunk for this block_id — emit Start + Delta
+            let _ = event_tx
+                .send(AgentEvent::ThinkingBlockStart(ThinkingBlockStartEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    block_id: bid.clone(),
+                }))
+                .await;
+            let _ = event_tx
+                .send(AgentEvent::ThinkingBlockDelta(ThinkingBlockDeltaEvent {
+                    base: base(),
+                    reply_id: reply_id.into(),
+                    block_id: bid.clone(),
+                    delta: thb.thinking.clone(),
+                }))
+                .await;
+            tracker.thinking_blocks.insert(bid, (true, vec![]));
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Response processing (Complete path)
 // ---------------------------------------------------------------------------
@@ -653,6 +793,10 @@ async fn process_response_and_continue(
     if !tool_calls.is_empty() {
         // Emit tool call events + execute them
         add_text_to_context(inner, response);
+        // Store assistant tool_call message BEFORE tool results.
+        // OpenAI-compatible APIs require:
+        //   assistant(tool_calls=[...])  →  tool(result, tool_call_id=...)
+        add_tool_calls_to_context(inner, &tool_calls);
         let dummy_handle = StreamHandle::new_dummy();
         for tc in &tool_calls {
             let _ = event_tx
@@ -776,6 +920,28 @@ fn add_text_to_context(inner: &Arc<AgentInner>, response: &ChatResponse) {
         {
             inner.state.write().unwrap().context.push(msg);
         }
+    }
+}
+
+/// Store tool call blocks as an assistant message in context.
+///
+/// OpenAI-compatible APIs require the assistant message containing tool calls
+/// to appear BEFORE the subsequent tool result messages in the conversation
+/// history. This function writes the assistant(tool_calls) message to context.
+fn add_tool_calls_to_context(inner: &Arc<AgentInner>, tool_calls: &[ToolCallBlock]) {
+    if tool_calls.is_empty() {
+        return;
+    }
+    let tc_blocks: Vec<ContentBlock> = tool_calls
+        .iter()
+        .map(|tc| ContentBlock::ToolCall(tc.clone()))
+        .collect();
+    if let Ok(msg) = Msg::new(
+        inner.config.name.clone(),
+        tc_blocks,
+        Role::Assistant,
+    ) {
+        inner.state.write().unwrap().context.push(msg);
     }
 }
 
@@ -960,7 +1126,7 @@ async fn emit_model_call_end_with_usage(
         .await;
 }
 
-/// Emit ONLY text events for a Complete (non-streaming) response.
+/// Emit text AND thinking events for a Complete (non-streaming) response.
 /// Tool call events are emitted separately by process_response_and_continue.
 async fn emit_text_events_only(
     response: &ChatResponse,
@@ -969,33 +1135,64 @@ async fn emit_text_events_only(
     base: fn() -> EventBase,
 ) {
     for block in &response.content {
-        if let ContentBlock::Text(tb) = block {
-            if tb.text.is_empty() {
-                continue;
+        match block {
+            ContentBlock::Text(tb) => {
+                if tb.text.is_empty() {
+                    continue;
+                }
+                let bid = tb.id.clone();
+                let _ = tx
+                    .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
+                        base: base(),
+                        reply_id: rid.into(),
+                        block_id: bid.clone(),
+                    }))
+                    .await;
+                let _ = tx
+                    .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
+                        base: base(),
+                        reply_id: rid.into(),
+                        block_id: bid.clone(),
+                        delta: tb.text.clone(),
+                    }))
+                    .await;
+                let _ = tx
+                    .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
+                        base: base(),
+                        reply_id: rid.into(),
+                        block_id: bid,
+                    }))
+                    .await;
             }
-            let bid = tb.id.clone();
-            let _ = tx
-                .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
-                    base: base(),
-                    reply_id: rid.into(),
-                    block_id: bid.clone(),
-                }))
-                .await;
-            let _ = tx
-                .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
-                    base: base(),
-                    reply_id: rid.into(),
-                    block_id: bid.clone(),
-                    delta: tb.text.clone(),
-                }))
-                .await;
-            let _ = tx
-                .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
-                    base: base(),
-                    reply_id: rid.into(),
-                    block_id: bid,
-                }))
-                .await;
+            ContentBlock::Thinking(thb) => {
+                if thb.thinking.is_empty() {
+                    continue;
+                }
+                let bid = thb.id.clone();
+                let _ = tx
+                    .send(AgentEvent::ThinkingBlockStart(ThinkingBlockStartEvent {
+                        base: base(),
+                        reply_id: rid.into(),
+                        block_id: bid.clone(),
+                    }))
+                    .await;
+                let _ = tx
+                    .send(AgentEvent::ThinkingBlockDelta(ThinkingBlockDeltaEvent {
+                        base: base(),
+                        reply_id: rid.into(),
+                        block_id: bid.clone(),
+                        delta: thb.thinking.clone(),
+                    }))
+                    .await;
+                let _ = tx
+                    .send(AgentEvent::ThinkingBlockEnd(ThinkingBlockEndEvent {
+                        base: base(),
+                        reply_id: rid.into(),
+                        block_id: bid,
+                    }))
+                    .await;
+            }
+            _ => {}
         }
     }
 }

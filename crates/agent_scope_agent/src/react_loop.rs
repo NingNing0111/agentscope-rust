@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use agent_scope_event::{
     AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
     ReplyEndEvent, ReplyStartEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent,
+    ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent,
     ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent, ToolResultStartEvent,
     ToolResultTextDeltaEvent, UserInterruptEvent,
 };
@@ -253,31 +254,62 @@ pub(crate) async fn run_react_loop(
             LoopOutcome::Text(ref text_msgs) => {
                 for msg in text_msgs {
                     for block in &msg.content {
-                        if let ContentBlock::Text(tb) = block {
-                            let block_id = uuid::Uuid::new_v4().as_simple().to_string();
-                            let _ = event_tx
-                                .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
-                                    base: base(),
-                                    reply_id: ctx.reply_id.into(),
-                                    block_id: block_id.clone(),
-                                }))
-                                .await;
-                            let _ = event_tx
-                                .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
-                                    base: base(),
-                                    reply_id: ctx.reply_id.into(),
-                                    block_id: block_id.clone(),
-                                    delta: tb.text.clone(),
-                                }))
-                                .await;
-                            let _ = event_tx
-                                .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
-                                    base: base(),
-                                    reply_id: ctx.reply_id.into(),
-                                    block_id,
-                                }))
-                                .await;
-                            accumulated_texts.push(tb.text.clone());
+                        match block {
+                            ContentBlock::Text(tb) => {
+                                let block_id = uuid::Uuid::new_v4().as_simple().to_string();
+                                let _ = event_tx
+                                    .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
+                                        base: base(),
+                                        reply_id: ctx.reply_id.into(),
+                                        block_id: block_id.clone(),
+                                    }))
+                                    .await;
+                                let _ = event_tx
+                                    .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
+                                        base: base(),
+                                        reply_id: ctx.reply_id.into(),
+                                        block_id: block_id.clone(),
+                                        delta: tb.text.clone(),
+                                    }))
+                                    .await;
+                                let _ = event_tx
+                                    .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
+                                        base: base(),
+                                        reply_id: ctx.reply_id.into(),
+                                        block_id,
+                                    }))
+                                    .await;
+                                accumulated_texts.push(tb.text.clone());
+                            }
+                            ContentBlock::Thinking(thb) => {
+                                if thb.thinking.is_empty() {
+                                    continue;
+                                }
+                                let block_id = uuid::Uuid::new_v4().as_simple().to_string();
+                                let _ = event_tx
+                                    .send(AgentEvent::ThinkingBlockStart(ThinkingBlockStartEvent {
+                                        base: base(),
+                                        reply_id: ctx.reply_id.into(),
+                                        block_id: block_id.clone(),
+                                    }))
+                                    .await;
+                                let _ = event_tx
+                                    .send(AgentEvent::ThinkingBlockDelta(ThinkingBlockDeltaEvent {
+                                        base: base(),
+                                        reply_id: ctx.reply_id.into(),
+                                        block_id: block_id.clone(),
+                                        delta: thb.thinking.clone(),
+                                    }))
+                                    .await;
+                                let _ = event_tx
+                                    .send(AgentEvent::ThinkingBlockEnd(ThinkingBlockEndEvent {
+                                        base: base(),
+                                        reply_id: ctx.reply_id.into(),
+                                        block_id,
+                                    }))
+                                    .await;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -303,6 +335,25 @@ pub(crate) async fn run_react_loop(
             }
 
             LoopOutcome::ToolCalls(tool_calls) => {
+                // Store the assistant message with tool calls to context FIRST.
+                // OpenAI-compatible APIs require: assistant(tool_calls) → tool(result).
+                // Without the assistant message, the model doesn't know which
+                // tool call the result corresponds to.
+                {
+                    let mut state_write = ctx.state.write().unwrap();
+                    let tc_blocks: Vec<ContentBlock> = tool_calls
+                        .iter()
+                        .map(|tc| ContentBlock::ToolCall(tc.clone()))
+                        .collect();
+                    if let Ok(assistant_msg) = Msg::new(
+                        ctx.agent_name.into(),
+                        tc_blocks,
+                        Role::Assistant,
+                    ) {
+                        state_write.context.push(assistant_msg);
+                    }
+                }
+
                 for tc in &tool_calls {
                     let mut tc_mut = tc.clone();
                     for mw in ctx.middlewares.iter() {

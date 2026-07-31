@@ -80,6 +80,13 @@ pub enum ToolError {
         /// Name of the tool that was interrupted.
         tool_name: String,
     },
+
+    /// Requested skill was not found in the registered skill set.
+    #[error("skill '{skill_name}' not found")]
+    SkillNotFound {
+        /// Name of the skill that was requested but not found.
+        skill_name: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

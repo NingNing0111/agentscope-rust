@@ -28,62 +28,148 @@ impl Formatter for DashScopeFormatter {
         let mut result = Vec::new();
 
         for msg in msgs {
-            let role_str = match msg.role {
-                Role::User => "user",
-                Role::Assistant => "assistant",
-                Role::System => "system",
-            };
-
             let mut entry = serde_json::Map::new();
-            entry.insert("role".to_string(), JsonValue::String(role_str.to_string()));
 
-            // Determine content format
-            let content = self.format_content(&msg.content)?;
-            entry.insert("content".to_string(), content);
+            // ── Tool result handling ──
+            // Tool result messages MUST use role="tool", have a tool_call_id,
+            // and content as a string. The OpenAI-compatible API rejects
+            // tool-role messages without a tool_call_id.
+            let tool_results: Vec<&agent_scope_message::ToolResultBlock> = msg
+                .content
+                .iter()
+                .filter_map(|b| {
+                    if let ContentBlock::ToolResult(tr) = b {
+                        Some(tr)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
-            // Handle tool calls (assistant messages)
-            if msg.role == Role::Assistant {
-                let tool_calls: Vec<&ContentBlock> = msg
-                    .content
-                    .iter()
-                    .filter(|b| matches!(b, ContentBlock::ToolCall(_)))
-                    .collect();
-                if !tool_calls.is_empty() {
-                    let tc_array: Vec<JsonValue> = tool_calls
+            if !tool_results.is_empty() {
+                // Role is always "tool" for tool result messages
+                entry.insert("role".to_string(), JsonValue::String("tool".to_string()));
+
+                // tool_call_id from the first ToolResultBlock's id
+                // (react_loop sets ToolResultBlock.id = ToolCallBlock.id)
+                entry.insert(
+                    "tool_call_id".to_string(),
+                    JsonValue::String(tool_results[0].id.clone()),
+                );
+
+                // Content must be a string for tool role messages
+                let (text_content, _promoted) =
+                    self.convert_tool_result_to_string(&tool_results[0].output)?;
+                entry.insert(
+                    "content".to_string(),
+                    JsonValue::String(text_content),
+                );
+
+                // If there are additional ToolResult blocks, also format them
+                // as separate entries (each tool result is a separate message
+                // in the OpenAI protocol)
+                for tr in &tool_results[1..] {
+                    let mut extra_entry = serde_json::Map::new();
+                    extra_entry.insert(
+                        "role".to_string(),
+                        JsonValue::String("tool".to_string()),
+                    );
+                    extra_entry.insert(
+                        "tool_call_id".to_string(),
+                        JsonValue::String(tr.id.clone()),
+                    );
+                    let (extra_text, _extra_promoted) =
+                        self.convert_tool_result_to_string(&tr.output)?;
+                    extra_entry.insert(
+                        "content".to_string(),
+                        JsonValue::String(extra_text),
+                    );
+                    if !msg.name.is_empty() {
+                        extra_entry.insert(
+                            "name".to_string(),
+                            JsonValue::String(msg.name.clone()),
+                        );
+                    }
+                    result.push(JsonValue::Object(extra_entry));
+                }
+            } else {
+                // ── Normal message formatting (no tool results) ──
+                let role_str = match msg.role {
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::System => "system",
+                };
+                entry.insert("role".to_string(), JsonValue::String(role_str.to_string()));
+
+                // Handle tool calls (assistant messages) — must be checked
+                // BEFORE content formatting so we can set content=null when
+                // the message has tool calls but no text blocks.
+                if msg.role == Role::Assistant {
+                    let tool_calls: Vec<&ContentBlock> = msg
+                        .content
                         .iter()
-                        .filter_map(|b| {
-                            if let ContentBlock::ToolCall(tc) = b {
-                                Some(serde_json::json!({
-                                    "id": tc.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc.name,
-                                        "arguments": tc.input
-                                    }
-                                }))
-                            } else {
-                                None
-                            }
-                        })
+                        .filter(|b| matches!(b, ContentBlock::ToolCall(_)))
                         .collect();
-                    entry.insert("tool_calls".to_string(), JsonValue::Array(tc_array));
+                    if !tool_calls.is_empty() {
+                        let tc_array: Vec<JsonValue> = tool_calls
+                            .iter()
+                            .filter_map(|b| {
+                                if let ContentBlock::ToolCall(tc) = b {
+                                    Some(serde_json::json!({
+                                        "id": tc.id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": tc.name,
+                                            "arguments": tc.input
+                                        }
+                                    }))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        entry.insert(
+                            "tool_calls".to_string(),
+                            JsonValue::Array(tc_array),
+                        );
+
+                        // Check for text blocks. If there are none, set
+                        // content=null per OpenAI-compatible API spec.
+                        // FR-002: pure tool_call assistant messages MUST use
+                        // null content, not empty string or empty array.
+                        let has_text = msg
+                            .content
+                            .iter()
+                            .any(|b| matches!(b, ContentBlock::Text(_)));
+                        if has_text {
+                            let content = self.format_content(&msg.content)?;
+                            entry.insert("content".to_string(), content);
+                        } else {
+                            entry.insert(
+                                "content".to_string(),
+                                JsonValue::Null,
+                            );
+                        }
+                    } else {
+                        let content = self.format_content(&msg.content)?;
+                        entry.insert("content".to_string(), content);
+                    }
+                } else {
+                    let content = self.format_content(&msg.content)?;
+                    entry.insert("content".to_string(), content);
                 }
             }
 
-            // Handle tool role (tool result messages)
-            if msg.role == Role::Assistant {
-                let has_tool_result = msg
+            // Handle name field — tool-role messages should not include a name.
+            // OpenAI-compatible APIs reject name fields on role=tool messages.
+            if !msg.name.is_empty() {
+                let is_tool_role = msg
                     .content
                     .iter()
                     .any(|b| matches!(b, ContentBlock::ToolResult(_)));
-                if has_tool_result {
-                    entry.insert("role".to_string(), JsonValue::String("tool".to_string()));
+                if !is_tool_role {
+                    entry.insert("name".to_string(), JsonValue::String(msg.name.clone()));
                 }
-            }
-
-            // Handle name field
-            if !msg.name.is_empty() {
-                entry.insert("name".to_string(), JsonValue::String(msg.name.clone()));
             }
 
             result.push(JsonValue::Object(entry));
@@ -253,5 +339,85 @@ mod tests {
         let (text, promoted) = fmt.convert_tool_result_to_string(&output).unwrap();
         assert_eq!(text, "result text");
         assert!(promoted.is_empty());
+    }
+
+    #[test]
+    fn test_assistant_tool_calls_content_is_null() {
+        // When an assistant message has tool calls but NO text blocks,
+        // content must be JSON null (OpenAI-compatible API requirement).
+        let fmt = DashScopeFormatter::default();
+        let tc = agent_scope_message::ToolCallBlock::new(
+            "call_1".into(),
+            "calculator".into(),
+            r#"{"expression": "1+1"}"#.into(),
+        );
+        let msg = Msg::new(
+            "assistant".into(),
+            vec![ContentBlock::ToolCall(tc)],
+            Role::Assistant,
+        )
+        .unwrap();
+        let result = fmt.format(&[msg]).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "assistant");
+        // content must be null for pure tool_call messages
+        assert!(result[0]["content"].is_null());
+        // tool_calls array must be present
+        let tcs = &result[0]["tool_calls"];
+        assert!(tcs.is_array());
+        assert_eq!(tcs[0]["function"]["name"], "calculator");
+    }
+
+    #[test]
+    fn test_assistant_text_plus_tool_call_has_content() {
+        // When an assistant message has BOTH text and tool calls,
+        // content should be present (the text content).
+        let fmt = DashScopeFormatter::default();
+        let tb = agent_scope_message::TextBlock::new("Let me calculate".into());
+        let tc = agent_scope_message::ToolCallBlock::new(
+            "call_1".into(),
+            "calculator".into(),
+            r#"{"expression": "1+1"}"#.into(),
+        );
+        let msg = Msg::new(
+            "assistant".into(),
+            vec![ContentBlock::Text(tb), ContentBlock::ToolCall(tc)],
+            Role::Assistant,
+        )
+        .unwrap();
+        let result = fmt.format(&[msg]).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "assistant");
+        // content should be an array with the text part
+        let content_arr = result[0]["content"].as_array().expect("content should be array");
+        assert_eq!(content_arr[0]["type"], "text");
+        assert_eq!(content_arr[0]["text"], "Let me calculate");
+        // tool_calls array must still be present
+        assert!(result[0]["tool_calls"].is_array());
+    }
+
+    #[test]
+    fn test_tool_role_message_no_name_field() {
+        // Tool result messages (role=tool) must NOT include a name field.
+        // OpenAI-compatible APIs reject name on tool-role messages.
+        let fmt = DashScopeFormatter::default();
+        let trb = agent_scope_message::ToolResultBlock::new(
+            "call_1".into(),
+            "calculator".into(),
+            ToolOutput::Text("42".into()),
+        );
+        let msg = Msg::new(
+            "assistant".into(),
+            vec![ContentBlock::ToolResult(trb)],
+            Role::Assistant,
+        )
+        .unwrap();
+        let result = fmt.format(&[msg]).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "tool");
+        assert_eq!(result[0]["tool_call_id"], "call_1");
+        assert_eq!(result[0]["content"], "42");
+        // name must NOT be present on tool-role messages
+        assert!(result[0].get("name").is_none());
     }
 }

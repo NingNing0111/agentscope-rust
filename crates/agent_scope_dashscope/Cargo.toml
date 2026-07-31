@@ -8,6 +8,7 @@ description = "AgentScope DashScope Provider — Qwen/Model Studio models via Op
 
 [dependencies]
 agent_scope_model = { path = "../agent_scope_model" }
+agent_scope_embedding = { path = "../agent_scope_embedding" }
 agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_types = { path = "../agent_scope_types" }
 serde.workspace = true
@@ -27,3 +28,4 @@ async-trait = "0.1"
 
 [dev-dependencies]
 wiremock = "0.6"
+tokio-test = "0.4"

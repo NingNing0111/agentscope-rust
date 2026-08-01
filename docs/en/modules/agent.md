@@ -17,6 +17,12 @@ This module corresponds to the `agent_scope_agent` crate. It does not implement 
 
 **Prerequisites**: read [Model Abstraction](./model.md), [Tool System](./tool.md), and [Event & Streaming](./event-streaming.md) first. If you only want to run something quickly, start with [Getting Started](../getting-started.md).
 
+**Complete interactive example**: the repository provides `agent_demo` as an end-to-end Agent module showcase at `examples/agent-demo/main.rs`. It reads real DashScope credentials from `.env`/`API_KEY`, renders the event stream through `ReActAgent::reply_stream()`, and demonstrates `ToolKit`, `FunctionTool`, and `PermissionContext`:
+
+```bash
+cargo run --example agent_demo -- --model qwen-plus --show-events
+```
+
 ## 2. Core Concepts & Main Public Types (Core Concepts)
 
 ### 2.1 `Agent` trait
@@ -180,25 +186,21 @@ println!("{}", reply.get_text_content("\n").unwrap_or_default());
 
 ### 4.1 Run the Built-in Terminal Agent
 
-`examples/chat.rs` is the most complete Agent usage example:
+`examples/agent-demo` is the complete Agent showcase. It calls the real DashScope API by default and starts an interactive REPL:
 
 ```bash
-cargo run --example chat -- -k sk-your-real-key
+cargo run --example agent_demo
+cargo run --example agent_demo -- --model qwen-plus --show-events
+cargo run --example agent_demo -- --prompt "Use calculator to compute 23 * (17 + 5)"
 ```
 
-Default behavior:
+It demonstrates:
 
-- Uses DashScope `qwen-plus`
-- Enables thinking mode by default
-- Registers the calculator tool
-- Consumes and prints all `AgentEvent`s with `reply_stream()`
-- Type `exit` / `quit` to exit; press `Ctrl+C` to interrupt the current reply
-
-If you do not want thinking output:
-
-```bash
-cargo run --example chat -- -k sk-your-real-key --no-thinking
-```
+- constructing a real `DashScopeChatModel` from `.env`/`API_KEY`
+- consuming and rendering `AgentEvent` values with `reply_stream()`
+- registering tools such as `calculator`, `safe_time`, and `demo_knowledge_lookup`
+- denying `dangerous_demo_action` through `PermissionContext`
+- redacting API keys and `sk-...`-like secrets from terminal and JSON output
 
 ### 4.2 Non-Streaming Reply: `reply()`
 
@@ -245,7 +247,7 @@ Consumers should handle at least:
 - `ToolCall*` / `ToolResult*`: tool calls and tool results
 - `UserInterrupt` / `ExceedMaxIters`: control-flow exceptions
 
-For more complete event rendering, see `render_event()` in `examples/chat.rs`.
+For more complete event rendering, see `examples/agent-demo/render.rs`.
 
 ### 4.4 Observing Messages: `observe()`
 

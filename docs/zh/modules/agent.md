@@ -17,6 +17,12 @@
 
 **前置阅读**：建议先阅读 [模型抽象](./model.md)、[工具系统](./tool.md) 与 [事件与流式](./event-streaming.md)。如果只想先跑起来，可以直接看 [快速上手](../getting-started.md)。
 
+**完整交互式示例**：仓库提供 `agent_demo` 作为 Agent 模块的端到端演示，入口为 `examples/agent-demo/main.rs`。它从 `.env`/`API_KEY` 读取真实 DashScope 凭据，使用 `ReActAgent::reply_stream()` 渲染事件流，并展示 `ToolKit`、`FunctionTool` 与 `PermissionContext`：
+
+```bash
+cargo run --example agent_demo -- --model qwen-plus --show-events
+```
+
 ## 2. 核心概念与主要公开类型 (Core Concepts)
 
 ### 2.1 `Agent` trait
@@ -180,25 +186,21 @@ println!("{}", reply.get_text_content("\n").unwrap_or_default());
 
 ### 4.1 运行仓库内置终端 Agent
 
-`examples/chat.rs` 是最完整的 Agent 使用示例：
+`examples/agent-demo` 是完整 Agent showcase，默认调用真实 DashScope API 并启动交互式 REPL：
 
 ```bash
-cargo run --example chat -- -k sk-your-real-key
+cargo run --example agent_demo
+cargo run --example agent_demo -- --model qwen-plus --show-events
+cargo run --example agent_demo -- --prompt "请用 calculator 计算 23 * (17 + 5)"
 ```
 
-默认行为：
+它会展示：
 
-- 使用 DashScope `qwen-plus`
-- 默认开启 thinking 模式
-- 注册 calculator 工具
-- 用 `reply_stream()` 消费并打印全部 `AgentEvent`
-- 输入 `exit` / `quit` 退出，`Ctrl+C` 中断当前回复
-
-如果不想显示 thinking：
-
-```bash
-cargo run --example chat -- -k sk-your-real-key --no-thinking
-```
+- 使用 `.env`/`API_KEY` 构造真实 `DashScopeChatModel`
+- 用 `reply_stream()` 消费并打印 `AgentEvent`
+- 注册 `calculator`、`safe_time`、`demo_knowledge_lookup` 等工具
+- 通过 `PermissionContext` 拒绝 `dangerous_demo_action`
+- 对 API key 和疑似 `sk-...` secret 做终端/JSON 输出脱敏
 
 ### 4.2 非流式回复：`reply()`
 
@@ -245,7 +247,7 @@ while let Some(event) = stream.next().await {
 - `ToolCall*` / `ToolResult*`：工具调用与工具结果
 - `UserInterrupt` / `ExceedMaxIters`：控制流异常
 
-更完整的事件渲染参考 `examples/chat.rs` 的 `render_event()`。
+更完整的事件渲染参考 `examples/agent-demo/render.rs`。
 
 ### 4.4 观察消息：`observe()`
 

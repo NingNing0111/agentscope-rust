@@ -47,30 +47,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
-
-[[example]]
-name = "chat"
-path = "examples/chat.rs"
-
-[[example]]
-name = "verify_agent"
-path = "examples/verify_agent.rs"
-
-[[example]]
-name = "memory_test"
-path = "examples/memory_test.rs"
-
-[[example]]
-name = "session_test"
-path = "examples/session_test.rs"
-
-[[example]]
-name = "rag_test"
-path = "examples/rag_test.rs"
-
-[[example]]
-name = "streaming_tool_test"
-path = "examples/streaming_tool_test.rs"
+uuid.workspace = true
 
 [[example]]
 name = "agent_demo"

@@ -27,7 +27,7 @@ cargo --version
 ```text
 agentscope-rust/
 ├── crates/              # 14 个功能 crate（agent_scope_*）
-├── examples/            # 7 个可运行示例（本指南使用 chat.rs）
+├── examples/            # 可运行示例（推荐先运行 agent_demo）
 └── docs/                # 本文档站点
 ```
 
@@ -37,7 +37,7 @@ agentscope-rust/
 
 ## 3. 配置模型服务凭据
 
-示例通过 `dotenv` 加载仓库根目录的 `.env` 文件（`examples/chat.rs:388`）。创建 `.env`：
+示例通过 `dotenv` 加载仓库根目录的 `.env` 文件。创建 `.env`：
 
 ```bash
 echo 'API_KEY=sk-your-real-key' > .env
@@ -45,57 +45,61 @@ echo 'API_KEY=sk-your-real-key' > .env
 
 `.env` 已被 `.gitignore`（`.env*` 规则）忽略，不会进入版本控制。
 
-**各示例读取凭据的方式不同（务必注意）**：
+**各示例读取凭据的方式如下**：
 
 | 示例 | 凭据来源 |
 |------|----------|
-| `chat.rs` | **仅** `-k` / `--api-key` 命令行参数（chat.rs:40，不读环境变量） |
-| `verify_agent.rs`、`memory_test.rs`、`rag_test.rs`、`streaming_tool_test.rs` | 环境变量 `API_KEY`（经 `.env` 加载）或 `-k` 参数 |
-| `session_test.rs` | 无需凭据（离线示例，默认空 key） |
+| `agent_demo` | `--api-key` 或 `.env`/环境变量 `API_KEY` |
+| `chat.rs` | `--api-key` 或 `.env`/环境变量 `API_KEY` |
+| `session_test.rs` 等离线示例 | 无需凭据 |
 
-凭据由调用方显式传入模型构造函数（如 `DashScopeChatModel::new(api_key, model_name)`），crate 内部不读取环境变量。
+凭据由示例入口显式传入模型构造函数（如 `DashScopeChatModel::new(api_key, model_name)`），crate 内部不读取环境变量。
 
 ---
 
 ## 4. 运行第一个 Agent
 
-`chat` 示例是一个终端对话 Agent：流式输出、thinking 模式（默认开启）、内置 calculator 工具。
+推荐先运行完整 Agent Demo。它会调用真实 DashScope API，并启动一个支持流式输出、工具调用、权限演示和多轮上下文的交互式 REPL：
 
 ```bash
-cargo run --example chat -- -k sk-your-real-key
+cargo run --example agent_demo
 ```
 
-或使用环境变量传入（注意：`chat` 不读 `API_KEY`，需显式转发）：
+显示模型、工具、权限和回复生命周期事件：
 
 ```bash
-set -a; source .env; set +a
-cargo run --example chat -- -k "$API_KEY"
+cargo run --example agent_demo -- --model qwen-plus --show-events
 ```
 
-启动后将看到：
+发送一次性 prompt 后退出：
+
+```bash
+cargo run --example agent_demo -- --prompt "请用 calculator 计算 23 * (17 + 5)"
+```
+
+你会看到：
 
 ```text
-╔══════════════════════════════════════════════╗
-║   AgentScope Terminal Chat (Streaming)      ║
-║   Model: qwen-plus                          ║
-║   Tools: calculator                        ║
-║   Thinking: on                             ║
-╚══════════════════════════════════════════════╝
+AgentScope Rust Interactive Agent Demo
+Model: qwen-plus
+API key: [REDACTED:xxxx]
+Tools: calculator, safe_time, demo_knowledge_lookup, dangerous_demo_action(denied)
+Type /help for commands, /exit to quit. This demo calls the real DashScope API.
 ```
 
 尝试输入：
 
 ```text
-> 帮我计算 15 * 27 + 3
+> 请用 calculator 计算 15 * 27 + 3
 ```
 
-你将观察到完整的 Agent 事件流：thinking 块 → 文本块 → 工具调用（calculator）→ 工具结果 → 最终回答。输入 `exit` 退出，`Ctrl+C` 中断当前回复。
+你将观察到完整的 Agent 事件流：文本增量、模型调用边界、工具调用、工具结果、权限拒绝与最终回答。输入 `/help` 查看 REPL 命令，输入 `/exit` 退出。
 
 其他常用示例：
 
 ```bash
-# 六项 ReActAgent 能力集成验证（读取 .env 中的 API_KEY）
-cargo run --example verify_agent
+# 只体验快速终端聊天
+cargo run --example chat -- --model qwen-plus
 
 # 离线示例：会话持久化（无需 API Key）
 cargo run --example session_test
@@ -105,55 +109,45 @@ cargo run --example session_test
 
 ## 5. 十分钟看懂代码
 
-`chat` 示例的主线只有四步（完整代码见 `examples/chat.rs` 与 `examples/common.rs`）：
+`agent_demo` 示例的主线只有四步（完整代码见 `examples/agent-demo/main.rs`、`tools.rs` 与 `render.rs`）：
 
 **① 创建模型** — `DashScopeChatModel::new` 接收显式传入的凭据与模型名：
 
-<!-- source: examples/common.rs:L34-L36 -->
+<!-- source: examples/agent-demo/main.rs -->
 ```rust
-pub fn create_model(api_key: &str, model_name: &str) -> Arc<DashScopeChatModel> {
-    Arc::new(DashScopeChatModel::new(api_key, model_name))
-}
+let model = Arc::new(DashScopeChatModel::new(&config.api_key, &config.model).with_stream(true));
 ```
 
 **② 注册工具** — `FunctionTool::new` 封装一个异步处理函数：
 
-<!-- source: examples/common.rs:L311-L317 -->
+<!-- source: examples/agent-demo/tools.rs -->
 ```rust
-pub fn create_calculator_tool() -> FunctionTool {
-    FunctionTool::new(
-        "calculator",
-        "Evaluate a mathematical expression. ...",
-        calc_handler,
-    )
-}
+let mut toolkit = ToolKit::new();
+toolkit.register(FunctionTool::new("calculator", "...", calculator));
 ```
 
 **③ 组装 Agent** — `AgentConfig` builder + `ReActAgent::new`：
 
-<!-- source: examples/common.rs:L338-L356 -->
+<!-- source: examples/agent-demo/main.rs -->
 ```rust
-let mut builder = AgentConfig::builder()
-    .name("assistant")
-    .system_prompt(system_prompt)
-    .model(model);
-if let Some(tk) = toolkit {
-    builder = builder.toolkit(tk);
-}
-let config = builder.build()?;
-ReActAgent::new(config, ReActConfig::default(), ContextConfig::default(), vec![])
+let config = AgentConfig::builder()
+    .name("agent_demo")
+    .system_prompt(system_prompt(false))
+    .model(model)
+    .toolkit(toolkit)
+    .permission_context(permission_context)
+    .build()?;
+let agent = ReActAgent::new(config, react_config, ContextConfig::default(), vec![])?;
 ```
 
 **④ 发起对话** — 非流式 `reply` 或流式 `reply_stream`：
 
-<!-- source: examples/verify_agent.rs:L355 -->
+<!-- source: examples/agent-demo/main.rs -->
 ```rust
-let reply = agent.reply(Some(vec![msg])).await?;
-```
-
-<!-- source: examples/chat.rs:L479 -->
-```rust
-let mut stream = agent.reply_stream(Some(vec![msg])).await?;
+let mut stream = agent.reply_stream(Some(vec![user_msg("user", input)?])).await?;
+while let Some(event) = stream.next().await {
+    renderer.render(&event)?;
+}
 ```
 
 其中用户消息由工厂函数构造：`agent_scope_message::factory::user_msg(name, text)`（`crates/agent_scope_message/src/factory.rs:11`）。
@@ -173,7 +167,7 @@ agent_scope_message = { path = "../agentscope-rust/crates/agent_scope_message" }
 tokio = { version = "1", features = ["full"] }
 ```
 
-最小可运行程序的模式与 `examples/verify_agent.rs` 的 `test_simple_chat`（L345-L365）一致：构造模型 → 组装 `ReActAgent` → `user_msg` 构造消息 → `agent.reply(...)` 获取回复。建议直接以 `examples/verify_agent.rs` 与 `examples/common.rs` 为模板复制起步。
+最小可运行程序可参考 `examples/agent-demo/main.rs`：构造模型 → 注册工具与权限 → 组装 `ReActAgent` → 用 `user_msg` 构造消息 → 调用 `agent.reply_stream(...)` 并消费 `AgentEvent`。
 
 ---
 
@@ -181,12 +175,12 @@ tokio = { version = "1", features = ["full"] }
 
 | 现象 | 原因与解决 |
 |------|-----------|
-| 运行 `chat` 时 clap 报错缺少必需参数 `--api-key` | `chat` 示例不读环境变量，必须显式 `-k`（见第 3 节表格） |
-| 其他示例报 DashScope API 错误（invalid api key） | `.env` 缺失或 `API_KEY` 为空/错误；凭据缺失不会 panic，而是在调用时返回错误 |
-| 请求超时 / 网络错误 | 检查网络连通性；`chat` 示例对网络类错误会自动重试下一轮输入（chat.rs:492-497） |
-| 提示 "Agent is busy (already streaming)" | 上一次流式回复未结束又发起了新回复；等待当前回复完成（chat.rs:499-503） |
-| 想无凭据验证环境 | 运行离线示例 `cargo run --example session_test` |
-| 想关闭 thinking 模式 | `cargo run --example chat -- -k ... --no-thinking` |
+| 运行 `agent_demo` 时提示缺少 `API_KEY` | 仓库根 `.env` 缺失、`API_KEY` 为空，或没有传 `--api-key`；按第 3 节创建 `.env` |
+| DashScope API 返回 `invalid api key` | `API_KEY` 值无效或已过期；输出会脱敏，不会打印原始 key |
+| 请求超时 / 网络错误 | 检查网络连通性和 DashScope 服务状态；这是调用真实 API 的示例 |
+| 提示 "Agent is busy (already streaming)" | 上一次流式回复未结束又发起了新回复；REPL 会串行等待当前回复完成 |
+| 想查看工具与权限事件 | 运行 `cargo run --example agent_demo -- --show-events` |
+| 想查看脱敏后的 JSON 事件 | 运行 `cargo run --example agent_demo -- --show-json-events` |
 
 ---
 

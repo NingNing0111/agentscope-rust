@@ -71,3 +71,7 @@ path = "examples/rag_test.rs"
 [[example]]
 name = "streaming_tool_test"
 path = "examples/streaming_tool_test.rs"
+
+[[example]]
+name = "agent_demo"
+path = "examples/agent-demo/main.rs"

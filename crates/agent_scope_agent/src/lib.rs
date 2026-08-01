@@ -52,5 +52,8 @@ pub use agent_trait::Agent;
 pub use config::{AgentConfig, AgentConfigBuilder, ContextConfig, ReActConfig};
 pub use memory_middleware::MemoryMiddleware;
 pub use middleware::Middleware;
-pub use permission::{PermissionEngine, PermissionResult, PermissionRule};
+pub use permission::{
+    PermissionBehavior, PermissionContext, PermissionDecision, PermissionEngine, PermissionMode,
+    PermissionResult, PermissionRule,
+};
 pub use react_agent::ReActAgent;

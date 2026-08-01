@@ -1,0 +1,142 @@
+//! Path canonicalization and containment checks.
+
+use std::path::{Component, Path, PathBuf};
+
+use crate::error::{SandboxError, SandboxResult};
+
+#[derive(Debug, Clone)]
+pub struct SandboxPathResolver {
+    root_dir: PathBuf,
+    workdir: PathBuf,
+}
+
+impl SandboxPathResolver {
+    pub fn new(root_dir: PathBuf, workdir: PathBuf) -> SandboxResult<Self> {
+        let root_dir = root_dir.canonicalize().map_err(|e| SandboxError::IoError {
+            operation: "canonicalize_root".into(),
+            message: e.to_string(),
+        })?;
+        let workdir = if workdir.is_absolute() {
+            workdir
+        } else {
+            root_dir.join(workdir)
+        };
+        std::fs::create_dir_all(&workdir).map_err(|e| SandboxError::IoError {
+            operation: "create_workdir".into(),
+            message: e.to_string(),
+        })?;
+        let workdir = workdir.canonicalize().map_err(|e| SandboxError::IoError {
+            operation: "canonicalize_workdir".into(),
+            message: e.to_string(),
+        })?;
+        if !workdir.starts_with(&root_dir) {
+            return Err(SandboxError::PermissionDenied {
+                path: Some(workdir.display().to_string()),
+                operation: "workdir".into(),
+            });
+        }
+        Ok(Self { root_dir, workdir })
+    }
+
+    #[must_use]
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
+    }
+    #[must_use]
+    pub fn workdir(&self) -> &Path {
+        &self.workdir
+    }
+
+    pub fn resolve(
+        &self,
+        path: &str,
+        cwd: Option<&Path>,
+        must_exist: bool,
+        operation: &str,
+    ) -> SandboxResult<PathBuf> {
+        if path.is_empty() {
+            return Err(SandboxError::ValidationError {
+                message: "path must not be empty".into(),
+            });
+        }
+        let input = Path::new(path);
+        if has_parent_component(input) {
+            return Err(SandboxError::PermissionDenied {
+                path: Some(path.to_string()),
+                operation: operation.into(),
+            });
+        }
+        let joined = if input.is_absolute() {
+            self.root_dir.join(strip_absolute(input))
+        } else {
+            cwd.unwrap_or(&self.workdir).join(input)
+        };
+        self.resolve_pathbuf(&joined, must_exist, operation)
+    }
+
+    pub fn resolve_pathbuf(
+        &self,
+        path: &Path,
+        must_exist: bool,
+        operation: &str,
+    ) -> SandboxResult<PathBuf> {
+        if has_parent_component(path) && !path.is_absolute() {
+            return Err(SandboxError::PermissionDenied {
+                path: Some(path.display().to_string()),
+                operation: operation.into(),
+            });
+        }
+        if must_exist {
+            let canon = path.canonicalize().map_err(|e| SandboxError::IoError {
+                operation: operation.into(),
+                message: e.to_string(),
+            })?;
+            self.ensure_contained(canon, operation)
+        } else {
+            let parent = path.parent().ok_or_else(|| SandboxError::ValidationError {
+                message: "path has no parent".into(),
+            })?;
+            std::fs::create_dir_all(parent).map_err(|e| SandboxError::IoError {
+                operation: format!("{operation}_create_parent"),
+                message: e.to_string(),
+            })?;
+            let parent_canon = parent.canonicalize().map_err(|e| SandboxError::IoError {
+                operation: operation.into(),
+                message: e.to_string(),
+            })?;
+            let safe_parent = self.ensure_contained(parent_canon, operation)?;
+            let file_name = path
+                .file_name()
+                .ok_or_else(|| SandboxError::ValidationError {
+                    message: "path has no leaf".into(),
+                })?;
+            Ok(safe_parent.join(file_name))
+        }
+    }
+
+    fn ensure_contained(&self, canon: PathBuf, operation: &str) -> SandboxResult<PathBuf> {
+        if canon.starts_with(&self.root_dir) {
+            Ok(canon)
+        } else {
+            Err(SandboxError::PermissionDenied {
+                path: Some(canon.display().to_string()),
+                operation: operation.into(),
+            })
+        }
+    }
+}
+
+fn strip_absolute(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::RootDir | Component::Prefix(_) => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn has_parent_component(path: &Path) -> bool {
+    path.components().any(|c| matches!(c, Component::ParentDir))
+}

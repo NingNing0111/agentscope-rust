@@ -1,24 +1,20 @@
 [package]
-name = "agent_scope_workspace"
+name = "agent_scope_sandbox"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-agent_scope_message = { path = "../agent_scope_message" }
-
+agent_scope_workspace = { path = "../agent_scope_workspace" }
 async-trait = "0.1"
-base64.workspace = true
 chrono.workspace = true
-mime_guess = "2"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
-tokio = { version = "1", features = ["fs", "sync", "process", "rt", "macros", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1"
 uuid.workspace = true
 
 [dev-dependencies]
-agent_scope_sandbox = { path = "../agent_scope_sandbox" }
 tempfile = "3"

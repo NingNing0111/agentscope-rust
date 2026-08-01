@@ -55,6 +55,44 @@ fn find_block(
         })
 }
 
+fn event_reply_id(event: &AgentEvent) -> Option<&str> {
+    match event {
+        AgentEvent::ReplyStart(e) => Some(&e.reply_id),
+        AgentEvent::ReplyEnd(e) => Some(&e.reply_id),
+        AgentEvent::ModelCallStart(e) => Some(&e.reply_id),
+        AgentEvent::ModelCallEnd(e) => Some(&e.reply_id),
+        AgentEvent::TextBlockStart(e) => Some(&e.reply_id),
+        AgentEvent::TextBlockDelta(e) => Some(&e.reply_id),
+        AgentEvent::TextBlockEnd(e) => Some(&e.reply_id),
+        AgentEvent::DataBlockStart(e) => Some(&e.reply_id),
+        AgentEvent::DataBlockDelta(e) => Some(&e.reply_id),
+        AgentEvent::DataBlockEnd(e) => Some(&e.reply_id),
+        AgentEvent::ThinkingBlockStart(e) => Some(&e.reply_id),
+        AgentEvent::ThinkingBlockDelta(e) => Some(&e.reply_id),
+        AgentEvent::ThinkingBlockEnd(e) => Some(&e.reply_id),
+        AgentEvent::HintBlock(e) => Some(&e.reply_id),
+        AgentEvent::ToolCallStart(e) => Some(&e.reply_id),
+        AgentEvent::ToolCallDelta(e) => Some(&e.reply_id),
+        AgentEvent::ToolCallEnd(e) => Some(&e.reply_id),
+        AgentEvent::ToolResultStart(e) => Some(&e.reply_id),
+        AgentEvent::ToolResultTextDelta(e) => Some(&e.reply_id),
+        AgentEvent::ToolResultDataDelta(e) => Some(&e.reply_id),
+        AgentEvent::ToolResultEnd(e) => Some(&e.reply_id),
+        AgentEvent::ExceedMaxIters(e) => Some(&e.reply_id),
+        AgentEvent::RequireUserConfirm(e) => Some(&e.reply_id),
+        AgentEvent::UserConfirmResult(e) => Some(&e.reply_id),
+        AgentEvent::UserInterrupt(e) => Some(&e.reply_id),
+        AgentEvent::RequireExternalExecution(e) => Some(&e.reply_id),
+        AgentEvent::ExternalExecutionResult(e) => Some(&e.reply_id),
+        AgentEvent::Custom(_)
+        | AgentEvent::SessionCreated(_)
+        | AgentEvent::SessionClosed(_)
+        | AgentEvent::SessionSaved(_)
+        | AgentEvent::SessionLoaded(_)
+        | AgentEvent::SessionTrimmed(_) => None,
+    }
+}
+
 impl AppendEvent for Msg {
     fn get_block_index(&self, block_id: &str, bt: BlockType) -> Result<usize, AppendEventError> {
         find_block(&self.content, block_id, bt)
@@ -64,11 +102,21 @@ impl AppendEvent for Msg {
         use agent_scope_message::Base64Source;
         use base64::Engine;
 
+        if let Some(reply_id) = event_reply_id(event)
+            && reply_id != self.id
+        {
+            return Err(AppendEventError::ReplyIdMismatch {
+                event_reply_id: reply_id.to_string(),
+                msg_id: self.id.clone(),
+            });
+        }
+
         match event {
             AgentEvent::ReplyStart(_e) => {}
 
             AgentEvent::ReplyEnd(e) => {
                 self.finished_reason = Some(e.finished_reason.clone());
+                self.finished_at = Some(e.base.created_at.clone());
                 if let Some(ref error) = e.error {
                     self.error = Some(error.clone());
                 }
@@ -101,6 +149,9 @@ impl AppendEvent for Msg {
             AgentEvent::TextBlockEnd(e) => {
                 let idx = find_block(&self.content, &e.block_id, BlockType::Text)?;
                 if let ContentBlock::Text(ref mut tb) = self.content[idx] {
+                    if let Some(ref text) = e.text {
+                        tb.text = text.clone();
+                    }
                     tb.finished_at = Some(e.base.created_at.clone());
                 }
             }
@@ -154,6 +205,9 @@ impl AppendEvent for Msg {
             AgentEvent::ThinkingBlockEnd(e) => {
                 let idx = find_block(&self.content, &e.block_id, BlockType::Thinking)?;
                 if let ContentBlock::Thinking(ref mut tb) = self.content[idx] {
+                    if let Some(ref thinking) = e.thinking {
+                        tb.thinking = thinking.clone();
+                    }
                     tb.finished_at = Some(e.base.created_at.clone());
                 }
             }
@@ -184,6 +238,9 @@ impl AppendEvent for Msg {
             AgentEvent::ToolCallEnd(e) => {
                 let idx = find_block(&self.content, &e.tool_call_id, BlockType::ToolCall)?;
                 if let ContentBlock::ToolCall(ref mut tc) = self.content[idx] {
+                    if let Some(ref input) = e.input {
+                        tc.input = input.clone();
+                    }
                     tc.state = ToolCallState::Submitted;
                     tc.finished_at = Some(e.base.created_at.clone());
                 }
@@ -209,7 +266,12 @@ impl AppendEvent for Msg {
             AgentEvent::ToolResultEnd(e) => {
                 let idx = find_block(&self.content, &e.tool_call_id, BlockType::ToolResult)?;
                 if let ContentBlock::ToolResult(ref mut tr) = self.content[idx] {
+                    if let Some(ref output) = e.output {
+                        tr.output = ToolOutput::Text(output.clone());
+                    }
                     tr.state = e.state.clone();
+                    tr.metadata = e.metadata.clone();
+                    tr.is_last = true;
                     tr.finished_at = Some(e.base.created_at.clone());
                 }
             }
@@ -348,6 +410,7 @@ mod tests {
     #[test]
     fn test_append_user_interrupt() {
         let mut msg = Msg::new("agent".into(), vec![], Role::Assistant).unwrap();
+        msg.id = "reply-001".into();
         msg.append_event(&AgentEvent::UserInterrupt(UserInterruptEvent {
             base: make_base(),
             reply_id: "reply-001".into(),
@@ -362,6 +425,7 @@ mod tests {
     #[test]
     fn test_append_model_call_end_accumulates_tokens() {
         let mut msg = Msg::new("agent".into(), vec![], Role::Assistant).unwrap();
+        msg.id = "reply-001".into();
         msg.append_event(&AgentEvent::ModelCallEnd(ModelCallEndEvent {
             base: make_base(),
             reply_id: "reply-001".into(),
@@ -390,6 +454,7 @@ mod tests {
     #[test]
     fn test_append_reply_end_sets_finished_reason() {
         let mut msg = Msg::new("agent".into(), vec![], Role::Assistant).unwrap();
+        msg.id = "reply-001".into();
         msg.append_event(&AgentEvent::ReplyEnd(ReplyEndEvent {
             base: make_base(),
             session_id: "s-1".into(),

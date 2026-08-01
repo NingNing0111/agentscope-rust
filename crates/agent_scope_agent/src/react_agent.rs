@@ -267,6 +267,7 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
         context_config: &inner.context_config,
         model: &inner.config.model,
         toolkit: &inner.config.toolkit,
+        permission_context: &inner.config.permission_context,
         middlewares: &inner.middlewares,
         state: &inner.state,
         interrupted: &inner.interrupted,

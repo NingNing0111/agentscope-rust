@@ -1,6 +1,40 @@
 //! PermissionEngine — tool execution authorization.
+//!
+//! This module mirrors the Python AgentScope permission vocabulary while
+//! preserving the Rust crate's original default behavior: an empty/default
+//! engine allows tool calls unless an explicit deny/ask rule matches.
 
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+
+/// Permission modes controlling tool execution policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionMode {
+    /// Ask by explicit rule; otherwise keep the Rust default of allowing calls.
+    #[default]
+    Default,
+    /// Allow edits by default for now; explicit deny/ask rules still apply.
+    AcceptEdits,
+    /// Read-only planning mode. MVP behavior denies calls unless allowed by rule.
+    Explore,
+    /// Fully trusted mode. Explicit deny/ask rules still apply.
+    Bypass,
+    /// Unattended mode. Any ask decision is converted to deny.
+    DontAsk,
+}
+
+/// Behavior selected by a permission rule or tool-level permission decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionBehavior {
+    Allow,
+    Deny,
+    Ask,
+    Passthrough,
+}
 
 /// Result of a permission check.
 #[derive(Debug, Clone, PartialEq)]
@@ -13,33 +47,163 @@ pub enum PermissionResult {
     RequireConfirm,
 }
 
+/// A directory that participates in permission decisions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdditionalWorkingDirectory {
+    pub path: String,
+    pub source: String,
+}
+
 /// A single permission rule.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PermissionRule {
-    /// Glob or exact tool name pattern.
-    pub tool_pattern: String,
-    /// Whether to allow execution.
-    pub allow: bool,
-    /// Whether user confirmation is required.
-    pub require_confirm: bool,
+    /// Tool name or pattern this rule applies to. Supports exact, `*`, and suffix `*` prefix match.
+    pub tool_name: String,
+    /// Optional tool-specific match content. The MVP matches this as a substring
+    /// against the serialized tool input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_content: Option<String>,
+    /// Rule behavior.
+    pub behavior: PermissionBehavior,
+    /// Where the rule came from, e.g. userSettings/projectSettings/session.
+    pub source: String,
 }
 
 impl PermissionRule {
     /// Create a rule that allows a tool pattern.
     pub fn allow(pattern: impl Into<String>) -> Self {
         Self {
-            tool_pattern: pattern.into(),
-            allow: true,
-            require_confirm: false,
+            tool_name: pattern.into(),
+            rule_content: None,
+            behavior: PermissionBehavior::Allow,
+            source: "runtime".into(),
         }
     }
 
     /// Create a rule that denies a tool pattern.
     pub fn deny(pattern: impl Into<String>) -> Self {
         Self {
-            tool_pattern: pattern.into(),
-            allow: false,
-            require_confirm: false,
+            tool_name: pattern.into(),
+            rule_content: None,
+            behavior: PermissionBehavior::Deny,
+            source: "runtime".into(),
+        }
+    }
+
+    /// Create a rule that requires user confirmation for a tool pattern.
+    pub fn ask(pattern: impl Into<String>) -> Self {
+        Self {
+            tool_name: pattern.into(),
+            rule_content: None,
+            behavior: PermissionBehavior::Ask,
+            source: "runtime".into(),
+        }
+    }
+
+    /// Attach tool-specific rule content.
+    pub fn with_rule_content(mut self, content: impl Into<String>) -> Self {
+        self.rule_content = Some(content.into());
+        self
+    }
+
+    /// Attach a rule source.
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
+        self
+    }
+}
+
+/// Context for permission checking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionContext {
+    pub mode: PermissionMode,
+    #[serde(default)]
+    pub working_directories: HashMap<String, AdditionalWorkingDirectory>,
+    #[serde(default)]
+    pub allow_rules: HashMap<String, Vec<PermissionRule>>,
+    #[serde(default)]
+    pub deny_rules: HashMap<String, Vec<PermissionRule>>,
+    #[serde(default)]
+    pub ask_rules: HashMap<String, Vec<PermissionRule>>,
+}
+
+impl Default for PermissionContext {
+    fn default() -> Self {
+        Self {
+            mode: PermissionMode::Default,
+            working_directories: HashMap::new(),
+            allow_rules: HashMap::new(),
+            deny_rules: HashMap::new(),
+            ask_rules: HashMap::new(),
+        }
+    }
+}
+
+impl PermissionContext {
+    pub fn new(mode: PermissionMode) -> Self {
+        Self {
+            mode,
+            ..Self::default()
+        }
+    }
+
+    pub fn add_rule(&mut self, rule: PermissionRule) {
+        let target = match rule.behavior {
+            PermissionBehavior::Allow => &mut self.allow_rules,
+            PermissionBehavior::Deny => &mut self.deny_rules,
+            PermissionBehavior::Ask => &mut self.ask_rules,
+            PermissionBehavior::Passthrough => return,
+        };
+        target.entry(rule.tool_name.clone()).or_default().push(rule);
+    }
+}
+
+/// Decision returned by the permission engine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PermissionDecision {
+    pub behavior: PermissionBehavior,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_input: Option<JsonValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_rules: Option<Vec<PermissionRule>>,
+    #[serde(default)]
+    pub bypass_immune: bool,
+}
+
+impl PermissionDecision {
+    pub fn allow(tool_name: &str, reason: impl Into<String>) -> Self {
+        Self {
+            behavior: PermissionBehavior::Allow,
+            message: format!("Permission granted for {tool_name}"),
+            decision_reason: Some(reason.into()),
+            updated_input: None,
+            suggested_rules: None,
+            bypass_immune: false,
+        }
+    }
+
+    pub fn deny(_tool_name: &str, message: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            behavior: PermissionBehavior::Deny,
+            message: message.into(),
+            decision_reason: Some(reason.into()),
+            updated_input: None,
+            suggested_rules: None,
+            bypass_immune: false,
+        }
+    }
+
+    pub fn ask(tool_name: &str, reason: impl Into<String>) -> Self {
+        Self {
+            behavior: PermissionBehavior::Ask,
+            message: format!("Permission required for {tool_name}"),
+            decision_reason: Some(reason.into()),
+            updated_input: None,
+            suggested_rules: None,
+            bypass_immune: false,
         }
     }
 }
@@ -47,48 +211,126 @@ impl PermissionRule {
 /// Tool execution authorization engine.
 #[derive(Debug, Clone, Default)]
 pub struct PermissionEngine {
-    rules: Vec<PermissionRule>,
+    context: PermissionContext,
 }
 
 impl PermissionEngine {
-    /// Create an empty engine (allows everything).
+    /// Create an empty engine (allows everything unless configured otherwise).
     pub fn new() -> Self {
-        Self { rules: Vec::new() }
+        Self {
+            context: PermissionContext::default(),
+        }
     }
 
-    /// Add a permission rule. Rules are checked in FIFO order.
+    pub fn with_context(context: PermissionContext) -> Self {
+        Self { context }
+    }
+
+    pub fn context(&self) -> &PermissionContext {
+        &self.context
+    }
+
+    pub fn context_mut(&mut self) -> &mut PermissionContext {
+        &mut self.context
+    }
+
+    /// Add a permission rule.
     pub fn add_rule(&mut self, rule: PermissionRule) {
-        self.rules.push(rule);
+        self.context.add_rule(rule);
+    }
+
+    /// Check whether a tool call is permitted, returning the legacy result type.
+    pub fn check(&self, tool_name: &str, input: &JsonValue) -> PermissionResult {
+        match self.check_decision(tool_name, input).behavior {
+            PermissionBehavior::Allow | PermissionBehavior::Passthrough => PermissionResult::Allow,
+            PermissionBehavior::Deny => PermissionResult::Deny {
+                reason: self.check_decision(tool_name, input).message,
+            },
+            PermissionBehavior::Ask => PermissionResult::RequireConfirm,
+        }
     }
 
     /// Check whether a tool call is permitted.
-    ///
-    /// # Matching
-    /// Rules are checked in order. The first rule whose pattern matches
-    /// the tool name wins. If no rule matches, the default is Allow.
-    pub fn check(&self, tool_name: &str, _input: &JsonValue) -> PermissionResult {
-        for rule in &self.rules {
-            if matches_pattern(&rule.tool_pattern, tool_name) {
-                if !rule.allow {
-                    return PermissionResult::Deny {
-                        reason: format!(
-                            "tool '{}' denied by rule '{}'",
-                            tool_name, rule.tool_pattern
-                        ),
-                    };
-                }
-                if rule.require_confirm {
-                    return PermissionResult::RequireConfirm;
-                }
-                return PermissionResult::Allow;
+    pub fn check_decision(&self, tool_name: &str, input: &JsonValue) -> PermissionDecision {
+        let input_text = input.to_string();
+
+        if let Some(rule) = find_matching_rule(&self.context.deny_rules, tool_name, &input_text) {
+            return PermissionDecision::deny(
+                tool_name,
+                format!("tool '{tool_name}' denied by rule '{}'", rule.tool_name),
+                format!("deny rule from {}", rule.source),
+            );
+        }
+
+        if let Some(rule) = find_matching_rule(&self.context.ask_rules, tool_name, &input_text) {
+            let ask = PermissionDecision {
+                suggested_rules: Some(vec![PermissionRule::allow(tool_name)]),
+                ..PermissionDecision::ask(tool_name, format!("ask rule from {}", rule.source))
+            };
+            return if self.context.mode == PermissionMode::DontAsk {
+                Self::convert_ask_to_deny(tool_name, ask)
+            } else {
+                ask
+            };
+        }
+
+        if let Some(rule) = find_matching_rule(&self.context.allow_rules, tool_name, &input_text) {
+            return PermissionDecision::allow(
+                tool_name,
+                format!("allow rule from {}", rule.source),
+            );
+        }
+
+        match self.context.mode {
+            PermissionMode::Explore => PermissionDecision::deny(
+                tool_name,
+                format!("Permission denied for {tool_name} (explore mode is read-only)"),
+                "Explore mode does not allow unclassified tool calls",
+            ),
+            PermissionMode::DontAsk => {
+                PermissionDecision::allow(tool_name, "dont_ask default allow")
+            }
+            PermissionMode::Default | PermissionMode::AcceptEdits | PermissionMode::Bypass => {
+                PermissionDecision::allow(tool_name, format!("Mode: {:?}", self.context.mode))
             }
         }
-        // Default: allow
-        PermissionResult::Allow
+    }
+
+    fn convert_ask_to_deny(tool_name: &str, ask: PermissionDecision) -> PermissionDecision {
+        PermissionDecision {
+            behavior: PermissionBehavior::Deny,
+            message: format!(
+                "Permission denied for {tool_name}: user confirmation required but permission mode is dont_ask"
+            ),
+            decision_reason: ask.decision_reason,
+            updated_input: ask.updated_input,
+            suggested_rules: ask.suggested_rules,
+            bypass_immune: ask.bypass_immune,
+        }
     }
 }
 
-/// Simple pattern matching: exact match or wildcard "*" suffix.
+fn find_matching_rule<'a>(
+    rules: &'a HashMap<String, Vec<PermissionRule>>,
+    tool_name: &str,
+    input_text: &str,
+) -> Option<&'a PermissionRule> {
+    rules
+        .iter()
+        .filter(|(pattern, _)| matches_pattern(pattern, tool_name))
+        .flat_map(|(_, rules)| rules.iter())
+        .find(|rule| rule_matches(rule, tool_name, input_text))
+}
+
+fn rule_matches(rule: &PermissionRule, tool_name: &str, input_text: &str) -> bool {
+    matches_pattern(&rule.tool_name, tool_name)
+        && rule
+            .rule_content
+            .as_ref()
+            .is_none_or(|content| input_text.contains(content))
+}
+
+/// Simple pattern matching: exact match or wildcard `*` suffix.
 fn matches_pattern(pattern: &str, name: &str) -> bool {
     if pattern == "*" {
         return true;
@@ -149,11 +391,7 @@ mod tests {
     #[test]
     fn test_require_confirm() {
         let mut engine = PermissionEngine::new();
-        engine.add_rule(PermissionRule {
-            tool_pattern: "expensive_*".into(),
-            allow: true,
-            require_confirm: true,
-        });
+        engine.add_rule(PermissionRule::ask("expensive_*"));
         assert_eq!(
             engine.check("expensive_api", &serde_json::json!({})),
             PermissionResult::RequireConfirm
@@ -161,13 +399,45 @@ mod tests {
     }
 
     #[test]
-    fn test_first_match_wins() {
+    fn test_deny_precedes_allow() {
         let mut engine = PermissionEngine::new();
-        engine.add_rule(PermissionRule::deny("tool"));
         engine.add_rule(PermissionRule::allow("tool"));
+        engine.add_rule(PermissionRule::deny("tool"));
         assert!(matches!(
             engine.check("tool", &serde_json::json!({})),
             PermissionResult::Deny { .. }
         ));
+    }
+
+    #[test]
+    fn test_rule_content_matches_input() {
+        let mut engine = PermissionEngine::new();
+        engine.add_rule(PermissionRule::ask("shell").with_rule_content("rm -rf"));
+        assert_eq!(
+            engine.check("shell", &serde_json::json!({ "cmd": "rm -rf /tmp/x" })),
+            PermissionResult::RequireConfirm
+        );
+        assert_eq!(
+            engine.check("shell", &serde_json::json!({ "cmd": "ls" })),
+            PermissionResult::Allow
+        );
+    }
+
+    #[test]
+    fn test_dont_ask_converts_ask_to_deny() {
+        let mut context = PermissionContext::new(PermissionMode::DontAsk);
+        context.add_rule(PermissionRule::ask("dangerous_tool"));
+        let engine = PermissionEngine::with_context(context);
+        let decision = engine.check_decision("dangerous_tool", &serde_json::json!({}));
+        assert_eq!(decision.behavior, PermissionBehavior::Deny);
+        assert!(decision.message.contains("dont_ask"));
+    }
+
+    #[test]
+    fn test_explore_denies_unclassified_tools() {
+        let engine =
+            PermissionEngine::with_context(PermissionContext::new(PermissionMode::Explore));
+        let decision = engine.check_decision("write", &serde_json::json!({}));
+        assert_eq!(decision.behavior, PermissionBehavior::Deny);
     }
 }

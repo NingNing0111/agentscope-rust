@@ -17,14 +17,14 @@ use std::sync::atomic::Ordering;
 
 use agent_scope_event::{
     AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
-    ReplyEndEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent,
-    ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent, ToolCallDeltaEvent,
-    ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent, ToolResultStartEvent,
-    ToolResultTextDeltaEvent, UserInterruptEvent,
+    ReplyEndEvent, RequireUserConfirmEvent, TextBlockDeltaEvent, TextBlockEndEvent,
+    TextBlockStartEvent, ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent,
+    ToolCallDeltaEvent, ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent,
+    ToolResultStartEvent, ToolResultTextDeltaEvent, UserInterruptEvent,
 };
 use agent_scope_message::{
-    ContentBlock, Msg, Role, TextBlock, ThinkingBlock, ToolCallBlock, ToolOutput, ToolResultBlock,
-    ToolResultState,
+    ContentBlock, Msg, Role, TextBlock, ThinkingBlock, ToolCallBlock, ToolCallState, ToolOutput,
+    ToolResultBlock, ToolResultState,
 };
 use agent_scope_model::{ChatResponse, ChatUsage, ModelCallResult, StreamAccumulator};
 use agent_scope_tool::{ToolError, ToolExecOutput};
@@ -34,6 +34,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_error::AgentError;
+use crate::permission::{PermissionBehavior, PermissionEngine};
 use crate::react_agent::AgentInner;
 use crate::stream_handle::StreamHandle;
 
@@ -870,7 +871,55 @@ async fn execute_tool_calls(
     for tc in tool_calls {
         let mut tc_mut = tc.clone();
         for mw in inner.middlewares.iter() {
-            let _ = mw.pre_acting(&inner.config.name, &mut tc_mut).await;
+            if let Err(e) = mw.pre_acting(&inner.config.name, &mut tc_mut).await {
+                emit_denied_tool_result(
+                    event_tx,
+                    reply_id,
+                    inner,
+                    &tc_mut,
+                    &format!("Permission denied by middleware: {e}"),
+                    _base,
+                )
+                .await;
+                continue;
+            }
+        }
+
+        let permission_input = serde_json::from_str(&tc_mut.input)
+            .unwrap_or_else(|_| serde_json::Value::String(tc_mut.input.clone()));
+        let permission_engine =
+            PermissionEngine::with_context(inner.config.permission_context.clone());
+        let decision = permission_engine.check_decision(&tc_mut.name, &permission_input);
+        match decision.behavior {
+            PermissionBehavior::Deny => {
+                emit_denied_tool_result(
+                    event_tx,
+                    reply_id,
+                    inner,
+                    &tc_mut,
+                    &decision.message,
+                    _base,
+                )
+                .await;
+                continue;
+            }
+            PermissionBehavior::Ask => {
+                tc_mut.state = ToolCallState::Asking;
+                emit_require_user_confirm(event_tx, reply_id, &tc_mut, _base).await;
+                emit_denied_tool_result(
+                    event_tx,
+                    reply_id,
+                    inner,
+                    &tc_mut,
+                    &decision.message,
+                    _base,
+                )
+                .await;
+                continue;
+            }
+            PermissionBehavior::Allow | PermissionBehavior::Passthrough => {
+                tc_mut.state = ToolCallState::Allowed;
+            }
         }
 
         let exec_result = if let Some(ref tk) = inner.config.toolkit {
@@ -915,6 +964,58 @@ async fn execute_tool_calls(
         // Feed tool result to context with the ACTUAL collected output
         add_tool_result_to_context(inner, &tc_mut, &output_text);
     }
+}
+
+async fn emit_require_user_confirm(
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    tool_call: &ToolCallBlock,
+    base: fn() -> EventBase,
+) {
+    let _ = event_tx
+        .send(AgentEvent::RequireUserConfirm(RequireUserConfirmEvent {
+            base: base(),
+            reply_id: reply_id.into(),
+            tool_calls: vec![tool_call.clone()],
+        }))
+        .await;
+}
+
+async fn emit_denied_tool_result(
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    inner: &Arc<AgentInner>,
+    tool_call: &ToolCallBlock,
+    message: &str,
+    base: fn() -> EventBase,
+) {
+    let _ = event_tx
+        .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
+            base: base(),
+            reply_id: reply_id.into(),
+            tool_call_id: tool_call.id.clone(),
+            tool_call_name: tool_call.name.clone(),
+        }))
+        .await;
+    let _ = event_tx
+        .send(AgentEvent::ToolResultTextDelta(ToolResultTextDeltaEvent {
+            base: base(),
+            reply_id: reply_id.into(),
+            tool_call_id: tool_call.id.clone(),
+            delta: message.to_string(),
+        }))
+        .await;
+    let _ = event_tx
+        .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+            base: base(),
+            reply_id: reply_id.into(),
+            tool_call_id: tool_call.id.clone(),
+            state: ToolResultState::Denied,
+            metadata: std::collections::HashMap::new(),
+            output: Some(message.to_string()),
+        }))
+        .await;
+    add_tool_result_to_context(inner, tool_call, message);
 }
 
 fn add_tool_result_to_context(inner: &Arc<AgentInner>, tc: &ToolCallBlock, output_text: &str) {

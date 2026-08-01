@@ -5,13 +5,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use agent_scope_event::{
     AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
-    ReplyEndEvent, ReplyStartEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent,
-    ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent, ToolCallEndEvent,
-    ToolCallStartEvent, ToolResultEndEvent, ToolResultStartEvent, ToolResultTextDeltaEvent,
-    UserInterruptEvent,
+    ReplyEndEvent, ReplyStartEvent, RequireUserConfirmEvent, TextBlockDeltaEvent,
+    TextBlockEndEvent, TextBlockStartEvent, ThinkingBlockDeltaEvent, ThinkingBlockEndEvent,
+    ThinkingBlockStartEvent, ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent,
+    ToolResultStartEvent, ToolResultTextDeltaEvent, UserInterruptEvent,
 };
 use agent_scope_message::{
-    ContentBlock, Msg, Role, TextBlock, ToolOutput, ToolResultBlock, ToolResultState,
+    ContentBlock, Msg, Role, TextBlock, ToolCallState, ToolOutput, ToolResultBlock, ToolResultState,
 };
 use agent_scope_model::{ChatResponse, ModelCallResult, StreamAccumulator};
 use agent_scope_state::AgentState;
@@ -25,6 +25,7 @@ use crate::agent_error::AgentError;
 use crate::config::{ContextConfig, ReActConfig};
 use crate::context_compression::compress_context;
 use crate::middleware::Middleware;
+use crate::permission::{PermissionBehavior, PermissionEngine};
 
 /// Aggregated context for `run_react_loop`, grouping the parameters
 /// that are threaded through every reasoning→acting iteration.
@@ -37,6 +38,7 @@ pub(crate) struct ReactLoopContext<'a> {
     pub context_config: &'a ContextConfig,
     pub model: &'a Arc<dyn agent_scope_model::ChatModel>,
     pub toolkit: &'a Option<ToolKit>,
+    pub permission_context: &'a crate::permission::PermissionContext,
     pub middlewares: &'a [Arc<dyn Middleware>],
     pub state: &'a std::sync::RwLock<AgentState>,
     pub interrupted: &'a AtomicBool,
@@ -360,6 +362,46 @@ pub(crate) async fn run_react_loop(
                         mw.pre_acting(ctx.agent_name, &mut tc_mut).await?;
                     }
 
+                    let permission_input = serde_json::from_str(&tc_mut.input)
+                        .unwrap_or_else(|_| serde_json::Value::String(tc_mut.input.clone()));
+                    let permission_engine =
+                        PermissionEngine::with_context(ctx.permission_context.clone());
+                    let decision =
+                        permission_engine.check_decision(&tc_mut.name, &permission_input);
+                    match decision.behavior {
+                        PermissionBehavior::Deny => {
+                            emit_permission_denied_result(
+                                event_tx,
+                                ctx.reply_id,
+                                ctx.agent_name,
+                                ctx.state,
+                                &tc_mut,
+                                &decision.message,
+                                base,
+                            )
+                            .await;
+                            continue;
+                        }
+                        PermissionBehavior::Ask => {
+                            tc_mut.state = ToolCallState::Asking;
+                            emit_require_user_confirm(event_tx, ctx.reply_id, &tc_mut, base).await;
+                            emit_permission_denied_result(
+                                event_tx,
+                                ctx.reply_id,
+                                ctx.agent_name,
+                                ctx.state,
+                                &tc_mut,
+                                &decision.message,
+                                base,
+                            )
+                            .await;
+                            continue;
+                        }
+                        PermissionBehavior::Allow | PermissionBehavior::Passthrough => {
+                            tc_mut.state = ToolCallState::Allowed;
+                        }
+                    }
+
                     let _ = event_tx
                         .send(AgentEvent::ToolCallStart(ToolCallStartEvent {
                             base: base(),
@@ -500,6 +542,71 @@ pub(crate) async fn run_react_loop(
                 return Ok(build_final_msg(&accumulated_texts));
             }
         }
+    }
+}
+
+async fn emit_require_user_confirm(
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    tool_call: &agent_scope_message::ToolCallBlock,
+    base: fn() -> EventBase,
+) {
+    let _ = event_tx
+        .send(AgentEvent::RequireUserConfirm(RequireUserConfirmEvent {
+            base: base(),
+            reply_id: reply_id.into(),
+            tool_calls: vec![tool_call.clone()],
+        }))
+        .await;
+}
+
+async fn emit_permission_denied_result(
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    agent_name: &str,
+    state: &std::sync::RwLock<AgentState>,
+    tool_call: &agent_scope_message::ToolCallBlock,
+    message: &str,
+    base: fn() -> EventBase,
+) {
+    let _ = event_tx
+        .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
+            base: base(),
+            reply_id: reply_id.into(),
+            tool_call_id: tool_call.id.clone(),
+            tool_call_name: tool_call.name.clone(),
+        }))
+        .await;
+    let _ = event_tx
+        .send(AgentEvent::ToolResultTextDelta(ToolResultTextDeltaEvent {
+            base: base(),
+            reply_id: reply_id.into(),
+            tool_call_id: tool_call.id.clone(),
+            delta: message.to_string(),
+        }))
+        .await;
+    let _ = event_tx
+        .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+            base: base(),
+            reply_id: reply_id.into(),
+            tool_call_id: tool_call.id.clone(),
+            state: ToolResultState::Denied,
+            metadata: std::collections::HashMap::new(),
+            output: Some(message.to_string()),
+        }))
+        .await;
+
+    let trb = ToolResultBlock::new(
+        tool_call.id.clone(),
+        tool_call.name.clone(),
+        ToolOutput::Text(message.to_string()),
+    );
+    if let Ok(msg) = Msg::new(
+        agent_name.into(),
+        vec![ContentBlock::ToolResult(trb)],
+        Role::Assistant,
+    ) {
+        state.write().unwrap().context.push(msg);
     }
 }
 

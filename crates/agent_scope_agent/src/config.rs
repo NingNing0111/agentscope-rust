@@ -9,6 +9,7 @@ use agent_scope_model::ChatModel;
 use agent_scope_tool::ToolKit;
 
 use crate::agent_error::AgentError;
+use crate::permission::{PermissionContext, PermissionMode};
 
 // ---------------------------------------------------------------------------
 // AgentConfig
@@ -28,6 +29,8 @@ pub struct AgentConfig {
     pub toolkit: Option<ToolKit>,
     /// Streaming channel capacity: `None` = unbounded (default), `Some(N)` = bounded.
     pub stream_channel_capacity: Option<usize>,
+    /// Permission context used to authorize tool execution.
+    pub permission_context: PermissionContext,
 }
 
 impl AgentConfig {
@@ -45,6 +48,7 @@ pub struct AgentConfigBuilder {
     model: Option<Arc<dyn ChatModel>>,
     toolkit: Option<ToolKit>,
     stream_channel_capacity: Option<usize>,
+    permission_context: PermissionContext,
 }
 
 impl AgentConfigBuilder {
@@ -65,6 +69,18 @@ impl AgentConfigBuilder {
 
     pub fn toolkit(mut self, toolkit: ToolKit) -> Self {
         self.toolkit = Some(toolkit);
+        self
+    }
+
+    /// Set the permission context used to authorize tool execution.
+    pub fn permission_context(mut self, context: PermissionContext) -> Self {
+        self.permission_context = context;
+        self
+    }
+
+    /// Set the permission mode while keeping existing rules.
+    pub fn permission_mode(mut self, mode: PermissionMode) -> Self {
+        self.permission_context.mode = mode;
         self
     }
 
@@ -107,6 +123,7 @@ impl AgentConfigBuilder {
             model,
             toolkit: self.toolkit,
             stream_channel_capacity: self.stream_channel_capacity,
+            permission_context: self.permission_context,
         })
     }
 }

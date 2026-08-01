@@ -151,6 +151,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_scope_sandbox"
+version = "0.1.0"
+dependencies = [
+ "agent_scope_workspace",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "agent_scope_state"
 version = "0.1.0"
 dependencies = [
@@ -212,6 +228,7 @@ name = "agent_scope_workspace"
 version = "0.1.0"
 dependencies = [
  "agent_scope_message",
+ "agent_scope_sandbox",
  "async-trait",
  "base64",
  "chrono",
@@ -236,8 +253,10 @@ dependencies = [
  "agent_scope_memory",
  "agent_scope_message",
  "agent_scope_rag",
+ "agent_scope_sandbox",
  "agent_scope_state",
  "agent_scope_tool",
+ "agent_scope_workspace",
  "async-trait",
  "clap",
  "dotenv",

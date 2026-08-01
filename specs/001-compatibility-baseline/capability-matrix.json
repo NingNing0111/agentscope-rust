@@ -3640,6 +3640,46 @@
       "status": "NOT_ANALYZED",
       "test_fixture_ids": [],
       "notes": ""
+    },
+    {
+      "capability_id": "sandbox-local-session",
+      "category": "sandbox",
+      "upstream_symbol": "sandbox.local.LocalSandboxSession",
+      "source_location": "specs/017-sandbox-feature/contracts/sandbox-session.md",
+      "description": "Local sandbox session lifecycle, command execution, file containment, timeout/output limits, and audit history.",
+      "dependencies": [
+        "workspace-workspace-base"
+      ],
+      "priority": "MVP_REQUIRED",
+      "target_level": "L2",
+      "status": "IMPLEMENTED",
+      "test_fixture_ids": [
+        "sandbox_session_execute",
+        "sandbox_file_isolation",
+        "sandbox_execution_status",
+        "sandbox_output_limit",
+        "sandbox_capability_report",
+        "sandbox_concurrent_sessions"
+      ],
+      "notes": "Reference local-process backend; CPU/memory/process/network hard isolation and subprocess filesystem hard isolation are explicitly unsupported and reported via CapabilityReport."
+    },
+    {
+      "capability_id": "sandbox-workspace-backend",
+      "category": "sandbox",
+      "upstream_symbol": "sandbox.workspace.SandboxWorkspaceBackend",
+      "source_location": "specs/017-sandbox-feature/contracts/sandbox-workspace-backend.md",
+      "description": "WorkspaceBackend adapter backed by a SandboxSession for exec/read/write/list/delete/stat operations.",
+      "dependencies": [
+        "sandbox-local-session",
+        "workspace-workspace-base"
+      ],
+      "priority": "MVP_REQUIRED",
+      "target_level": "L2",
+      "status": "IMPLEMENTED",
+      "test_fixture_ids": [
+        "sandbox_backend"
+      ],
+      "notes": "Adapter preserves sandbox policy errors as WorkspaceError gateway/path traversal categories."
     }
   ]
 }

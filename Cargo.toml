@@ -37,6 +37,8 @@ agent_scope_memory = { path = "crates/agent_scope_memory" }
 agent_scope_state = { path = "crates/agent_scope_state" }
 agent_scope_rag = { path = "crates/agent_scope_rag" }
 agent_scope_embedding = { path = "crates/agent_scope_embedding" }
+agent_scope_workspace = { path = "crates/agent_scope_workspace" }
+agent_scope_sandbox = { path = "crates/agent_scope_sandbox" }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 async-trait = "0.1"

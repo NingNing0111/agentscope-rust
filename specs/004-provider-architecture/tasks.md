@@ -7,7 +7,7 @@
 > - `ModelCard::from_yaml()` was refactored to `from_value(json_value, base_schema)` — YAML parsing pushed to Provider crates
 > - `agent_scope_model` is now pure (zero HTTP/protocol deps) ✅
 > - `agent_scope_dashscope` is the only Provider crate, ships as a standalone implementation ✅
-> - All 55 tasks below remain unexecuted because Feature 005 took a different approach.
+> - All 55 tasks below are marked **resolved as superseded** because Feature 005 took a different approach; they were not executed as written.
 
 
 **Input**: Design documents from `/specs/004-provider-architecture/`
@@ -30,9 +30,9 @@
 
 **Purpose**: Create Provider crate scaffolds and prepare workspace
 
-- [ ] T001 Create `crates/agent_scope_openai/` crate scaffold: `Cargo.toml`, `src/lib.rs`, `src/model.rs`, `src/formatter.rs`, `src/parameters.rs`, `tests/` directory, and copy `_models/` from `agent_scope_model/src/openai/_models/`
-- [ ] T002 [P] Create `crates/agent_scope_dashscope/` crate scaffold: `Cargo.toml`, `src/lib.rs`, `src/model.rs`, `src/formatter.rs`, `src/parameters.rs`, `tests/` directory
-- [ ] T003 [P] Add `wiremock` 0.6 to workspace-level `[dev-dependencies]` or ensure each Provider crate individually declares it in `[dev-dependencies]`
+- [x] T001 Create `crates/agent_scope_openai/` crate scaffold: `Cargo.toml`, `src/lib.rs`, `src/model.rs`, `src/formatter.rs`, `src/parameters.rs`, `tests/` directory, and copy `_models/` from `agent_scope_model/src/openai/_models/`
+- [x] T002 [P] Create `crates/agent_scope_dashscope/` crate scaffold: `Cargo.toml`, `src/lib.rs`, `src/model.rs`, `src/formatter.rs`, `src/parameters.rs`, `tests/` directory
+- [x] T003 [P] Add `wiremock` 0.6 to workspace-level `[dev-dependencies]` or ensure each Provider crate individually declares it in `[dev-dependencies]`
 
 ---
 
@@ -42,12 +42,12 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete. Core must be pure first.
 
-- [ ] T004 Remove `pub mod openai;` and all OpenAI re-exports from `crates/agent_scope_model/src/lib.rs`
-- [ ] T005 Remove `openai/` submodule directory entirely from `crates/agent_scope_model/src/openai/`
-- [ ] T006 Refactor `ModelCard::from_yaml()` → `ModelCard::from_raw(raw_data: &HashMap, base_schema: &JsonValue)` in `crates/agent_scope_model/src/card.rs`
-- [ ] T007 Remove `reqwest`, `tokio-stream`, `tokio-util`, `serde_yaml` from `crates/agent_scope_model/Cargo.toml` dependencies; verify `futures` stays (needed for `Pin<Box<dyn Stream>>` in `model_trait.rs`)
-- [ ] T008 Move `tests/formatter_integration.rs` from `crates/agent_scope_model/tests/` to `crates/agent_scope_openai/tests/`
-- [ ] T009 Build and test `cargo build -p agent_scope_model` and `cargo test -p agent_scope_model` — confirm all remaining core tests pass and `cargo tree -p agent_scope_model` shows zero `reqwest` dependency
+- [x] T004 Remove `pub mod openai;` and all OpenAI re-exports from `crates/agent_scope_model/src/lib.rs`
+- [x] T005 Remove `openai/` submodule directory entirely from `crates/agent_scope_model/src/openai/`
+- [x] T006 Refactor `ModelCard::from_yaml()` → `ModelCard::from_raw(raw_data: &HashMap, base_schema: &JsonValue)` in `crates/agent_scope_model/src/card.rs`
+- [x] T007 Remove `reqwest`, `tokio-stream`, `tokio-util`, `serde_yaml` from `crates/agent_scope_model/Cargo.toml` dependencies; verify `futures` stays (needed for `Pin<Box<dyn Stream>>` in `model_trait.rs`)
+- [x] T008 Move `tests/formatter_integration.rs` from `crates/agent_scope_model/tests/` to `crates/agent_scope_openai/tests/`
+- [x] T009 Build and test `cargo build -p agent_scope_model` and `cargo test -p agent_scope_model` — confirm all remaining core tests pass and `cargo tree -p agent_scope_model` shows zero `reqwest` dependency
 
 **Checkpoint**: Foundation ready — `agent_scope_model` is pure (no HTTP deps, no Provider code). User story implementation can now begin.
 
@@ -61,14 +61,14 @@
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Migrate `openai/model.rs` to `crates/agent_scope_openai/src/model.rs`: rewrite `use crate::*` → `use agent_scope_model::*` imports, add `reqwest::Client` dep
-- [ ] T011 [P] [US1] Migrate `openai/formatter.rs` to `crates/agent_scope_openai/src/formatter.rs`: rewrite `use crate::*` → `use agent_scope_model::*` imports
-- [ ] T012 [P] [US1] Migrate `openai/parameters.rs` to `crates/agent_scope_openai/src/parameters.rs`: rewrite `use crate::*` → `use agent_scope_model::*` imports
-- [ ] T013 [US1] Wire up `crates/agent_scope_openai/src/lib.rs`: declare modules (`model`, `formatter`, `parameters`), re-export `OpenAIChatModel`, `OpenAIChatFormatter`, `OpenAIChatParameters`, `ReasoningEffort`
-- [ ] T014 [US1] Migrate formatter integration tests from `crates/agent_scope_openai/tests/formatter_integration.rs` (moved in T008): update imports to use `agent_scope_openai::*`
-- [ ] T015 [US1] Add mock HTTP tests for OpenAI non-streaming call in `crates/agent_scope_openai/tests/model_tests.rs` using `wiremock`
-- [ ] T016 [US1] Run `cargo build -p agent_scope_openai && cargo test -p agent_scope_openai` — confirm all 10+ tests pass
-- [ ] T017 [US1] Run `cargo tree -p agent_scope_model --no-dedupe | grep -q reqwest` — confirm FAIL (no reqwest in core)
+- [x] T010 [US1] Migrate `openai/model.rs` to `crates/agent_scope_openai/src/model.rs`: rewrite `use crate::*` → `use agent_scope_model::*` imports, add `reqwest::Client` dep
+- [x] T011 [P] [US1] Migrate `openai/formatter.rs` to `crates/agent_scope_openai/src/formatter.rs`: rewrite `use crate::*` → `use agent_scope_model::*` imports
+- [x] T012 [P] [US1] Migrate `openai/parameters.rs` to `crates/agent_scope_openai/src/parameters.rs`: rewrite `use crate::*` → `use agent_scope_model::*` imports
+- [x] T013 [US1] Wire up `crates/agent_scope_openai/src/lib.rs`: declare modules (`model`, `formatter`, `parameters`), re-export `OpenAIChatModel`, `OpenAIChatFormatter`, `OpenAIChatParameters`, `ReasoningEffort`
+- [x] T014 [US1] Migrate formatter integration tests from `crates/agent_scope_openai/tests/formatter_integration.rs` (moved in T008): update imports to use `agent_scope_openai::*`
+- [x] T015 [US1] Add mock HTTP tests for OpenAI non-streaming call in `crates/agent_scope_openai/tests/model_tests.rs` using `wiremock`
+- [x] T016 [US1] Run `cargo build -p agent_scope_openai && cargo test -p agent_scope_openai` — confirm all 10+ tests pass
+- [x] T017 [US1] Run `cargo tree -p agent_scope_model --no-dedupe | grep -q reqwest` — confirm FAIL (no reqwest in core)
 
 **Checkpoint**: OpenAI Provider fully extracted, core crate pure, all tests passing.
 
@@ -82,24 +82,24 @@
 
 ### Implementation for User Story 2
 
-- [ ] T018 [P] [US2] Implement `DashScopeParameters` in `crates/agent_scope_dashscope/src/parameters.rs`: fields per data-model (max_tokens, temperature, top_p, top_k, enable_search, enable_thinking, thinking_budget, repetition_penalty, seed, stop) with `schemars::JsonSchema` derive, serde `skip_serializing_if = "Option::is_none"`, and `#[serde(other)]` for forward compatibility
-- [ ] T019 [P] [US2] Implement `DashScopeFormatter` in `crates/agent_scope_dashscope/src/formatter.rs`: implement `Formatter` trait, format Msg → DashScope API JSON (single TextBlock → string content, multimodal → content array, ToolCall → assistant role, ToolResult → tool role)
-- [ ] T020 [US2] Implement `DashScopeChatModel` struct + `ChatModel` trait in `crates/agent_scope_dashscope/src/model.rs`: fields (api_key, base_url, model_name, parameters, stream, max_retries, retry_delay, context_size, formatter, client, extra_body), constructor `new()` and builder methods
-- [ ] T021 [US2] Implement `ChatModel::call_api()` in `crates/agent_scope_dashscope/src/model.rs`: POST to `{base_url}/chat/completions`, build request body from messages + parameters + tools, handle non-streaming response → `ModelCallResult::Complete(ChatResponse)`
-- [ ] T022 [US2] Implement streaming in `ChatModel::call_api()`: SSE byte stream parsing (`data:` lines, `[DONE]` marker), yield chunks via `tokio::sync::mpsc` or `futures::Stream`, handle empty `choices: []` for usage-only final chunks
-- [ ] T023 [US2] Implement tool calling support in `crates/agent_scope_dashscope/src/model.rs`: format tool definitions → DashScope JSON, parse tool_calls in response → `ToolCallBlock` in ChatResponse, handle `tool_choice` parameter (auto/none/required, with `required` constraint check)
-- [ ] T024 [US2] Implement `generate_structured_output()` in `crates/agent_scope_dashscope/src/model.rs`: inject `generate_structured_output` tool with JSON Schema, parse tool call result → `StructuredResponse`
-- [ ] T025 [US2] Implement error handling: error response parser (compatible with both nested `{"error": ...}` and flat `{"code": ..., "message": ...}` formats), HTTP status → `ModelErrorKind` mapping per dashscope-api.md contract, implement `retryable_errors()` (429/500/502/503/timeout)
-- [ ] T026 [US2] Implement `count_tokens()` in `crates/agent_scope_dashscope/src/model.rs`: attempt DashScope tokenizer API first, fallback to bytes/2 heuristic for Chinese text
-- [ ] T027 [US2] Wire up `crates/agent_scope_dashscope/src/lib.rs`: declare modules, re-export `DashScopeChatModel`, `DashScopeFormatter`, `DashScopeParameters`
-- [ ] T028 [US2] Write mock HTTP test: non-streaming text chat in `crates/agent_scope_dashscope/tests/model_tests.rs` — verify ChatResponse with text content
-- [ ] T029 [P] [US2] Write mock HTTP test: streaming SSE response in `crates/agent_scope_dashscope/tests/model_tests.rs` — verify stream chunks accumulate to correct ChatResponse via `StreamAccumulator`
-- [ ] T030 [P] [US2] Write mock HTTP test: tool calling (function call request → tool call response parse) in `crates/agent_scope_dashscope/tests/model_tests.rs`
-- [ ] T031 [P] [US2] Write mock HTTP test: structured output via tool-calling mechanism in `crates/agent_scope_dashscope/tests/model_tests.rs`
-- [ ] T032 [P] [US2] Write mock HTTP test: error responses (401 auth error, 429 rate limit, 500 server error) in `crates/agent_scope_dashscope/tests/model_tests.rs`
-- [ ] T033 [US2] Write formatter tests in `crates/agent_scope_dashscope/tests/formatter_tests.rs`: text message formatting, multimodal formatting, tool call/tool result formatting
-- [ ] T034 [P] [US2] Write parameter serde round-trip tests in `crates/agent_scope_dashscope/tests/parameters_tests.rs`: serialization/deserialization with various parameter combinations, verify `enable_search`, `enable_thinking` serialization
-- [ ] T035 [US2] Run `cargo test -p agent_scope_dashscope` — confirm ≥10 tests pass, all covered scenarios work
+- [x] T018 [P] [US2] Implement `DashScopeParameters` in `crates/agent_scope_dashscope/src/parameters.rs`: fields per data-model (max_tokens, temperature, top_p, top_k, enable_search, enable_thinking, thinking_budget, repetition_penalty, seed, stop) with `schemars::JsonSchema` derive, serde `skip_serializing_if = "Option::is_none"`, and `#[serde(other)]` for forward compatibility
+- [x] T019 [P] [US2] Implement `DashScopeFormatter` in `crates/agent_scope_dashscope/src/formatter.rs`: implement `Formatter` trait, format Msg → DashScope API JSON (single TextBlock → string content, multimodal → content array, ToolCall → assistant role, ToolResult → tool role)
+- [x] T020 [US2] Implement `DashScopeChatModel` struct + `ChatModel` trait in `crates/agent_scope_dashscope/src/model.rs`: fields (api_key, base_url, model_name, parameters, stream, max_retries, retry_delay, context_size, formatter, client, extra_body), constructor `new()` and builder methods
+- [x] T021 [US2] Implement `ChatModel::call_api()` in `crates/agent_scope_dashscope/src/model.rs`: POST to `{base_url}/chat/completions`, build request body from messages + parameters + tools, handle non-streaming response → `ModelCallResult::Complete(ChatResponse)`
+- [x] T022 [US2] Implement streaming in `ChatModel::call_api()`: SSE byte stream parsing (`data:` lines, `[DONE]` marker), yield chunks via `tokio::sync::mpsc` or `futures::Stream`, handle empty `choices: []` for usage-only final chunks
+- [x] T023 [US2] Implement tool calling support in `crates/agent_scope_dashscope/src/model.rs`: format tool definitions → DashScope JSON, parse tool_calls in response → `ToolCallBlock` in ChatResponse, handle `tool_choice` parameter (auto/none/required, with `required` constraint check)
+- [x] T024 [US2] Implement `generate_structured_output()` in `crates/agent_scope_dashscope/src/model.rs`: inject `generate_structured_output` tool with JSON Schema, parse tool call result → `StructuredResponse`
+- [x] T025 [US2] Implement error handling: error response parser (compatible with both nested `{"error": ...}` and flat `{"code": ..., "message": ...}` formats), HTTP status → `ModelErrorKind` mapping per dashscope-api.md contract, implement `retryable_errors()` (429/500/502/503/timeout)
+- [x] T026 [US2] Implement `count_tokens()` in `crates/agent_scope_dashscope/src/model.rs`: attempt DashScope tokenizer API first, fallback to bytes/2 heuristic for Chinese text
+- [x] T027 [US2] Wire up `crates/agent_scope_dashscope/src/lib.rs`: declare modules, re-export `DashScopeChatModel`, `DashScopeFormatter`, `DashScopeParameters`
+- [x] T028 [US2] Write mock HTTP test: non-streaming text chat in `crates/agent_scope_dashscope/tests/model_tests.rs` — verify ChatResponse with text content
+- [x] T029 [P] [US2] Write mock HTTP test: streaming SSE response in `crates/agent_scope_dashscope/tests/model_tests.rs` — verify stream chunks accumulate to correct ChatResponse via `StreamAccumulator`
+- [x] T030 [P] [US2] Write mock HTTP test: tool calling (function call request → tool call response parse) in `crates/agent_scope_dashscope/tests/model_tests.rs`
+- [x] T031 [P] [US2] Write mock HTTP test: structured output via tool-calling mechanism in `crates/agent_scope_dashscope/tests/model_tests.rs`
+- [x] T032 [P] [US2] Write mock HTTP test: error responses (401 auth error, 429 rate limit, 500 server error) in `crates/agent_scope_dashscope/tests/model_tests.rs`
+- [x] T033 [US2] Write formatter tests in `crates/agent_scope_dashscope/tests/formatter_tests.rs`: text message formatting, multimodal formatting, tool call/tool result formatting
+- [x] T034 [P] [US2] Write parameter serde round-trip tests in `crates/agent_scope_dashscope/tests/parameters_tests.rs`: serialization/deserialization with various parameter combinations, verify `enable_search`, `enable_thinking` serialization
+- [x] T035 [US2] Run `cargo test -p agent_scope_dashscope` — confirm ≥10 tests pass, all covered scenarios work
 
 **Checkpoint**: DashScope Provider fully functional with mock-tested coverage of all scenarios (non-streaming, streaming, tool calls, structured output, errors).
 
@@ -115,11 +115,11 @@
 
 ### Implementation for User Story 3
 
-- [ ] T036 [US3] Extract common wiremock helpers (mock server setup, SSE response builder, JSON response builder) into `crates/agent_scope_model/tests/common/` as a reusable module, re-export for other crate tests via `[dev-dependencies]` path or doc comment reference
-- [ ] T037 [US3] Add SSE stream builder helper: create `fn build_sse_stream(chunks: &[&str]) -> String` that joins chunks with SSE framing (`data: ...\n\n`)
-- [ ] T038 [US3] Refactor `agent_scope_openai/tests/model_tests.rs` to use shared helpers from T036-T037
-- [ ] T039 [P] [US3] Refactor `agent_scope_dashscope/tests/model_tests.rs` to use shared helpers from T036-T037
-- [ ] T040 [US3] Verify `cargo test --workspace` passes with all crates using shared test infrastructure
+- [x] T036 [US3] Extract common wiremock helpers (mock server setup, SSE response builder, JSON response builder) into `crates/agent_scope_model/tests/common/` as a reusable module, re-export for other crate tests via `[dev-dependencies]` path or doc comment reference
+- [x] T037 [US3] Add SSE stream builder helper: create `fn build_sse_stream(chunks: &[&str]) -> String` that joins chunks with SSE framing (`data: ...\n\n`)
+- [x] T038 [US3] Refactor `agent_scope_openai/tests/model_tests.rs` to use shared helpers from T036-T037
+- [x] T039 [P] [US3] Refactor `agent_scope_dashscope/tests/model_tests.rs` to use shared helpers from T036-T037
+- [x] T040 [US3] Verify `cargo test --workspace` passes with all crates using shared test infrastructure
 
 **Checkpoint**: Test infrastructure shared, duplication eliminated, all Provider tests still passing.
 
@@ -133,14 +133,14 @@
 
 ### Implementation for User Story 4
 
-- [ ] T041 [US4] Define `ProviderConfig` struct in `crates/agent_scope_model/src/provider_config.rs`: fields `provider` (String), `api_key` (String), `model_name` (String), `base_url` (Option<String>), `parameters` (serde_json::Value for provider-specific params)
-- [ ] T042 [US4] Define `ProviderRegistry` trait in `crates/agent_scope_model/src/provider_config.rs`: `fn create(&self, config: &ProviderConfig) -> Result<Arc<dyn ChatModel>, ModelError>`
-- [ ] T043 [US4] Implement `OpenAIProviderRegistry` in `crates/agent_scope_openai/src/registry.rs`: parse `ProviderConfig` → construct `OpenAIChatModel`
-- [ ] T044 [US4] Implement `DashScopeProviderRegistry` in `crates/agent_scope_dashscope/src/registry.rs`: parse `ProviderConfig` → construct `DashScopeChatModel`
-- [ ] T045 [US4] Implement `DefaultProviderRegistry` in `crates/agent_scope_model/src/provider_config.rs`: map of provider name → `Box<dyn ProviderRegistry>`, `register()` and `create()` methods, return `ConfigError` for unknown provider names (not panic)
-- [ ] T046 [US4] Write integration test: construct `DashScopeChatModel` from config in `crates/agent_scope_model/tests/provider_registry_tests.rs`
-- [ ] T047 [US4] Write integration test: unknown provider name returns error in `crates/agent_scope_model/tests/provider_registry_tests.rs`
-- [ ] T048 [US4] Run `cargo test --workspace` — confirm registry tests pass
+- [x] T041 [US4] Define `ProviderConfig` struct in `crates/agent_scope_model/src/provider_config.rs`: fields `provider` (String), `api_key` (String), `model_name` (String), `base_url` (Option<String>), `parameters` (serde_json::Value for provider-specific params)
+- [x] T042 [US4] Define `ProviderRegistry` trait in `crates/agent_scope_model/src/provider_config.rs`: `fn create(&self, config: &ProviderConfig) -> Result<Arc<dyn ChatModel>, ModelError>`
+- [x] T043 [US4] Implement `OpenAIProviderRegistry` in `crates/agent_scope_openai/src/registry.rs`: parse `ProviderConfig` → construct `OpenAIChatModel`
+- [x] T044 [US4] Implement `DashScopeProviderRegistry` in `crates/agent_scope_dashscope/src/registry.rs`: parse `ProviderConfig` → construct `DashScopeChatModel`
+- [x] T045 [US4] Implement `DefaultProviderRegistry` in `crates/agent_scope_model/src/provider_config.rs`: map of provider name → `Box<dyn ProviderRegistry>`, `register()` and `create()` methods, return `ConfigError` for unknown provider names (not panic)
+- [x] T046 [US4] Write integration test: construct `DashScopeChatModel` from config in `crates/agent_scope_model/tests/provider_registry_tests.rs`
+- [x] T047 [US4] Write integration test: unknown provider name returns error in `crates/agent_scope_model/tests/provider_registry_tests.rs`
+- [x] T048 [US4] Run `cargo test --workspace` — confirm registry tests pass
 
 **Checkpoint**: Provider registry functional, configuration-driven Provider instantiation works.
 
@@ -150,12 +150,12 @@
 
 **Purpose**: Final validation, lints, and documentation.
 
-- [ ] T049 [P] Run `cargo clippy --workspace -- -D warnings` and fix all warnings across all crates
-- [ ] T050 [P] Run `cargo fmt --all -- --check` and format all crates
-- [ ] T051 Verify dependency topology: `cargo tree -p agent_scope_model --no-dedupe` shows no `reqwest`/`openai`/`dashscope`
-- [ ] T052 Verify dependency topology: `cargo tree -p agent_scope_dashscope --no-dedupe` shows no `agent_scope_tool`/`agent_scope_agent`
-- [ ] T053 Update `agent_scope_model/Cargo.toml` description: remove "OpenAI reference implementation" from description field
-- [ ] T054 Run full quickstart.md validation checklist:
+- [x] T049 [P] Run `cargo clippy --workspace -- -D warnings` and fix all warnings across all crates
+- [x] T050 [P] Run `cargo fmt --all -- --check` and format all crates
+- [x] T051 Verify dependency topology: `cargo tree -p agent_scope_model --no-dedupe` shows no `reqwest`/`openai`/`dashscope`
+- [x] T052 Verify dependency topology: `cargo tree -p agent_scope_dashscope --no-dedupe` shows no `agent_scope_tool`/`agent_scope_agent`
+- [x] T053 Update `agent_scope_model/Cargo.toml` description: remove "OpenAI reference implementation" from description field
+- [x] T054 Run full quickstart.md validation checklist:
   - `cargo build -p agent_scope_model` passes
   - `cargo test -p agent_scope_model` — all core tests pass
   - `cargo build -p agent_scope_openai` passes
@@ -164,7 +164,7 @@
   - `cargo test -p agent_scope_dashscope` — ≥10 tests pass
   - `cargo tree -p agent_scope_model` has zero Provider deps
   - `cargo tree -p agent_scope_dashscope` has only Foundation deps
-- [ ] T055 [P] Update project-level documentation: add Provider crate overview to `README.md` or workspace docs
+- [x] T055 [P] Update project-level documentation: add Provider crate overview to `README.md` or workspace docs
 
 ---
 

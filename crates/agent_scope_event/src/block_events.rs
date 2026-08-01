@@ -33,6 +33,10 @@ pub struct TextBlockEndEvent {
     pub base: EventBase,
     pub reply_id: String,
     pub block_id: String,
+    /// Complete text content for this block from Start to End.
+    /// `Some("")` means known empty; `None` means unknown/unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +97,10 @@ pub struct ThinkingBlockEndEvent {
     pub base: EventBase,
     pub reply_id: String,
     pub block_id: String,
+    /// Complete thinking content for this block from Start to End.
+    /// `Some("")` means known empty; `None` means unknown/unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

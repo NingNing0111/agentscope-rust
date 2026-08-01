@@ -80,7 +80,7 @@ impl VectorStore for MockVectorStore {
         _dimensions: u32,
     ) -> Result<(), agent_scope_rag::error::VectorStoreError> {
         let mut guard = self.data.write().unwrap();
-        guard.entry(name.to_string()).or_insert_with(Vec::new);
+        guard.entry(name.to_string()).or_default();
         Ok(())
     }
 
@@ -116,7 +116,7 @@ impl VectorStore for MockVectorStore {
         let mut guard = self.data.write().unwrap();
         guard
             .entry(collection.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .extend(records);
         Ok(())
     }

@@ -291,6 +291,7 @@ mod tests {
             base: base.clone(),
             reply_id: "reply-001".into(),
             block_id: "block-001".into(),
+            text: None,
         }))
         .unwrap();
 
@@ -332,6 +333,7 @@ mod tests {
             base: base.clone(),
             reply_id: "reply-001".into(),
             tool_call_id: "tc-001".into(),
+            input: None,
         }))
         .unwrap();
 

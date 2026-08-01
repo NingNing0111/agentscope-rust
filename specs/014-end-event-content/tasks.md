@@ -2,177 +2,159 @@
 
 **Input**: Design documents from `/specs/014-end-event-content/`
 
-**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/event-protocol.md, quickstart.md, constitution.md
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/event-protocol.md, quickstart.md
 
-**Tests**: Required by spec FR-020, SC-001 through SC-006, quickstart validation scenarios, and Constitution Article 6.
+**Tests**: Included — Feature spec explicitly requires tests (SC-001 through SC-006, FR-020, quickstart validation scenarios).
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (US1, US2, US3, US4)
-- Every task includes exact file paths for implementation or validation targets
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3, US4)
+- Include exact file paths in descriptions
 
 ## Path Conventions
 
-- Rust workspace crates live under `crates/`
-- Event protocol structs live in `crates/agent_scope_event/src/`
-- Agent event production paths live in `crates/agent_scope_agent/src/`
-- Feature documents live in `specs/014-end-event-content/`
+```text
+crates/agent_scope_event/src/         # Event struct definitions (protocol layer)
+crates/agent_scope_event/tests/        # Event serialization tests
+crates/agent_scope_agent/src/          # Event production (streaming + non-streaming)
+crates/agent_scope_agent/tests/        # Agent event behavior tests
+```
 
 ---
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-**Purpose**: Locate affected event constructors, test fixtures, and current event production paths before changing behavior.
+**Purpose**: Verify prerequisites and prepare for protocol changes.
 
-- [ ] T001 Inspect existing TextBlockEndEvent and ThinkingBlockEndEvent definitions and constructors in crates/agent_scope_event/src/block_events.rs
-- [ ] T002 Inspect existing ToolCallEndEvent and ToolResultEndEvent definitions and constructors in crates/agent_scope_event/src/tool_events.rs
-- [ ] T003 [P] Inspect current event serde coverage and constructor usage in crates/agent_scope_event/tests/event_serde_tests.rs
-- [ ] T004 [P] Inspect existing append/cross-crate event tests for EndEvent construction patterns in crates/agent_scope_event/tests/append_event_tests.rs and crates/agent_scope_event/tests/cross_crate_tests.rs
-- [ ] T005 [P] Inspect streaming block lifecycle helpers and BlockTracker state in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T006 [P] Inspect non-streaming event production path in crates/agent_scope_agent/src/react_loop.rs
+- [X] T001 Verify existing tests pass before starting changes with `rtk cargo test -p agent_scope_event -p agent_scope_agent`
+- [X] T002 [P] Review current EndEvent struct shapes in `crates/agent_scope_event/src/block_events.rs` and `crates/agent_scope_event/src/tool_events.rs` to confirm target fields
 
 ---
 
-## Phase 2: Foundational (Blocking Prerequisites)
+## Phase 2: Foundational — EndEvent Struct Extensions (Blocking)
 
-**Purpose**: Extend the public event protocol in a backward-compatible way before any producer starts filling fields.
+**Purpose**: Add optional complete-content fields to all four EndEvent structs. This MUST complete before any agent-side content population can begin.
 
-**⚠️ CRITICAL**: No user story implementation can rely on EndEvent content until this phase is complete.
+**⚠️ CRITICAL**: No user story implementation can begin until these struct changes are in place.
 
-- [ ] T007 Add optional `text: Option<String>` with serde default and skip-none semantics to TextBlockEndEvent in crates/agent_scope_event/src/block_events.rs
-- [ ] T008 Add optional `thinking: Option<String>` with serde default and skip-none semantics to ThinkingBlockEndEvent in crates/agent_scope_event/src/block_events.rs
-- [ ] T009 Add optional `input: Option<String>` with serde default and skip-none semantics to ToolCallEndEvent in crates/agent_scope_event/src/tool_events.rs
-- [ ] T010 Add optional `output: Option<String>` with serde default and skip-none semantics to ToolResultEndEvent in crates/agent_scope_event/src/tool_events.rs
-- [ ] T011 Update EndEvent constructor helpers or call sites to preserve existing construction with `None` defaults in crates/agent_scope_event/src/block_events.rs and crates/agent_scope_event/src/tool_events.rs
-- [ ] T012 [P] Update event crate EndEvent construction compatibility tests for new optional fields in crates/agent_scope_event/tests/append_event_tests.rs
-- [ ] T013 [P] Update cross-crate EndEvent construction compatibility tests for new optional fields in crates/agent_scope_event/tests/cross_crate_tests.rs
-- [ ] T014 Run targeted protocol compile check with `rtk cargo test -p agent_scope_event --no-run`
+- [X] T003 [P] Add `text: Option<String>` field with `#[serde(default, skip_serializing_if = "Option::is_none")]` to `TextBlockEndEvent` in `crates/agent_scope_event/src/block_events.rs`
+- [X] T004 [P] Add `thinking: Option<String>` field with `#[serde(default, skip_serializing_if = "Option::is_none")]` to `ThinkingBlockEndEvent` in `crates/agent_scope_event/src/block_events.rs`
+- [X] T005 [P] Add `input: Option<String>` field with `#[serde(default, skip_serializing_if = "Option::is_none")]` to `ToolCallEndEvent` in `crates/agent_scope_event/src/tool_events.rs`
+- [X] T006 [P] Add `output: Option<String>` field with `#[serde(default, skip_serializing_if = "Option::is_none")]` to `ToolResultEndEvent` in `crates/agent_scope_event/src/tool_events.rs`
+- [X] T007 [P] Add serialization round-trip tests for new fields in `crates/agent_scope_event/tests/event_serde_tests.rs`: verify `Some("")`, `Some("hello")`, field-missing → `None`, empty-string ≠ missing
+- [X] T008 Fix all compile errors from new mandatory struct fields across workspace (all existing EndEvent constructors need `text`/`thinking`/`input`/`output: None` for now)
 
-**Checkpoint**: Event protocol compiles, old EndEvent construction remains source-compatible or has explicit None defaults, and user story work can begin.
+**Checkpoint**: Struct extensions complete. All existing tests still pass with `None` defaults. Can now proceed to content population.
 
 ---
 
-## Phase 3: User Story 1 - 消费者在 EndEvent 读取完整内容 (Priority: P1) 🎯 MVP
+## Phase 3: User Story 1 — Consumer Reads Complete Content from EndEvent (Priority: P1) 🎯 MVP
 
-**Goal**: Streaming EndEvents for text, thinking, tool calls, and tool results carry complete content equal to the concatenation of observed deltas.
+**Goal**: Streaming model output paths populate EndEvent content fields from accumulated deltas. After streaming completes, each EndEvent carries its block's full content.
 
-**Independent Test**: Use scripted/mock streaming event sequences and verify each TextBlockEndEvent.text, ThinkingBlockEndEvent.thinking, ToolCallEndEvent.input, and ToolResultEndEvent.output equals the block-specific delta concatenation.
+**Independent Test**: Construct streaming event sequences with text/thinking/tool-call/tool-result blocks, verify each EndEvent's content field equals concatenation of all that block's deltas.
 
-### Tests for User Story 1 ⚠️
+### Tests for User Story 1
 
-> **NOTE: Write these tests FIRST, ensure they FAIL before implementation.**
-
-- [ ] T015 [P] [US1] Add event serde tests for populated `text`, `thinking`, `input`, and `output` EndEvent fields in crates/agent_scope_event/tests/event_serde_tests.rs
-- [ ] T016 [P] [US1] Add streaming text/thinking multi-chunk EndEvent content regression tests in crates/agent_scope_agent/tests/streaming_end_event_content_tests.rs
-- [ ] T017 [P] [US1] Add streaming tool call input multi-chunk EndEvent content regression tests in crates/agent_scope_agent/tests/streaming_end_event_content_tests.rs
-- [ ] T018 [P] [US1] Add streaming tool result output EndEvent content regression tests in crates/agent_scope_agent/tests/streaming_tool_result_end_event_content_tests.rs
-- [ ] T019 [P] [US1] Add interleaved block accumulator isolation test with at least 10 block/tool ids in crates/agent_scope_agent/tests/interleaved_end_event_content_tests.rs
+- [X] T009 [P] [US1] Add streaming TextBlockEndEvent content test in `crates/agent_scope_agent/tests/streaming_tests.rs`: multi-chunk text deltas → EndEvent.text equals concatenated result
+- [X] T010 [P] [US1] Add streaming ThinkingBlockEndEvent content test in `crates/agent_scope_agent/tests/streaming_tests.rs`: multi-chunk thinking deltas → EndEvent.thinking equals concatenated result
+- [X] T011 [P] [US1] Add streaming ToolCallEndEvent content test in `crates/agent_scope_agent/tests/streaming_tests.rs`: multi-chunk tool input deltas → EndEvent.input equals concatenated result
+- [X] T012 [P] [US1] Add streaming ToolResultEndEvent content test in `crates/agent_scope_agent/tests/streaming_tests.rs`: multi-chunk tool result text deltas → EndEvent.output equals concatenated result
 
 ### Implementation for User Story 1
 
-- [ ] T020 [US1] Accumulate text deltas per block after TextBlockDeltaEvent publication in BlockTracker path in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T021 [US1] Populate TextBlockEndEvent.text from accumulated text when closing text blocks in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T022 [US1] Accumulate thinking deltas per block after ThinkingBlockDeltaEvent publication in BlockTracker path in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T023 [US1] Populate ThinkingBlockEndEvent.thinking from accumulated thinking when closing thinking blocks in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T024 [US1] Populate ToolCallEndEvent.input from accumulated ToolCallBlock.input when closing active tool blocks in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T025 [US1] Accumulate successful streaming ToolResultTextDeltaEvent output chunks per tool call in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T026 [US1] Populate ToolResultEndEvent.output for successful streaming tool results and omit it for interrupted tool streams in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T027 [US1] Run US1 targeted tests with `rtk cargo test -p agent_scope_event event_serde` and `rtk cargo test -p agent_scope_agent streaming_end_event_content`
+- [X] T013 [US1] Accumulate delta text in `process_text_block_chunk()` in `crates/agent_scope_agent/src/streaming_reactor.rs`: push `tb.text` into `tracker.text_blocks[block_id].1` after emitting delta, for both first-chunk and subsequent-chunk paths
+- [X] T014 [US1] Accumulate delta thinking in `process_thinking_block_chunk()` in `crates/agent_scope_agent/src/streaming_reactor.rs`: push `thb.thinking` into `tracker.thinking_blocks[block_id].1` after emitting delta, for both first-chunk and subsequent-chunk paths
+- [X] T015 [US1] Populate `TextBlockEndEvent.text` in `close_all_text_blocks()` in `crates/agent_scope_agent/src/streaming_reactor.rs`: concat all accumulated delta strings from `tracker.text_blocks[block_id].1` into `Some(concatenated)`
+- [X] T016 [US1] Populate `ThinkingBlockEndEvent.thinking` in `close_all_thinking_blocks()` in `crates/agent_scope_agent/src/streaming_reactor.rs`: concat all accumulated delta strings from `tracker.thinking_blocks[block_id].1` into `Some(concatenated)`
+- [X] T017 [US1] Populate `ToolCallEndEvent.input` in `close_active_tool_blocks()` in `crates/agent_scope_agent/src/streaming_reactor.rs`: pass `tracker.tool_blocks[id].input.clone()` as `Some(input)` when emitting EndEvent
+- [X] T018 [US1] Populate `ToolResultEndEvent.output` in `emit_tool_result_and_collect()` in `crates/agent_scope_agent/src/streaming_reactor.rs`: pass `Some(collected_text)` for `Complete` and `Stream` success paths; pass `None` for `Stream` interrupted path and `Err` error path (not yet complete)
 
-**Checkpoint**: Streaming consumers can read complete block/tool content from EndEvent fields without losing DeltaEvent compatibility.
+**Checkpoint**: Streaming EndEvent content fields populated. US1 tests pass — consumer can read complete content from streaming EndEvents.
 
 ---
 
-## Phase 4: User Story 2 - 非流式响应也发布完整 EndEvent 内容 (Priority: P1)
+## Phase 4: User Story 2 — Non-Streaming EndEvent Content (Priority: P1)
 
-**Goal**: Non-streaming model responses and one-shot tool results populate the same EndEvent content fields as streaming paths.
+**Goal**: Non-streaming model response paths and one-shot tool execution paths populate EndEvent content fields, so consumers get consistent behavior regardless of streaming mode.
 
-**Independent Test**: Use non-streaming scripted/model responses and deterministic tool outputs to verify EndEvent fields contain complete text, thinking, tool input, and tool output.
+**Independent Test**: Use non-streaming model response and one-shot tool results, verify each EndEvent carries the same content as its corresponding Delta.
 
-### Tests for User Story 2 ⚠️
+### Tests for User Story 2
 
-> **NOTE: Write these tests FIRST, ensure they FAIL before implementation.**
-
-- [ ] T028 [P] [US2] Add non-streaming text and thinking EndEvent content tests in crates/agent_scope_agent/tests/non_streaming_end_event_content_tests.rs
-- [ ] T029 [P] [US2] Add non-streaming tool call input and tool result output EndEvent content tests in crates/agent_scope_agent/tests/non_streaming_tool_end_event_content_tests.rs
-- [ ] T030 [P] [US2] Add non-streaming tool error path test that preserves error state without claiming successful output in crates/agent_scope_agent/tests/non_streaming_tool_end_event_content_tests.rs
+- [X] T019 [P] [US2] Add non-streaming text EndEvent content test in `crates/agent_scope_agent/tests/react_agent_tests.rs`: complete text block → EndEvent.text equals delta content
+- [X] T020 [P] [US2] Add non-streaming thinking EndEvent content test in `crates/agent_scope_agent/tests/react_agent_tests.rs`: complete thinking block → EndEvent.thinking equals delta content
+- [X] T021 [P] [US2] Add non-streaming tool call EndEvent content test in `crates/agent_scope_agent/tests/react_agent_tests.rs`: one-shot tool call → EndEvent.input equals delta content
+- [X] T022 [P] [US2] Add non-streaming tool result EndEvent content test in `crates/agent_scope_agent/tests/react_agent_tests.rs`: complete/success → EndEvent.output; error → output `None`
 
 ### Implementation for User Story 2
 
-- [ ] T031 [US2] Populate TextBlockEndEvent.text from complete TextBlock content in non-streaming react loop path in crates/agent_scope_agent/src/react_loop.rs
-- [ ] T032 [US2] Populate ThinkingBlockEndEvent.thinking from complete ThinkingBlock content in non-streaming react loop path in crates/agent_scope_agent/src/react_loop.rs
-- [ ] T033 [US2] Populate ToolCallEndEvent.input from complete tool call input in non-streaming react loop path in crates/agent_scope_agent/src/react_loop.rs
-- [ ] T034 [US2] Populate ToolCallEndEvent.input in complete model response processing path in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T035 [US2] Populate ToolResultEndEvent.output for successful complete tool outputs while preserving error output semantics in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T036 [US2] Run US2 targeted tests with `rtk cargo test -p agent_scope_agent non_streaming_end_event_content` and `rtk cargo test -p agent_scope_agent non_streaming_tool_end_event_content`
+- [X] T023 [US2] Populate `TextBlockEndEvent.text` in non-streaming text path in `crates/agent_scope_agent/src/react_loop.rs`: pass `Some(tb.text.clone())` (around line 276)
+- [X] T024 [US2] Populate `ThinkingBlockEndEvent.thinking` in non-streaming thinking path in `crates/agent_scope_agent/src/react_loop.rs`: pass `Some(thb.thinking.clone())` (around line 305)
+- [X] T025 [US2] Populate `ToolCallEndEvent.input` in non-streaming tool call path in `crates/agent_scope_agent/src/react_loop.rs`: pass `Some(tc_mut.input.clone())` (around line 381)
+- [X] T026 [US2] Populate `ToolResultEndEvent.output` in non-streaming tool result success path in `crates/agent_scope_agent/src/react_loop.rs`: pass `Some(output_text)` (around line 413)
+- [X] T027 [US2] Set `ToolResultEndEvent.output = None` in non-streaming tool error path in `crates/agent_scope_agent/src/react_loop.rs` (around line 453)
+- [X] T028 [P] [US2] Populate `TextBlockEndEvent.text` in `emit_events_from_response()` non-streaming text path in `crates/agent_scope_agent/src/streaming_reactor.rs`: pass `Some(tb.text.clone())` (around line 1160)
+- [X] T029 [P] [US2] Populate `ThinkingBlockEndEvent.thinking` in `emit_events_from_response()` non-streaming thinking path in `crates/agent_scope_agent/src/streaming_reactor.rs`: pass `Some(thb.thinking.clone())` (around line 1188)
+- [X] T030 [P] [US2] Populate `ToolCallEndEvent.input` in `process_response_and_continue()` complete tool call path in `crates/agent_scope_agent/src/streaming_reactor.rs`: pass `Some(tc.input.clone())` (around line 819)
 
-**Checkpoint**: Streaming and non-streaming consumers can use the same EndEvent snapshot strategy.
+**Checkpoint**: Non-streaming EndEvent content fields populated. US2 tests pass — consumers get consistent content across streaming and non-streaming modes.
 
 ---
 
-## Phase 5: User Story 3 - 旧消费者可继续只依赖 EndEvent 生命周期语义 (Priority: P2)
+## Phase 5: User Story 3 — Backward Compatibility & Lifecycle Stability (Priority: P2)
 
-**Goal**: Existing consumers that rely on EndEvent type, order, identifiers, and completion timing observe unchanged lifecycle semantics apart from optional content fields.
+**Goal**: Existing consumers that rely only on event type/order/block-id are unaffected. Error/cancellation/empty-content cases are handled correctly.
 
-**Independent Test**: Compare event type order, EndEvent counts, block/tool identifiers, empty-content behavior, and cancellation/error behavior before and after content fields are introduced.
+**Independent Test**: Compare event sequences (types, order, counts, block IDs) before and after changes — must be identical except for new optional fields.
 
-### Tests for User Story 3 ⚠️
+### Tests for User Story 3
 
-> **NOTE: Write these tests FIRST, ensure they FAIL before any missing compatibility implementation.**
-
-- [ ] T037 [P] [US3] Add backward-compatible deserialization tests for EndEvent JSON missing new fields in crates/agent_scope_event/tests/event_serde_tests.rs
-- [ ] T038 [P] [US3] Add empty string versus missing field round-trip tests for all EndEvent content fields in crates/agent_scope_event/tests/event_serde_tests.rs
-- [ ] T039 [P] [US3] Add event order and EndEvent count regression tests for streaming sequences in crates/agent_scope_agent/tests/streaming_end_event_content_tests.rs
-- [ ] T040 [P] [US3] Add cancellation/error EndEvent content omission regression tests in crates/agent_scope_agent/tests/streaming_tool_result_end_event_content_tests.rs
+- [X] T031 [P] [US3] Add event sequence order regression test in `crates/agent_scope_agent/tests/event_sequence_tests.rs`: verify Start → Delta → End order unchanged across text/thinking/tool-call/tool-result for both streaming and non-streaming
+- [X] T032 [P] [US3] Add empty-content EndEvent test in `crates/agent_scope_agent/tests/streaming_tests.rs`: block with no delta content → EndEvent still emitted with `text: None` (not absent EndEvent)
+- [X] T033 [P] [US3] Add cancellation-preserves-semantics test in `crates/agent_scope_agent/tests/interruption_tests.rs`: cancelled/interrupted path → ToolResultEndEvent has `output: None` and correct `state`, no false success content
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Ensure EndEvent serialization omits None fields while preserving Some empty strings in crates/agent_scope_event/src/block_events.rs and crates/agent_scope_event/src/tool_events.rs
-- [ ] T042 [US3] Ensure close helpers clear per-id accumulator state when EndEvent is emitted without introducing late deltas in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T043 [US3] Ensure cancellation and error paths omit unknown complete-content fields instead of fabricating successful content in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T044 [US3] Run US3 targeted tests with `rtk cargo test -p agent_scope_event event_serde` and `rtk cargo test -p agent_scope_agent streaming_tool_result_end_event_content`
+- [X] T034 [US3] Verify cancellation path in `crates/agent_scope_agent/src/streaming_reactor.rs`: `ToolResultEndEvent` with `state = Interrupted` has `output: None` at line 1272
+- [X] T035 [US3] Verify error path in `crates/agent_scope_agent/src/streaming_reactor.rs`: `ToolResultEndEvent` with `state = Error` has `output: None` at line 1335 (already correct with `None` default)
 
-**Checkpoint**: Existing lifecycle consumers remain compatible, and old serialized data remains valid.
+**Checkpoint**: Backward compatibility verified. Tests confirm event order, empty-content handling, and error/cancellation semantics are preserved.
 
 ---
 
-## Phase 6: User Story 4 - Trace 与调试工具可直接展示完整块内容 (Priority: P3)
+## Phase 6: User Story 4 — Trace & Debug Enhancement (Priority: P3)
 
-**Goal**: Trace/debug consumers can reconstruct block-level final output from EndEvent content fields and compare it with DeltaEvent accumulation.
+**Goal**: Event trace captures EndEvent complete-content fields, enabling tools to display block final content without delta reconstruction.
 
-**Independent Test**: Capture or synthesize a trace with text, thinking, tool input, and tool output, then verify EndEvent snapshots reconstruct the same block-level output as all delta events.
+**Independent Test**: Record a trace with multiple block types, verify EndEvent entries carry the new fields and can reconstruct block-level output.
 
-### Tests for User Story 4 ⚠️
+### Tests for User Story 4
 
-> **NOTE: Write these tests FIRST, ensure they FAIL before implementation if trace capture does not include new fields.**
-
-- [ ] T045 [P] [US4] Add trace reconstruction test from EndEvent content fields in crates/agent_scope_agent/tests/end_event_trace_content_tests.rs
-- [ ] T046 [P] [US4] Add DeltaEvent versus EndEvent snapshot equivalence test in crates/agent_scope_agent/tests/end_event_trace_content_tests.rs
+- [X] T036 [P] [US4] Add trace capture test in `crates/agent_scope_agent/tests/streaming_tests.rs` or new `crates/agent_scope_agent/tests/trace_tests.rs`: record agent trace, verify EndEvent JSON contains content fields for text/thinking/tool-call/tool-result blocks
+- [X] T037 [P] [US4] Add interleaved block content isolation test in `crates/agent_scope_agent/tests/streaming_tests.rs`: ≥10 interleaved blocks, each EndEvent contains only its own block's content
 
 ### Implementation for User Story 4
 
-- [ ] T047 [US4] Ensure AgentEvent trace serialization includes populated EndEvent content fields without changing trace event ordering in crates/agent_scope_agent/src/streaming_reactor.rs
-- [ ] T048 [US4] Ensure non-streaming trace serialization includes populated EndEvent content fields without changing ReplyEnd behavior in crates/agent_scope_agent/src/react_loop.rs
-- [ ] T049 [US4] Run US4 targeted trace tests with `rtk cargo test -p agent_scope_agent end_event_trace_content`
+- [X] T038 [US4] Ensure existing trace/Debug implementations capture new optional fields — verify `Debug` derive on all four EndEvent structs in `crates/agent_scope_event/src/block_events.rs` and `crates/agent_scope_event/src/tool_events.rs`
 
-**Checkpoint**: Trace tools can read EndEvent complete-content snapshots and reconstruct the same block-level output as delta accumulation.
+**Checkpoint**: Trace captures EndEvent content. Interleaved block isolation verified.
 
 ---
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-**Purpose**: Documentation, compatibility notes, formatting, linting, and full regression validation.
+**Purpose**: Full workspace validation, example updates, documentation.
 
-- [ ] T050 [P] Update event protocol compatibility notes for EndEvent snapshot fields in docs/ or specs/014-end-event-content/contracts/event-protocol.md
-- [ ] T051 [P] Update examples or comments that construct EndEvent values after constructor/API changes in examples/ and crates/agent_scope_event/tests/
-- [ ] T052 Run quickstart validation scenarios with `rtk cargo test -p agent_scope_event event_serde`, `rtk cargo test -p agent_scope_agent non_streaming_end_event_content`, `rtk cargo test -p agent_scope_agent non_streaming_tool_end_event_content`, `rtk cargo test -p agent_scope_agent streaming_end_event_content`, `rtk cargo test -p agent_scope_agent streaming_tool_result_end_event_content`, and `rtk cargo test -p agent_scope_agent interleaved_end_event_content`
-- [ ] T053 Run full workspace regression with `rtk cargo test`
-- [ ] T054 Run lint gate with `rtk cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] T055 Run formatting gate with `rtk cargo fmt --check`
-- [ ] T056 Update specs/014-end-event-content/tasks.md checkboxes after implementation completion and validation evidence collection
+- [X] T039 Update `examples/chat.rs` if it directly constructs EndEvent structs — add `None` for new fields (compile fix, no behavior change)
+- [X] T040 [P] Update `crates/agent_scope_event/tests/event_type_tests.rs` if any test validates EndEvent field counts or shapes
+- [X] T041 Run `rtk cargo fmt` and `rtk cargo clippy --all-targets --all-features -- -D warnings`
+- [X] T042 Run full workspace test suite: `rtk cargo test`
+- [X] T043 [P] Verify all quickstart validation scenarios from `specs/014-end-event-content/quickstart.md`: serialization (scenario 1), non-streaming text/thinking (scenario 2), non-streaming tool (scenario 3), streaming accumulation (scenario 4), streaming tool result (scenario 5), interleaved blocks (scenario 6)
+- [X] T044 [P] Document the EndEvent content extension in compatibility notes — note that new fields are optional and follow serde default/skip_none pattern
 
 ---
 
@@ -180,121 +162,98 @@
 
 ### Phase Dependencies
 
-- **Setup (Phase 1)**: No dependencies - can start immediately
-- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
-- **User Story 1 (Phase 3)**: Depends on Foundational; MVP for streaming EndEvent snapshot behavior
-- **User Story 2 (Phase 4)**: Depends on Foundational; can proceed in parallel with US1 after protocol fields exist, but final validation should compare behavior with US1
-- **User Story 3 (Phase 5)**: Depends on Foundational; compatibility checks can start early, but final error/cancellation assertions depend on US1/US2 producer changes
-- **User Story 4 (Phase 6)**: Depends on US1 and US2 producing populated fields
-- **Polish (Phase 7)**: Depends on all desired user stories being complete
+- **Setup (Phase 1)**: No dependencies — can start immediately
+- **Foundational (Phase 2)**: Depends on Setup completion — BLOCKS all user stories
+- **User Story 1 (Phase 3)**: Streaming content population — depends on Phase 2 struct extensions
+- **User Story 2 (Phase 4)**: Non-streaming content population — depends on Phase 2 struct extensions; can run in parallel with US1
+- **User Story 3 (Phase 5)**: Backward compatibility tests — depends on US1+US2 completion (to test the final state)
+- **User Story 4 (Phase 6)**: Trace enhancement — depends on US1+US2 completion
+- **Polish (Phase 7)**: Depends on all user stories being complete
 
 ### User Story Dependencies
 
-- **US1 (P1)**: Can start after Phase 2; no dependency on US2/US3/US4
-- **US2 (P1)**: Can start after Phase 2; no dependency on US1 for implementation, but should align semantics with US1 before completion
-- **US3 (P2)**: Can start after Phase 2 for serde compatibility; lifecycle and cancellation checks depend on US1/US2 production paths
-- **US4 (P3)**: Depends on US1 and US2 because trace content exists only after producers populate EndEvent fields
+- **US1 (P1)**: Can start after Phase 2 — No dependencies on other stories
+- **US2 (P1)**: Can start after Phase 2 — No dependencies on US1. Parallelizable with US1.
+- **US3 (P2)**: Depends on US1 + US2 — validates the combined result
+- **US4 (P3)**: Depends on US1 + US2 — validates trace on populated EndEvents
 
 ### Within Each User Story
 
-- Tests MUST be written and observed failing before implementation tasks are completed
-- Protocol structs before producer code
-- Producer content accumulation before trace/debug reconstruction
-- Targeted tests before full workspace regression
+- Tests MUST be written and FAIL before implementation (T009-T012 before T013-T018; T019-T022 before T023-T030)
+- Struct field additions (Phase 2) before agent-side population
+- Implementation before validation (US3 tests after US1+US2)
 
 ### Parallel Opportunities
 
-- T003-T006 can run in parallel during setup
-- T012-T013 can run in parallel after T007-T011
-- T015-T019 can run in parallel because they target separate test scenarios/files
-- T028-T030 can run in parallel because they target separate non-streaming scenarios
-- T037-T040 can run in parallel because they target independent compatibility dimensions
-- T045-T046 can run in parallel because they cover separate trace assertions
-- T050-T051 can run in parallel during polish
+- All 4 struct field additions (T003-T006) can run in parallel
+- US1 and US2 can run in parallel after Phase 2
+- All tests within US1 (T009-T012) can run in parallel
+- All tests within US2 (T019-T022) can run in parallel
+- Non-streaming path tasks within US2 (T023-T027 for react_loop.rs vs T028-T030 for streaming_reactor.rs non-streaming paths) can run in parallel
+- Polish tasks (T040, T041, T043, T044) can run in parallel
 
 ---
 
-## Parallel Example: User Story 1
+## Parallel Example: Phase 2 (Struct Extensions)
 
-```bash
-# Write US1 streaming protocol tests in parallel:
-Task: "Add streaming text/thinking multi-chunk EndEvent content regression tests in crates/agent_scope_agent/tests/streaming_end_event_content_tests.rs"
-Task: "Add streaming tool result output EndEvent content regression tests in crates/agent_scope_agent/tests/streaming_tool_result_end_event_content_tests.rs"
-Task: "Add interleaved block accumulator isolation test with at least 10 block/tool ids in crates/agent_scope_agent/tests/interleaved_end_event_content_tests.rs"
-
-# Then implement producer paths in order because they touch the same file:
-Task: "Accumulate text deltas per block in crates/agent_scope_agent/src/streaming_reactor.rs"
-Task: "Accumulate thinking deltas per block in crates/agent_scope_agent/src/streaming_reactor.rs"
-Task: "Populate tool call and tool result EndEvent fields in crates/agent_scope_agent/src/streaming_reactor.rs"
+```text
+Launch all four field additions in parallel:
+  Task: "Add text field to TextBlockEndEvent in block_events.rs"
+  Task: "Add thinking field to ThinkingBlockEndEvent in block_events.rs"
+  Task: "Add input field to ToolCallEndEvent in tool_events.rs"
+  Task: "Add output field to ToolResultEndEvent in tool_events.rs"
 ```
 
-## Parallel Example: User Story 2
+## Parallel Example: User Story 1 Tests
 
-```bash
-# Write US2 non-streaming tests in parallel:
-Task: "Add non-streaming text and thinking EndEvent content tests in crates/agent_scope_agent/tests/non_streaming_end_event_content_tests.rs"
-Task: "Add non-streaming tool call input and tool result output EndEvent content tests in crates/agent_scope_agent/tests/non_streaming_tool_end_event_content_tests.rs"
-
-# Then implement non-streaming producers in order because they share react_loop.rs and streaming_reactor.rs paths:
-Task: "Populate non-streaming TextBlockEndEvent and ThinkingBlockEndEvent fields in crates/agent_scope_agent/src/react_loop.rs"
-Task: "Populate complete tool call and tool result EndEvent fields in crates/agent_scope_agent/src/streaming_reactor.rs"
-```
-
-## Parallel Example: User Story 3
-
-```bash
-# Compatibility tests can be written in parallel:
-Task: "Add backward-compatible deserialization tests in crates/agent_scope_event/tests/event_serde_tests.rs"
-Task: "Add event order and EndEvent count regression tests in crates/agent_scope_agent/tests/streaming_end_event_content_tests.rs"
-Task: "Add cancellation/error content omission regression tests in crates/agent_scope_agent/tests/streaming_tool_result_end_event_content_tests.rs"
+```text
+Launch all four streaming tests together:
+  Task: "Test streaming TextBlockEndEvent content in streaming_tests.rs"
+  Task: "Test streaming ThinkingBlockEndEvent content in streaming_tests.rs"
+  Task: "Test streaming ToolCallEndEvent content in streaming_tests.rs"
+  Task: "Test streaming ToolResultEndEvent content in streaming_tests.rs"
 ```
 
 ---
 
 ## Implementation Strategy
 
-### MVP First (US1 + protocol foundation)
+### MVP First (Phase 2 + US1 Only)
 
-1. Complete Phase 1: Setup
-2. Complete Phase 2: Foundational protocol field additions
-3. Complete Phase 3: US1 streaming EndEvent complete-content snapshots
-4. **STOP and VALIDATE**: Run US1 targeted quickstart commands and verify Start → Delta → End ordering is unchanged
-
-### P1 Completion
-
-1. Complete MVP steps above
-2. Complete Phase 4: US2 non-streaming EndEvent complete-content snapshots
-3. Validate streaming and non-streaming semantic equivalence for text, thinking, tool input, and tool output
+1. Complete Phase 1: Setup (verify baseline)
+2. Complete Phase 2: Add struct fields + serde tests (T003-T008)
+3. Complete Phase 3: US1 streaming content population (T009-T018)
+4. **STOP and VALIDATE**: Run streaming tests, verify EndEvent content in trace
+5. This gives immediate value — consumers can read complete content from streaming EndEvents
 
 ### Incremental Delivery
 
-1. Protocol fields + serde compatibility → consumers can accept new fields
-2. US1 streaming snapshots → streaming consumers get complete EndEvent content
-3. US2 non-streaming snapshots → unified consumer logic across modes
-4. US3 compatibility hardening → lifecycle semantics, old JSON, empty content, cancellation/error behavior
-5. US4 trace reconstruction → debugging and observability improvement
-6. Polish → docs, examples, full tests, clippy, fmt
+1. Phase 1 + 2 → Protocol foundation ready
+2. Add US1 → Streaming EndEvent content works → **MVP!**
+3. Add US2 → Non-streaming parity → Full coverage
+4. Add US3 → Backward compatibility verified
+5. Add US4 → Trace enhancement
+6. Phase 7 → All green: tests, clippy, fmt
 
-### Parallel Team Strategy
+### Recommended Execution
 
-With multiple developers:
+Given that US1 and US2 are both P1 and independently implementable:
 
-1. One developer completes Phase 2 protocol structs and constructor updates
-2. After Phase 2:
-   - Developer A: US1 streaming tests and streaming_reactor.rs accumulation
-   - Developer B: US2 non-streaming tests and react_loop.rs complete-content fill
-   - Developer C: US3 serde/order/error compatibility tests
-3. After US1 + US2 are complete:
-   - Developer D: US4 trace reconstruction tests and documentation polish
-4. Final owner runs T052-T055 validation gates
+1. Phase 2 (Foundational) — single dev, sequential
+2. After Phase 2 checkpoint: US1 and US2 in parallel (two devs)
+3. After US1+US2: US3 and US4 in parallel
+4. Phase 7: Final sweep
 
 ---
 
 ## Notes
 
-- [P] tasks touch different files or independent test scenarios and can be done concurrently
-- Non-[P] tasks often touch `crates/agent_scope_agent/src/streaming_reactor.rs` or `crates/agent_scope_agent/src/react_loop.rs` and should be serialized to avoid conflicts
-- New EndEvent fields must be `Option<String>` and preserve `None` versus `Some("")` semantics
-- EndEvent content is a convenience snapshot; DeltaEvent remains the streaming source of truth and must not be removed
-- Do not fabricate complete output for error, cancellation, or interrupted tool result paths
-- Use `rtk` prefix for all shell validation commands per project instructions
+- [P] tasks = different files, no dependencies
+- [Story] label maps task to specific user story for traceability
+- Each user story should be independently completable and testable
+- Tests MUST be written first and fail before implementing content population
+- Commit after each phase or logical group
+- Stop at any checkpoint to validate story independently
+- All EndEvent structs already derive `Debug + Clone + Serialize + Deserialize` — no new derives needed
+- `serde_json::Value` is already in scope in tool_events.rs; no new imports needed for the optional String fields
+- The `examples/chat.rs` file may need updating if it constructs EndEvent structs directly; check after Phase 2

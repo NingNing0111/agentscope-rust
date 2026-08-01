@@ -60,35 +60,21 @@ impl Formatter for DashScopeFormatter {
                 // Content must be a string for tool role messages
                 let (text_content, _promoted) =
                     self.convert_tool_result_to_string(&tool_results[0].output)?;
-                entry.insert(
-                    "content".to_string(),
-                    JsonValue::String(text_content),
-                );
+                entry.insert("content".to_string(), JsonValue::String(text_content));
 
                 // If there are additional ToolResult blocks, also format them
                 // as separate entries (each tool result is a separate message
                 // in the OpenAI protocol)
                 for tr in &tool_results[1..] {
                     let mut extra_entry = serde_json::Map::new();
-                    extra_entry.insert(
-                        "role".to_string(),
-                        JsonValue::String("tool".to_string()),
-                    );
-                    extra_entry.insert(
-                        "tool_call_id".to_string(),
-                        JsonValue::String(tr.id.clone()),
-                    );
+                    extra_entry.insert("role".to_string(), JsonValue::String("tool".to_string()));
+                    extra_entry
+                        .insert("tool_call_id".to_string(), JsonValue::String(tr.id.clone()));
                     let (extra_text, _extra_promoted) =
                         self.convert_tool_result_to_string(&tr.output)?;
-                    extra_entry.insert(
-                        "content".to_string(),
-                        JsonValue::String(extra_text),
-                    );
+                    extra_entry.insert("content".to_string(), JsonValue::String(extra_text));
                     if !msg.name.is_empty() {
-                        extra_entry.insert(
-                            "name".to_string(),
-                            JsonValue::String(msg.name.clone()),
-                        );
+                        extra_entry.insert("name".to_string(), JsonValue::String(msg.name.clone()));
                     }
                     result.push(JsonValue::Object(extra_entry));
                 }
@@ -128,10 +114,7 @@ impl Formatter for DashScopeFormatter {
                                 }
                             })
                             .collect();
-                        entry.insert(
-                            "tool_calls".to_string(),
-                            JsonValue::Array(tc_array),
-                        );
+                        entry.insert("tool_calls".to_string(), JsonValue::Array(tc_array));
 
                         // Check for text blocks. If there are none, set
                         // content=null per OpenAI-compatible API spec.
@@ -145,10 +128,7 @@ impl Formatter for DashScopeFormatter {
                             let content = self.format_content(&msg.content)?;
                             entry.insert("content".to_string(), content);
                         } else {
-                            entry.insert(
-                                "content".to_string(),
-                                JsonValue::Null,
-                            );
+                            entry.insert("content".to_string(), JsonValue::Null);
                         }
                     } else {
                         let content = self.format_content(&msg.content)?;
@@ -389,7 +369,9 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["role"], "assistant");
         // content should be an array with the text part
-        let content_arr = result[0]["content"].as_array().expect("content should be array");
+        let content_arr = result[0]["content"]
+            .as_array()
+            .expect("content should be array");
         assert_eq!(content_arr[0]["type"], "text");
         assert_eq!(content_arr[0]["text"], "Let me calculate");
         // tool_calls array must still be present

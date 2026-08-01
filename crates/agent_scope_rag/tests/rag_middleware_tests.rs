@@ -82,7 +82,7 @@ impl VectorStore for MockVectorStore {
             .write()
             .unwrap()
             .entry(name.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
         Ok(())
     }
 
@@ -118,7 +118,7 @@ impl VectorStore for MockVectorStore {
             .write()
             .unwrap()
             .entry(collection.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .extend(records);
         Ok(())
     }

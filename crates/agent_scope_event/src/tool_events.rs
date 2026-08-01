@@ -38,6 +38,10 @@ pub struct ToolCallEndEvent {
     pub base: EventBase,
     pub reply_id: String,
     pub tool_call_id: String,
+    /// Complete tool input accumulated from all ToolCallDelta events.
+    /// `Some("")` means known empty; `None` means unknown/unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +93,11 @@ pub struct ToolResultEndEvent {
     pub state: ToolResultState,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Complete observable output accumulated from all ToolResultTextDelta events.
+    /// `Some("")` means known empty; `None` means unknown/unavailable.
+    /// Must be `None` for error/interrupted states unless the output is known-complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +129,7 @@ mod tests {
             tool_call_id: "tc-001".into(),
             state: ToolResultState::Success,
             metadata: HashMap::new(),
+            output: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""state":"success""#));

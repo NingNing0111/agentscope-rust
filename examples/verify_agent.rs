@@ -55,17 +55,35 @@ struct TestResult {
 
 impl TestResult {
     fn pass(name: &'static str, detail: impl Into<String>, duration: Instant) -> Self {
-        Self { name, passed: true, detail: detail.into(), duration_ms: duration.elapsed().as_millis() as u64 }
+        Self {
+            name,
+            passed: true,
+            detail: detail.into(),
+            duration_ms: duration.elapsed().as_millis() as u64,
+        }
     }
 
     fn fail(name: &'static str, detail: impl Into<String>, duration: Instant) -> Self {
-        Self { name, passed: false, detail: detail.into(), duration_ms: duration.elapsed().as_millis() as u64 }
+        Self {
+            name,
+            passed: false,
+            detail: detail.into(),
+            duration_ms: duration.elapsed().as_millis() as u64,
+        }
     }
 }
 
 fn print_result(r: &TestResult) {
-    let icon = if r.passed { "\x1b[32m\u{2713}\x1b[0m" } else { "\x1b[31m\u{2717}\x1b[0m" };
-    println!("  {icon} {} ({:.1}s)", r.name, r.duration_ms as f64 / 1000.0);
+    let icon = if r.passed {
+        "\x1b[32m\u{2713}\x1b[0m"
+    } else {
+        "\x1b[31m\u{2717}\x1b[0m"
+    };
+    println!(
+        "  {icon} {} ({:.1}s)",
+        r.name,
+        r.duration_ms as f64 / 1000.0
+    );
     if !r.passed {
         println!("    \x1b[31m{}\x1b[0m", r.detail);
     } else if !r.detail.is_empty() {
@@ -96,8 +114,16 @@ fn calc_evaluate(expr: &str) -> Result<f64, String> {
     let allowed: Vec<char> = expr
         .chars()
         .filter(|c| {
-            c.is_ascii_digit() || *c == '.' || *c == '+' || *c == '-' || *c == '*'
-                || *c == '/' || *c == '(' || *c == ')' || *c == '^' || c.is_whitespace()
+            c.is_ascii_digit()
+                || *c == '.'
+                || *c == '+'
+                || *c == '-'
+                || *c == '*'
+                || *c == '/'
+                || *c == '('
+                || *c == ')'
+                || *c == '^'
+                || c.is_whitespace()
         })
         .collect();
     let filtered: String = allowed.into_iter().collect();
@@ -110,7 +136,16 @@ fn calc_evaluate(expr: &str) -> Result<f64, String> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Token { Num(f64), Plus, Minus, Mul, Div, Pow, LParen, RParen }
+enum Token {
+    Num(f64),
+    Plus,
+    Minus,
+    Mul,
+    Div,
+    Pow,
+    LParen,
+    RParen,
+}
 
 fn tokenize(expr: &str) -> Result<Vec<Token>, String> {
     let mut tokens = Vec::new();
@@ -118,21 +153,48 @@ fn tokenize(expr: &str) -> Result<Vec<Token>, String> {
     let mut i = 0;
     while i < chars.len() {
         match chars[i] {
-            c if c.is_whitespace() => { i += 1; }
+            c if c.is_whitespace() => {
+                i += 1;
+            }
             c if c.is_ascii_digit() || c == '.' => {
                 let start = i;
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') { i += 1; }
+                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                    i += 1;
+                }
                 let num_str: String = chars[start..i].iter().collect();
-                let num = num_str.parse::<f64>().map_err(|e| format!("invalid number '{num_str}': {e}"))?;
+                let num = num_str
+                    .parse::<f64>()
+                    .map_err(|e| format!("invalid number '{num_str}': {e}"))?;
                 tokens.push(Token::Num(num));
             }
-            '+' => { tokens.push(Token::Plus); i += 1; }
-            '-' => { tokens.push(Token::Minus); i += 1; }
-            '*' => { tokens.push(Token::Mul); i += 1; }
-            '/' => { tokens.push(Token::Div); i += 1; }
-            '^' => { tokens.push(Token::Pow); i += 1; }
-            '(' => { tokens.push(Token::LParen); i += 1; }
-            ')' => { tokens.push(Token::RParen); i += 1; }
+            '+' => {
+                tokens.push(Token::Plus);
+                i += 1;
+            }
+            '-' => {
+                tokens.push(Token::Minus);
+                i += 1;
+            }
+            '*' => {
+                tokens.push(Token::Mul);
+                i += 1;
+            }
+            '/' => {
+                tokens.push(Token::Div);
+                i += 1;
+            }
+            '^' => {
+                tokens.push(Token::Pow);
+                i += 1;
+            }
+            '(' => {
+                tokens.push(Token::LParen);
+                i += 1;
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                i += 1;
+            }
             c => return Err(format!("unexpected character '{c}'")),
         }
     }
@@ -143,8 +205,16 @@ fn parse_expr(tokens: &[Token], pos: usize) -> Result<(f64, usize), String> {
     let (mut left, mut pos) = parse_term(tokens, pos)?;
     while pos < tokens.len() {
         match tokens[pos] {
-            Token::Plus => { let (r, np) = parse_term(tokens, pos + 1)?; left += r; pos = np; }
-            Token::Minus => { let (r, np) = parse_term(tokens, pos + 1)?; left -= r; pos = np; }
+            Token::Plus => {
+                let (r, np) = parse_term(tokens, pos + 1)?;
+                left += r;
+                pos = np;
+            }
+            Token::Minus => {
+                let (r, np) = parse_term(tokens, pos + 1)?;
+                left -= r;
+                pos = np;
+            }
             _ => break,
         }
     }
@@ -155,11 +225,18 @@ fn parse_term(tokens: &[Token], pos: usize) -> Result<(f64, usize), String> {
     let (mut left, mut pos) = parse_factor(tokens, pos)?;
     while pos < tokens.len() {
         match tokens[pos] {
-            Token::Mul => { let (r, np) = parse_factor(tokens, pos + 1)?; left *= r; pos = np; }
+            Token::Mul => {
+                let (r, np) = parse_factor(tokens, pos + 1)?;
+                left *= r;
+                pos = np;
+            }
             Token::Div => {
                 let (r, np) = parse_factor(tokens, pos + 1)?;
-                if r == 0.0 { return Err("division by zero".into()); }
-                left /= r; pos = np;
+                if r == 0.0 {
+                    return Err("division by zero".into());
+                }
+                left /= r;
+                pos = np;
             }
             _ => break,
         }
@@ -178,9 +255,14 @@ fn parse_factor(tokens: &[Token], pos: usize) -> Result<(f64, usize), String> {
 }
 
 fn parse_unary(tokens: &[Token], pos: usize) -> Result<(f64, usize), String> {
-    if pos >= tokens.len() { return Err("unexpected end of expression".into()); }
+    if pos >= tokens.len() {
+        return Err("unexpected end of expression".into());
+    }
     match tokens[pos] {
-        Token::Minus => { let (v, np) = parse_unary(tokens, pos + 1)?; Ok((-v, np)) }
+        Token::Minus => {
+            let (v, np) = parse_unary(tokens, pos + 1)?;
+            Ok((-v, np))
+        }
         Token::Plus => parse_unary(tokens, pos + 1),
         Token::Num(n) => Ok((n, pos + 1)),
         Token::LParen => {
@@ -198,7 +280,11 @@ async fn calc_handler(input: CalcInput) -> String {
     match calc_evaluate(&input.expression) {
         Ok(value) => {
             let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
-            format!("Result: {input} = {output}", input = input.expression, output = rounded)
+            format!(
+                "Result: {input} = {output}",
+                input = input.expression,
+                output = rounded
+            )
         }
         Err(e) => format!("Error: {e}"),
     }
@@ -243,7 +329,12 @@ fn build_agent(
     }
 
     let config = builder.build().map_err(|e| format!("config: {e}"))?;
-    Ok(ReActAgent::new(config, ReActConfig::default(), ContextConfig::default(), vec![])?)
+    Ok(ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![],
+    )?)
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +406,9 @@ async fn test_multiturn(api_key: &str, model_name: &str) -> TestResult {
         Err(e) => return TestResult::fail("MultiTurn", format!("msg1: {e:?}"), start),
     };
     match agent.reply(Some(vec![m1])).await {
-        Ok(r) if msg_text(&r).is_empty() => return TestResult::fail("MultiTurn", "turn1 empty", start),
+        Ok(r) if msg_text(&r).is_empty() => {
+            return TestResult::fail("MultiTurn", "turn1 empty", start);
+        }
         Err(e) => return TestResult::fail("MultiTurn", format!("turn1: {e}"), start),
         _ => {}
     }
@@ -365,10 +458,15 @@ async fn test_streaming(api_key: &str, model_name: &str) -> TestResult {
             _ => {}
         }
     }
-    if !started { TestResult::fail("Streaming", "missing ReplyStart", start) }
-    else if !ended { TestResult::fail("Streaming", "missing ReplyEnd", start) }
-    else if !has_text { TestResult::fail("Streaming", "no text deltas", start) }
-    else { TestResult::pass("Streaming", format!("{n} events, all phases OK"), start) }
+    if !started {
+        TestResult::fail("Streaming", "missing ReplyStart", start)
+    } else if !ended {
+        TestResult::fail("Streaming", "missing ReplyEnd", start)
+    } else if !has_text {
+        TestResult::fail("Streaming", "no text deltas", start)
+    } else {
+        TestResult::pass("Streaming", format!("{n} events, all phases OK"), start)
+    }
 }
 
 /// Test 5: Complex multi-step calculation
@@ -383,7 +481,7 @@ async fn test_complex_calc(api_key: &str, model_name: &str) -> TestResult {
     let msg = match user_msg(
         "user",
         "Calculate (3 + 5) * (10 / 2). Use the calculator for EACH step: \
-         first compute 3+5 as one call, then 10/2 as another call."
+         first compute 3+5 as one call, then 10/2 as another call.",
     ) {
         Ok(m) => m,
         Err(e) => return TestResult::fail("ComplexCalc", format!("msg: {e:?}"), start),
@@ -435,6 +533,7 @@ async fn test_observe_reply(api_key: &str, model_name: &str) -> TestResult {
 
 #[tokio::main]
 async fn main() {
+    dotenv::dotenv().ok();
     let cli = Cli::parse();
 
     println!("╔══════════════════════════════════════════════╗");
@@ -460,7 +559,10 @@ async fn main() {
     run!("2. Calculator Tool", test_calculator_tool);
     run!("3. Multi-turn Conversation", test_multiturn);
     run!("4. Streaming Reply", test_streaming);
-    run!("5. Complex Calculation (multi-step tools)", test_complex_calc);
+    run!(
+        "5. Complex Calculation (multi-step tools)",
+        test_complex_calc
+    );
     run!("6. Observe + Reply(None)", test_observe_reply);
 
     println!("\n═══════════════════════════════════════════════");
@@ -469,11 +571,19 @@ async fn main() {
     let total_time: u64 = results.iter().map(|r| r.duration_ms).sum();
 
     if failed == 0 {
-        println!("\x1b[32mALL {passed} TESTS PASSED\x1b[0m ({:.1}s total)", total_time as f64 / 1000.0);
+        println!(
+            "\x1b[32mALL {passed} TESTS PASSED\x1b[0m ({:.1}s total)",
+            total_time as f64 / 1000.0
+        );
     } else {
-        println!("\x1b[31m{passed} passed, {failed} FAILED\x1b[0m ({:.1}s total)", total_time as f64 / 1000.0);
+        println!(
+            "\x1b[31m{passed} passed, {failed} FAILED\x1b[0m ({:.1}s total)",
+            total_time as f64 / 1000.0
+        );
         for r in &results {
-            if !r.passed { println!("  - {}: {}", r.name, r.detail); }
+            if !r.passed {
+                println!("  - {}: {}", r.name, r.detail);
+            }
         }
         std::process::exit(1);
     }

@@ -74,6 +74,7 @@ fn test_full_text_streaming_sequence() {
             base: base.clone(),
             reply_id: "reply-001".into(),
             block_id: "block-001".into(),
+            text: Some("Hello".into()),
         },
     ))
     .unwrap();
@@ -156,6 +157,7 @@ fn test_tool_call_streaming_lifecycle() {
             base,
             reply_id: "reply-001".into(),
             tool_call_id: "tc-001".into(),
+            input: Some("{\"q\":\"test\"}".into()),
         },
     ))
     .unwrap();
@@ -275,6 +277,7 @@ fn test_thinking_block_streaming_sequence() {
             base,
             reply_id: "reply-001".into(),
             block_id: "block-001".into(),
+            thinking: Some("Let me think...".into()),
         },
     ))
     .unwrap();
@@ -451,6 +454,7 @@ fn test_message_with_multiple_content_blocks_mixed() {
             base: base.clone(),
             reply_id: "reply-001".into(),
             block_id: "t-1".into(),
+            text: Some("Thinking...".into()),
         },
     ))
     .unwrap();
@@ -479,6 +483,7 @@ fn test_message_with_multiple_content_blocks_mixed() {
             base,
             reply_id: "reply-001".into(),
             tool_call_id: "tc-1".into(),
+            input: Some(r#"{"expr":"2+2"}"#.into()),
         },
     ))
     .unwrap();

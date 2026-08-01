@@ -53,14 +53,22 @@ struct Cli {
 // Block tracking for structured output
 // ---------------------------------------------------------------------------
 
-/// Track per-block state so we can render start/end markers.
+/// Track per-block state so we can render start/end markers
+/// and accumulate content for the End-event summary.
 #[derive(Default)]
+#[allow(dead_code)]
 struct BlockTracker {
     current_text_id: Option<String>,
     current_thinking_id: Option<String>,
     current_tool_call_id: Option<String>,
     current_tool_result_id: Option<String>,
     current_data_id: Option<String>,
+    /// Accumulated content per block type.
+    text_buf: String,
+    thinking_buf: String,
+    tool_call_buf: String,
+    tool_result_text_buf: String,
+    data_len: usize,
 }
 
 impl BlockTracker {
@@ -87,9 +95,7 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
         AgentEvent::ReplyEnd(e) => {
             let reason = format!("{:?}", e.finished_reason).to_lowercase();
             if let Some(ref err) = e.error {
-                println!(
-                    "\x1b[90m── ReplyEnd ({reason}, error: {err:?}) ──\x1b[0m"
-                );
+                println!("\x1b[90m── ReplyEnd ({reason}, error: {err:?}) ──\x1b[0m");
             } else {
                 println!("\x1b[90m── ReplyEnd ({reason}) ──\x1b[0m");
             }
@@ -112,10 +118,7 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
         AgentEvent::TextBlockStart(e) => {
             tracker.current_text_id = Some(e.block_id.clone());
             println!();
-            println!(
-                "\x1b[36m── TextBlockStart (id={}) ──\x1b[0m",
-                e.block_id
-            );
+            println!("\x1b[36m── TextBlockStart (id={}) ──\x1b[0m", e.block_id);
         }
         AgentEvent::TextBlockDelta(e) => {
             println!(
@@ -124,14 +127,21 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
                 e.delta.len()
             );
             println!("\x1b[36m{}\x1b[0m", e.delta);
+            tracker.text_buf.push_str(&e.delta);
         }
         AgentEvent::TextBlockEnd(e) => {
             println!();
-            println!(
-                "\x1b[36m── TextBlockEnd (id={}) ──\x1b[0m",
-                e.block_id
-            );
+            if let Some(ref text) = e.text {
+                println!("\x1b[36m── TextBlockEnd (id={}) ──\x1b[0m", e.block_id);
+                println!("\x1b[36mFull text:\n{}\x1b[0m", text);
+            } else if !tracker.text_buf.is_empty() {
+                println!("\x1b[36m── TextBlockEnd (id={}) ──\x1b[0m", e.block_id);
+                println!("\x1b[36mFull text (tracker):\n{}\x1b[0m", tracker.text_buf);
+            } else {
+                println!("\x1b[36m── TextBlockEnd (id={}) ──\x1b[0m", e.block_id);
+            }
             tracker.current_text_id = None;
+            tracker.text_buf.clear();
         }
 
         // ── Thinking block ───────────────────────────────────────────
@@ -150,14 +160,24 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
                 e.delta.len()
             );
             println!("\x1b[35;2m{}\x1b[0m", e.delta);
+            tracker.thinking_buf.push_str(&e.delta);
         }
         AgentEvent::ThinkingBlockEnd(e) => {
             println!();
-            println!(
-                "\x1b[35m── ThinkingBlockEnd (id={}) ──\x1b[0m",
-                e.block_id
-            );
+            if let Some(ref thinking) = e.thinking {
+                println!("\x1b[35m── ThinkingBlockEnd (id={}) ──\x1b[0m", e.block_id);
+                println!("\x1b[35;2mFull thinking:\n{}\x1b[0m", thinking);
+            } else if !tracker.thinking_buf.is_empty() {
+                println!("\x1b[35m── ThinkingBlockEnd (id={}) ──\x1b[0m", e.block_id);
+                println!(
+                    "\x1b[35;2mFull thinking (tracker):\n{}\x1b[0m",
+                    tracker.thinking_buf
+                );
+            } else {
+                println!("\x1b[35m── ThinkingBlockEnd (id={}) ──\x1b[0m", e.block_id);
+            }
             tracker.current_thinking_id = None;
+            tracker.thinking_buf.clear();
         }
 
         // ── Tool call block ──────────────────────────────────────────
@@ -176,14 +196,24 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
                 e.delta.len()
             );
             println!("\x1b[33m{}\x1b[0m", e.delta);
+            tracker.tool_call_buf.push_str(&e.delta);
         }
         AgentEvent::ToolCallEnd(e) => {
             println!();
-            println!(
-                "\x1b[33m── ToolCallEnd (id={}) ──\x1b[0m",
-                e.tool_call_id
-            );
+            if let Some(ref input) = e.input {
+                println!("\x1b[33m── ToolCallEnd (id={}) ──\x1b[0m", e.tool_call_id);
+                println!("\x1b[33mFull input:\n{}\x1b[0m", input);
+            } else if !tracker.tool_call_buf.is_empty() {
+                println!("\x1b[33m── ToolCallEnd (id={}) ──\x1b[0m", e.tool_call_id);
+                println!(
+                    "\x1b[33mFull input (tracker):\n{}\x1b[0m",
+                    tracker.tool_call_buf
+                );
+            } else {
+                println!("\x1b[33m── ToolCallEnd (id={}) ──\x1b[0m", e.tool_call_id);
+            }
             tracker.current_tool_call_id = None;
+            tracker.tool_call_buf.clear();
         }
 
         // ── Tool result block ────────────────────────────────────────
@@ -201,6 +231,7 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
                 e.delta.len()
             );
             println!("\x1b[32m{}\x1b[0m", e.delta);
+            tracker.tool_result_text_buf.push_str(&e.delta);
         }
         AgentEvent::ToolResultDataDelta(e) => {
             let len = e.data.as_ref().map_or(0, |s| s.len());
@@ -211,11 +242,30 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
         }
         AgentEvent::ToolResultEnd(e) => {
             println!();
-            println!(
-                "\x1b[32m── ToolResultEnd (id={}) ──\x1b[0m",
-                e.tool_call_id
-            );
+            let state_str = format!("{:?}", e.state).to_lowercase();
+            if let Some(ref output) = e.output {
+                println!(
+                    "\x1b[32m── ToolResultEnd (id={}, state={}) ──\x1b[0m",
+                    e.tool_call_id, state_str
+                );
+                println!("\x1b[32mFull output:\n{}\x1b[0m", output);
+            } else if !tracker.tool_result_text_buf.is_empty() {
+                println!(
+                    "\x1b[32m── ToolResultEnd (id={}, state={}) ──\x1b[0m",
+                    e.tool_call_id, state_str
+                );
+                println!(
+                    "\x1b[32mFull output (tracker):\n{}\x1b[0m",
+                    tracker.tool_result_text_buf
+                );
+            } else {
+                println!(
+                    "\x1b[32m── ToolResultEnd (id={}, state={}) ──\x1b[0m",
+                    e.tool_call_id, state_str
+                );
+            }
             tracker.current_tool_result_id = None;
+            tracker.tool_result_text_buf.clear();
         }
 
         // ── Data block ───────────────────────────────────────────────
@@ -228,6 +278,7 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
         }
         AgentEvent::DataBlockDelta(e) => {
             // Don't flood terminal with raw base64
+            tracker.data_len += e.data.len();
             println!(
                 "\x1b[34m── DataBlockDelta (id={}, data_len={}) ──\x1b[0m",
                 e.block_id,
@@ -237,10 +288,11 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
         AgentEvent::DataBlockEnd(e) => {
             println!();
             println!(
-                "\x1b[34m── DataBlockEnd (id={}) ──\x1b[0m",
-                e.block_id
+                "\x1b[34m── DataBlockEnd (id={}, total_data_len={}) ──\x1b[0m",
+                e.block_id, tracker.data_len
             );
             tracker.current_data_id = None;
+            tracker.data_len = 0;
         }
 
         // ── Hint block ───────────────────────────────────────────────
@@ -261,9 +313,7 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
         }
         AgentEvent::RequireUserConfirm(e) => {
             let count = e.tool_calls.len();
-            println!(
-                "\x1b[33m── RequireUserConfirm (count={count}) ──\x1b[0m"
-            );
+            println!("\x1b[33m── RequireUserConfirm (count={count}) ──\x1b[0m");
         }
         AgentEvent::UserConfirmResult(e) => {
             let approved = e.confirm_results.iter().filter(|r| r.confirmed).count();
@@ -274,15 +324,11 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
         }
         AgentEvent::RequireExternalExecution(e) => {
             let count = e.tool_calls.len();
-            println!(
-                "\x1b[33m── RequireExternalExecution (count={count}) ──\x1b[0m"
-            );
+            println!("\x1b[33m── RequireExternalExecution (count={count}) ──\x1b[0m");
         }
         AgentEvent::ExternalExecutionResult(e) => {
             let count = e.execution_results.len();
-            println!(
-                "\x1b[90m── ExternalExecutionResult (count={count}) ──\x1b[0m"
-            );
+            println!("\x1b[90m── ExternalExecutionResult (count={count}) ──\x1b[0m");
         }
 
         // ── Session events ───────────────────────────────────────────
@@ -339,6 +385,7 @@ fn render_event(event: &AgentEvent, tracker: &mut BlockTracker) {
 
 #[tokio::main]
 async fn main() {
+    dotenv::dotenv().ok();
     let cli = Cli::parse();
 
     // -- Build model with thinking enabled --

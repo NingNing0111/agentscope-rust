@@ -237,7 +237,7 @@ impl KnowledgeBase {
         // Build records
         let records: Vec<VectorRecord> = merged_chunks
             .into_iter()
-            .zip(response.embeddings.into_iter())
+            .zip(response.embeddings)
             .map(|(chunk, vector)| VectorRecord {
                 vector,
                 document_id: doc_id.clone(),

@@ -5,7 +5,8 @@ use agent_scope_event::base::EventBase;
 use agent_scope_event::{
     AgentEvent, CustomEvent, DataBlockStartEvent, ExceedMaxItersEvent, HintBlockEvent,
     ModelCallEndEvent, ReplyEndEvent, ReplyStartEvent, TextBlockDeltaEvent, TextBlockEndEvent,
-    TextBlockStartEvent, ToolCallEndEvent, ToolCallStartEvent, UserInterruptEvent,
+    TextBlockStartEvent, ThinkingBlockEndEvent, ToolCallEndEvent, ToolCallStartEvent,
+    ToolResultEndEvent, UserInterruptEvent,
 };
 use agent_scope_types::ReplyFinishedReason;
 
@@ -116,6 +117,7 @@ fn test_text_block_end_event_serialization() {
         base: make_base(),
         reply_id: "r-1".into(),
         block_id: "block-001".into(),
+        text: None,
     });
 
     let json = serde_json::to_string(&event).unwrap();
@@ -169,6 +171,7 @@ fn test_tool_call_end_event_serialization() {
         base: make_base(),
         reply_id: "r-1".into(),
         tool_call_id: "tc-1".into(),
+        input: None,
     });
 
     let json = serde_json::to_string(&event).unwrap();
@@ -253,4 +256,159 @@ fn test_event_base_embedded_in_all_sample_events() {
         json.contains(&base_id),
         "EventBase id should be embedded as a flat field"
     );
+}
+
+// ── Feature 014: EndEvent complete-content field serde round-trip ─────
+
+#[test]
+fn test_text_block_end_event_content_round_trip() {
+    let event = TextBlockEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        block_id: "b-1".into(),
+        text: Some("Hello world".into()),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains(r#""text":"Hello world""#));
+    let round: TextBlockEndEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(round.text, Some("Hello world".into()));
+}
+
+#[test]
+fn test_text_block_end_event_text_none_omitted() {
+    let event = TextBlockEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        block_id: "b-1".into(),
+        text: None,
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(
+        !json.contains(r#""text""#),
+        "None should be omitted: {json}"
+    );
+    let round: TextBlockEndEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(round.text, None);
+}
+
+#[test]
+fn test_text_block_end_event_text_empty_string() {
+    let event = TextBlockEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        block_id: "b-1".into(),
+        text: Some("".into()),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(
+        json.contains(r#""text":"""#),
+        "Empty string must be serialized"
+    );
+    let round: TextBlockEndEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(round.text, Some("".into()));
+}
+
+#[test]
+fn test_thinking_block_end_event_content_round_trip() {
+    let event = ThinkingBlockEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        block_id: "t-1".into(),
+        thinking: Some("I should calculate first.".into()),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains(r#""thinking":"I should calculate first.""#));
+    let round: ThinkingBlockEndEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(round.thinking, Some("I should calculate first.".into()));
+}
+
+#[test]
+fn test_thinking_block_end_event_thinking_none_omitted() {
+    let event = ThinkingBlockEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        block_id: "t-1".into(),
+        thinking: None,
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(!json.contains(r#""thinking""#));
+    let round: ThinkingBlockEndEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(round.thinking, None);
+}
+
+#[test]
+fn test_tool_call_end_event_input_round_trip() {
+    let event = ToolCallEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        tool_call_id: "tc-1".into(),
+        input: Some(r#"{"expression":"5678 * 345"}"#.into()),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains(r#""input":""#));
+    let round: ToolCallEndEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(round.input, Some(r#"{"expression":"5678 * 345"}"#.into()));
+}
+
+#[test]
+fn test_tool_call_end_event_input_none_omitted() {
+    let event = ToolCallEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        tool_call_id: "tc-1".into(),
+        input: None,
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(!json.contains(r#""input""#));
+    let round: ToolCallEndEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(round.input, None);
+}
+
+#[test]
+fn test_tool_result_end_event_output_round_trip() {
+    // NOTE: ToolResultEndEvent has a pre-existing serde issue where EventBase.metadata
+    // (flattened) conflicts with its own metadata field, causing duplicate key on round-trip.
+    // This test verifies serialization only; the duplicate-metadata fix is tracked separately.
+    let event = ToolResultEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        tool_call_id: "tc-1".into(),
+        state: agent_scope_message::ToolResultState::Success,
+        metadata: std::collections::HashMap::new(),
+        output: Some("1958910".into()),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains(r#""output":"1958910""#));
+    // Verify output is absent when None
+    let event_none = ToolResultEndEvent {
+        base: make_base(),
+        reply_id: "r-1".into(),
+        tool_call_id: "tc-1".into(),
+        state: agent_scope_message::ToolResultState::Error,
+        metadata: std::collections::HashMap::new(),
+        output: None,
+    };
+    let json_none = serde_json::to_string(&event_none).unwrap();
+    assert!(
+        !json_none.contains(r#""output""#),
+        "None output must be omitted"
+    );
+}
+
+#[test]
+fn test_end_event_backward_compat_missing_field() {
+    // Old-style JSON without the new content fields must deserialize
+    let old_json = r#"{"id":"ev-1","timestamp":"2026-01-01T00:00:00Z","type":"TEXT_BLOCK_END","reply_id":"r-1","block_id":"b-1"}"#;
+    let event: TextBlockEndEvent = serde_json::from_str(old_json).unwrap();
+    assert_eq!(event.text, None);
+
+    // Old-style ToolCallEndEvent without input field
+    let old_tc_json = r#"{"id":"ev-2","timestamp":"2026-01-01T00:00:00Z","type":"TOOL_CALL_END","reply_id":"r-1","tool_call_id":"tc-1"}"#;
+    let tc_event: ToolCallEndEvent = serde_json::from_str(old_tc_json).unwrap();
+    assert_eq!(tc_event.input, None);
+
+    // ThinkingBlockEndEvent without thinking field
+    let old_th_json = r#"{"id":"ev-3","timestamp":"2026-01-01T00:00:00Z","type":"THINKING_BLOCK_END","reply_id":"r-1","block_id":"t-1"}"#;
+    let th_event: ThinkingBlockEndEvent = serde_json::from_str(old_th_json).unwrap();
+    assert_eq!(th_event.thinking, None);
 }

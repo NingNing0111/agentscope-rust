@@ -33,8 +33,14 @@ agent_scope_dashscope = { path = "crates/agent_scope_dashscope" }
 agent_scope_tool = { path = "crates/agent_scope_tool" }
 agent_scope_message = { path = "crates/agent_scope_message" }
 agent_scope_event = { path = "crates/agent_scope_event" }
+agent_scope_memory = { path = "crates/agent_scope_memory" }
+agent_scope_state = { path = "crates/agent_scope_state" }
+agent_scope_rag = { path = "crates/agent_scope_rag" }
+agent_scope_embedding = { path = "crates/agent_scope_embedding" }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
+async-trait = "0.1"
+dotenv = "0.15"
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -47,3 +53,19 @@ path = "examples/chat.rs"
 [[example]]
 name = "verify_agent"
 path = "examples/verify_agent.rs"
+
+[[example]]
+name = "memory_test"
+path = "examples/memory_test.rs"
+
+[[example]]
+name = "session_test"
+path = "examples/session_test.rs"
+
+[[example]]
+name = "rag_test"
+path = "examples/rag_test.rs"
+
+[[example]]
+name = "streaming_tool_test"
+path = "examples/streaming_tool_test.rs"

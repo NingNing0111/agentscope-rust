@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use agent_scope_event::{
     AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
     ReplyEndEvent, ReplyStartEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent,
-    ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent,
-    ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent, ToolResultStartEvent,
-    ToolResultTextDeltaEvent, UserInterruptEvent,
+    ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent, ToolCallEndEvent,
+    ToolCallStartEvent, ToolResultEndEvent, ToolResultStartEvent, ToolResultTextDeltaEvent,
+    UserInterruptEvent,
 };
 use agent_scope_message::{
     ContentBlock, Msg, Role, TextBlock, ToolOutput, ToolResultBlock, ToolResultState,
@@ -277,6 +277,7 @@ pub(crate) async fn run_react_loop(
                                         base: base(),
                                         reply_id: ctx.reply_id.into(),
                                         block_id,
+                                        text: Some(tb.text.clone()),
                                     }))
                                     .await;
                                 accumulated_texts.push(tb.text.clone());
@@ -306,6 +307,7 @@ pub(crate) async fn run_react_loop(
                                         base: base(),
                                         reply_id: ctx.reply_id.into(),
                                         block_id,
+                                        thinking: Some(thb.thinking.clone()),
                                     }))
                                     .await;
                             }
@@ -345,11 +347,9 @@ pub(crate) async fn run_react_loop(
                         .iter()
                         .map(|tc| ContentBlock::ToolCall(tc.clone()))
                         .collect();
-                    if let Ok(assistant_msg) = Msg::new(
-                        ctx.agent_name.into(),
-                        tc_blocks,
-                        Role::Assistant,
-                    ) {
+                    if let Ok(assistant_msg) =
+                        Msg::new(ctx.agent_name.into(), tc_blocks, Role::Assistant)
+                    {
                         state_write.context.push(assistant_msg);
                     }
                 }
@@ -382,6 +382,7 @@ pub(crate) async fn run_react_loop(
                             base: base(),
                             reply_id: ctx.reply_id.into(),
                             tool_call_id: tc_mut.id.clone(),
+                            input: Some(tc_mut.input.clone()),
                         }))
                         .await;
 
@@ -391,6 +392,10 @@ pub(crate) async fn run_react_loop(
                             let output_text = match &chunk.output {
                                 ToolOutput::Text(t) => t.clone(),
                                 ToolOutput::Blocks(_) => "[blocks]".into(),
+                            };
+                            let output = match &chunk.output {
+                                ToolOutput::Text(t) => Some(t.clone()),
+                                ToolOutput::Blocks(_) => None,
                             };
 
                             let _ = event_tx
@@ -416,6 +421,7 @@ pub(crate) async fn run_react_loop(
                                     tool_call_id: tc_mut.id.clone(),
                                     state: result_state,
                                     metadata: std::collections::HashMap::new(),
+                                    output,
                                 }))
                                 .await;
 
@@ -456,6 +462,7 @@ pub(crate) async fn run_react_loop(
                                     tool_call_id: tc_mut.id.clone(),
                                     state: ToolResultState::Error,
                                     metadata: std::collections::HashMap::new(),
+                                    output: None,
                                 }))
                                 .await;
 

@@ -108,10 +108,10 @@ impl ApproxTokenChunker {
         for ch in text.chars() {
             if ch.is_whitespace() {
                 // End current word
-                if let Some(count) = current_word.take() {
-                    if count > 0 {
-                        tokens += 1; // 1 word ≈ 1 token
-                    }
+                if let Some(count) = current_word.take()
+                    && count > 0
+                {
+                    tokens += 1; // 1 word ≈ 1 token
                 }
             } else if ch.is_ascii_alphabetic() || ch.is_ascii_digit() {
                 // ASCII word building
@@ -122,20 +122,20 @@ impl ApproxTokenChunker {
             } else {
                 // Non-ASCII (CJK etc.) — approximate as 4 chars ≈ 1 token
                 // Flush any current ASCII word first
-                if let Some(count) = current_word.take() {
-                    if count > 0 {
-                        tokens += 1;
-                    }
+                if let Some(count) = current_word.take()
+                    && count > 0
+                {
+                    tokens += 1;
                 }
                 tokens += 1; // 1 CJK char ≈ 0.25 tokens, round up to at least 1
             }
         }
 
         // Flush last word
-        if let Some(count) = current_word {
-            if count > 0 {
-                tokens += 1;
-            }
+        if let Some(count) = current_word
+            && count > 0
+        {
+            tokens += 1;
         }
 
         // CJK adjustment: count CJK characters and divide by 4
@@ -326,7 +326,7 @@ mod tests {
         let chunker = ApproxTokenChunker::new(100, 20);
         let tokens = chunker.estimate_tokens("hello world test");
         // 3 words ≈ 3 tokens
-        assert!(tokens >= 2 && tokens <= 4);
+        assert!((2..=4).contains(&tokens));
     }
 
     /// Generate `n` words of lorem-ipsum-like text.

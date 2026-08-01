@@ -18,9 +18,9 @@ use std::sync::atomic::Ordering;
 use agent_scope_event::{
     AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
     ReplyEndEvent, TextBlockDeltaEvent, TextBlockEndEvent, TextBlockStartEvent,
-    ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent,
-    ToolCallDeltaEvent, ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent,
-    ToolResultStartEvent, ToolResultTextDeltaEvent, UserInterruptEvent,
+    ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent, ToolCallDeltaEvent,
+    ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent, ToolResultStartEvent,
+    ToolResultTextDeltaEvent, UserInterruptEvent,
 };
 use agent_scope_message::{
     ContentBlock, Msg, Role, TextBlock, ThinkingBlock, ToolCallBlock, ToolOutput, ToolResultBlock,
@@ -468,7 +468,10 @@ async fn consume_stream_progressive(
                                 //   ToolCallStart → ToolCallEnd → ThinkingBlockEnd
                                 if had_thinking {
                                     close_all_thinking_blocks(
-                                        &mut tracker, event_tx, reply_id, base,
+                                        &mut tracker,
+                                        event_tx,
+                                        reply_id,
+                                        base,
                                     )
                                     .await;
                                 }
@@ -506,10 +509,8 @@ async fn consume_stream_progressive(
                             // appear before TextBlockStart.
                             close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
                             if !tracker.thinking_blocks.is_empty() {
-                                close_all_thinking_blocks(
-                                    &mut tracker, event_tx, reply_id, base,
-                                )
-                                .await;
+                                close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base)
+                                    .await;
                             }
 
                             process_text_block_chunk(&mut tracker, tb, event_tx, reply_id, base)
@@ -520,10 +521,8 @@ async fn consume_stream_progressive(
                             // tool_call → thinking (common in DashScope thinking mode),
                             // ToolCallEnd must appear before ThinkingBlockDelta.
                             if !tracker.tool_blocks.is_empty() {
-                                close_active_tool_blocks(
-                                    &mut tracker, event_tx, reply_id, base,
-                                )
-                                .await;
+                                close_active_tool_blocks(&mut tracker, event_tx, reply_id, base)
+                                    .await;
                             }
 
                             process_thinking_block_chunk(
@@ -539,8 +538,7 @@ async fn consume_stream_progressive(
                             // Unknown block type → close all active blocks (transition)
                             close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
                             close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
-                            close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base)
-                                .await;
+                            close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base).await;
                         }
                     }
                 }
@@ -611,11 +609,17 @@ async fn close_all_text_blocks(
     base: fn() -> EventBase,
 ) {
     for block_id in tracker.text_blocks.keys().cloned().collect::<Vec<_>>() {
+        let accumulated = tracker
+            .text_blocks
+            .remove(&block_id)
+            .map(|(_, texts)| texts.concat())
+            .filter(|s| !s.is_empty());
         let _ = event_tx
             .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
                 base: base(),
                 reply_id: reply_id.into(),
-                block_id: block_id.clone(),
+                block_id,
+                text: accumulated,
             }))
             .await;
     }
@@ -635,11 +639,17 @@ async fn close_active_tool_blocks(
     let ids: Vec<String> = tracker.tool_blocks.keys().cloned().collect();
     for id in ids {
         if !tracker.completed_tool_ids.contains(&id) {
+            let input = tracker
+                .tool_blocks
+                .get(&id)
+                .map(|tc| tc.input.clone())
+                .filter(|s| !s.is_empty());
             let _ = event_tx
                 .send(AgentEvent::ToolCallEnd(ToolCallEndEvent {
                     base: base(),
                     reply_id: reply_id.into(),
                     tool_call_id: id.clone(),
+                    input,
                 }))
                 .await;
             tracker.completed_tool_ids.push(id);
@@ -661,7 +671,7 @@ async fn process_text_block_chunk(
     }
     let bid = tb.id.clone();
     match tracker.text_blocks.get_mut(&bid) {
-        Some((already_started, _texts)) => {
+        Some((already_started, texts)) => {
             // Subsequent chunk — emit only Delta
             let _ = event_tx
                 .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
@@ -673,6 +683,7 @@ async fn process_text_block_chunk(
                 .await;
             // Mark start emitted if it wasn't already
             *already_started = true;
+            texts.push(tb.text.clone());
         }
         None => {
             // First chunk for this block_id — emit Start + Delta
@@ -691,7 +702,9 @@ async fn process_text_block_chunk(
                     delta: tb.text.clone(),
                 }))
                 .await;
-            tracker.text_blocks.insert(bid, (true, vec![]));
+            tracker
+                .text_blocks
+                .insert(bid, (true, vec![tb.text.clone()]));
         }
     }
 }
@@ -704,11 +717,17 @@ async fn close_all_thinking_blocks(
     base: fn() -> EventBase,
 ) {
     for block_id in tracker.thinking_blocks.keys().cloned().collect::<Vec<_>>() {
+        let accumulated = tracker
+            .thinking_blocks
+            .remove(&block_id)
+            .map(|(_, texts)| texts.concat())
+            .filter(|s| !s.is_empty());
         let _ = event_tx
             .send(AgentEvent::ThinkingBlockEnd(ThinkingBlockEndEvent {
                 base: base(),
                 reply_id: reply_id.into(),
-                block_id: block_id.clone(),
+                block_id,
+                thinking: accumulated,
             }))
             .await;
     }
@@ -729,7 +748,7 @@ async fn process_thinking_block_chunk(
     }
     let bid = thb.id.clone();
     match tracker.thinking_blocks.get_mut(&bid) {
-        Some((already_started, _texts)) => {
+        Some((already_started, texts)) => {
             // Subsequent chunk — emit only Delta
             let _ = event_tx
                 .send(AgentEvent::ThinkingBlockDelta(ThinkingBlockDeltaEvent {
@@ -740,6 +759,7 @@ async fn process_thinking_block_chunk(
                 }))
                 .await;
             *already_started = true;
+            texts.push(thb.thinking.clone());
         }
         None => {
             // First chunk for this block_id — emit Start + Delta
@@ -758,7 +778,9 @@ async fn process_thinking_block_chunk(
                     delta: thb.thinking.clone(),
                 }))
                 .await;
-            tracker.thinking_blocks.insert(bid, (true, vec![]));
+            tracker
+                .thinking_blocks
+                .insert(bid, (true, vec![thb.thinking.clone()]));
         }
     }
 }
@@ -820,6 +842,7 @@ async fn process_response_and_continue(
                     base: base(),
                     reply_id: reply_id.into(),
                     tool_call_id: tc.id.clone(),
+                    input: Some(tc.input.clone()),
                 }))
                 .await;
         }
@@ -936,11 +959,7 @@ fn add_tool_calls_to_context(inner: &Arc<AgentInner>, tool_calls: &[ToolCallBloc
         .iter()
         .map(|tc| ContentBlock::ToolCall(tc.clone()))
         .collect();
-    if let Ok(msg) = Msg::new(
-        inner.config.name.clone(),
-        tc_blocks,
-        Role::Assistant,
-    ) {
+    if let Ok(msg) = Msg::new(inner.config.name.clone(), tc_blocks, Role::Assistant) {
         inner.state.write().unwrap().context.push(msg);
     }
 }
@@ -1161,6 +1180,7 @@ async fn emit_text_events_only(
                         base: base(),
                         reply_id: rid.into(),
                         block_id: bid,
+                        text: Some(tb.text.clone()),
                     }))
                     .await;
             }
@@ -1189,6 +1209,7 @@ async fn emit_text_events_only(
                         base: base(),
                         reply_id: rid.into(),
                         block_id: bid,
+                        thinking: Some(thb.thinking.clone()),
                     }))
                     .await;
             }
@@ -1222,6 +1243,12 @@ async fn emit_tool_result_and_collect(
                 ToolOutput::Text(t) => t.clone(),
                 ToolOutput::Blocks(_) => "[blocks]".into(),
             };
+            let output = match &chunk.output {
+                ToolOutput::Text(t) => Some(t.clone()),
+                // [blocks] output is a placeholder; omit complete output to avoid
+                // misleading consumers (research Decision 5).
+                ToolOutput::Blocks(_) => None,
+            };
 
             let _ = tx
                 .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
@@ -1246,6 +1273,7 @@ async fn emit_tool_result_and_collect(
                     tool_call_id: tc.id.clone(),
                     state: st,
                     metadata: std::collections::HashMap::new(),
+                    output,
                 }))
                 .await;
 
@@ -1275,6 +1303,7 @@ async fn emit_tool_result_and_collect(
                             tool_call_id: tc.id.clone(),
                             state: ToolResultState::Interrupted,
                             metadata: std::collections::HashMap::new(),
+                            output: None,
                         }))
                         .await;
                     return collected;
@@ -1317,6 +1346,7 @@ async fn emit_tool_result_and_collect(
                     tool_call_id: tc.id.clone(),
                     state: final_state,
                     metadata: std::collections::HashMap::new(),
+                    output: Some(collected.clone()),
                 }))
                 .await;
 
@@ -1338,6 +1368,7 @@ async fn emit_tool_result_and_collect(
                     tool_call_id: tc.id.clone(),
                     state: ToolResultState::Error,
                     metadata: std::collections::HashMap::new(),
+                    output: None,
                 }))
                 .await;
             format!("Error: {e}")

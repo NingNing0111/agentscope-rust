@@ -127,6 +127,7 @@ fn test_full_cross_crate_event_to_msg_pipeline() {
         base: base.clone(),
         reply_id: "reply-full".into(),
         block_id: "b-1".into(),
+        text: Some("Hello from event crate!".into()),
     }))
     .unwrap();
 

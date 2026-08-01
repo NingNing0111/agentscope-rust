@@ -1,4 +1,5 @@
 //! Shared builder helpers for AgentScope examples.
+#![allow(dead_code, clippy::type_complexity)]
 //!
 //! Provides factory functions to create a DashScope-backed chat model, a
 //! calculator tool, and a fully configured ReActAgent — keeping each example
@@ -6,11 +7,21 @@
 
 use std::sync::Arc;
 
-use agent_scope_agent::{AgentConfig, ContextConfig, ReActAgent, ReActConfig};
-use agent_scope_dashscope::DashScopeChatModel;
+use agent_scope_agent::{AgentConfig, ContextConfig, MemoryMiddleware, ReActAgent, ReActConfig};
+use agent_scope_dashscope::{DashScopeChatModel, DashScopeEmbeddingModel};
+use agent_scope_embedding::EmbeddingModelCard;
+use agent_scope_memory::{FileMemory, MemoryConfig};
+use agent_scope_rag::{
+    knowledge_base::KnowledgeBase,
+    rag_middleware::{RAGMiddleware, RAGMode},
+    vector_store::{DocumentSummary, VectorRecord, VectorSearchResult, VectorStore},
+};
+use agent_scope_state::{InMemorySessionStore, Session, SessionError, SessionImpl, SessionStore};
 use agent_scope_tool::{FunctionTool, ToolKit};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 // ---------------------------------------------------------------------------
 // Model creation
@@ -343,4 +354,429 @@ pub fn build_agent(
         ContextConfig::default(),
         vec![],
     )?)
+}
+
+// ---------------------------------------------------------------------------
+// Memory agent factory (T001)
+// ---------------------------------------------------------------------------
+
+/// Create a ReActAgent configured with MemoryMiddleware backed by FileMemory.
+///
+/// * `api_key` — DashScope API key.
+/// * `model_name` — model id, e.g. `"qwen-plus"`.
+/// * `workdir` — temporary directory path for memory storage.
+pub fn create_memory_agent(
+    api_key: &str,
+    model_name: &str,
+    workdir: &str,
+) -> Result<ReActAgent, Box<dyn std::error::Error>> {
+    let model = create_model(api_key, model_name);
+
+    // Build FileMemory with default config
+    let memory_config = MemoryConfig {
+        memory_dir: "memory_data".into(),
+        ..Default::default()
+    };
+    let memory: Arc<dyn agent_scope_memory::Memory> =
+        Arc::new(FileMemory::new(workdir, memory_config.clone(), None));
+
+    // Wrap in MemoryMiddleware
+    let middleware = Arc::new(MemoryMiddleware::new(memory, memory_config));
+
+    let system_prompt = concat!(
+        "You are a helpful AI assistant with access to long-term memory. ",
+        "Use the MEMORY.md index in your system prompt to personalize responses. ",
+        "When the user shares a preference or fact, acknowledge it and remember it for future use."
+    );
+
+    let builder = AgentConfig::builder()
+        .name("memory_agent")
+        .system_prompt(system_prompt)
+        .model(model);
+
+    let config = builder
+        .build()
+        .map_err(|e| format!("agent config error: {e}"))?;
+
+    Ok(ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![middleware],
+    )?)
+}
+
+// ---------------------------------------------------------------------------
+// Session helpers (T002)
+// ---------------------------------------------------------------------------
+
+/// Create a new InMemorySessionStore.
+pub fn create_session_store() -> Arc<InMemorySessionStore> {
+    Arc::new(InMemorySessionStore::new())
+}
+
+/// Thin wrapper for session test operations with error handling.
+pub struct SessionTestHarness {
+    pub store: Arc<InMemorySessionStore>,
+    pub session: Option<SessionImpl>,
+}
+
+impl SessionTestHarness {
+    pub fn new(store: Arc<InMemorySessionStore>) -> Self {
+        Self {
+            store,
+            session: None,
+        }
+    }
+
+    /// Create a new session with the given ID.
+    pub fn create_session(&mut self, session_id: &str) -> Result<(), SessionError> {
+        let session = SessionImpl::with_session_id(session_id.to_string());
+        self.session = Some(session);
+        Ok(())
+    }
+
+    /// Save the current session to the store.
+    pub async fn save_session(&self) -> Result<(), SessionError> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| SessionError::NotFound {
+                session_id: "no session".into(),
+            })?;
+        self.store.save(session).await
+    }
+
+    /// Load a session from the store by ID.
+    pub async fn load_session(&mut self, id: &str) -> Result<(), SessionError> {
+        let session = self.store.load(id).await?;
+        self.session = Some(session);
+        Ok(())
+    }
+
+    /// Close the current session.
+    pub async fn close_session(&mut self) -> Result<(), SessionError> {
+        if let Some(ref mut session) = self.session {
+            session.close().await
+        } else {
+            Err(SessionError::NotFound {
+                session_id: "no session".into(),
+            })
+        }
+    }
+
+    /// Delete a session from the store by ID.
+    pub async fn delete_session(&self, id: &str) -> Result<(), SessionError> {
+        self.store.delete(id).await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// In-memory MockVectorStore (for RAG example, T016)
+// ---------------------------------------------------------------------------
+
+/// In-memory mock VectorStore for example/testing purposes.
+///
+/// Implements the [`VectorStore`] trait with HashMap-backed storage
+/// and cosine similarity search.
+pub struct MockVectorStore {
+    collections: RwLock<HashMap<String, (u32, Vec<VectorRecord>)>>,
+}
+
+impl MockVectorStore {
+    pub fn new() -> Self {
+        Self {
+            collections: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a > 0.0 && norm_b > 0.0 {
+        dot / (norm_a * norm_b)
+    } else {
+        0.0
+    }
+}
+
+#[async_trait::async_trait]
+impl VectorStore for MockVectorStore {
+    async fn has_collection(
+        &self,
+        name: &str,
+    ) -> Result<bool, agent_scope_rag::error::VectorStoreError> {
+        let guard = self.collections.read().map_err(|e| {
+            agent_scope_rag::error::VectorStoreError::BackendError(format!("lock error: {e}"))
+        })?;
+        Ok(guard.contains_key(name))
+    }
+
+    async fn create_collection(
+        &self,
+        name: &str,
+        dimensions: u32,
+    ) -> Result<(), agent_scope_rag::error::VectorStoreError> {
+        let mut guard = self.collections.write().map_err(|e| {
+            agent_scope_rag::error::VectorStoreError::BackendError(format!("lock error: {e}"))
+        })?;
+        if let Some((existing_dim, _)) = guard.get(name) {
+            if *existing_dim != dimensions {
+                return Err(
+                    agent_scope_rag::error::VectorStoreError::DimensionMismatch {
+                        expected: *existing_dim,
+                        got: dimensions as usize,
+                    },
+                );
+            }
+            return Ok(());
+        }
+        guard.insert(name.to_string(), (dimensions, vec![]));
+        Ok(())
+    }
+
+    async fn search(
+        &self,
+        collection: &str,
+        query_vector: Vec<f32>,
+        top_k: usize,
+        metadata_filter: Option<HashMap<String, String>>,
+    ) -> Result<Vec<VectorSearchResult>, agent_scope_rag::error::VectorStoreError> {
+        let guard = self.collections.read().map_err(|e| {
+            agent_scope_rag::error::VectorStoreError::BackendError(format!("lock error: {e}"))
+        })?;
+        let (_dim, records) = guard.get(collection).ok_or_else(|| {
+            agent_scope_rag::error::VectorStoreError::CollectionNotFound(collection.to_string())
+        })?;
+
+        let mut scored: Vec<(f32, &VectorRecord)> = records
+            .iter()
+            .filter(|r| {
+                if let Some(ref filter) = metadata_filter {
+                    filter
+                        .iter()
+                        .all(|(k, v)| r.chunk.metadata.get(k) == Some(v))
+                } else {
+                    true
+                }
+            })
+            .map(|r| {
+                let sim = cosine_sim(&query_vector, &r.vector);
+                (sim, r)
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        if top_k > 0 && top_k < scored.len() {
+            scored.truncate(top_k);
+        }
+
+        Ok(scored
+            .into_iter()
+            .map(|(score, record)| VectorSearchResult {
+                score,
+                document_id: record.document_id.clone(),
+                chunk: record.chunk.clone(),
+            })
+            .collect())
+    }
+
+    async fn insert(
+        &self,
+        collection: &str,
+        records: Vec<VectorRecord>,
+    ) -> Result<(), agent_scope_rag::error::VectorStoreError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut guard = self.collections.write().map_err(|e| {
+            agent_scope_rag::error::VectorStoreError::BackendError(format!("lock error: {e}"))
+        })?;
+        let (_dim, existing) = guard.get_mut(collection).ok_or_else(|| {
+            agent_scope_rag::error::VectorStoreError::CollectionNotFound(collection.to_string())
+        })?;
+        existing.extend(records);
+        Ok(())
+    }
+
+    async fn delete(
+        &self,
+        collection: &str,
+        document_id: &str,
+    ) -> Result<(), agent_scope_rag::error::VectorStoreError> {
+        let mut guard = self.collections.write().map_err(|e| {
+            agent_scope_rag::error::VectorStoreError::BackendError(format!("lock error: {e}"))
+        })?;
+        if let Some((_dim, records)) = guard.get_mut(collection) {
+            records.retain(|r| r.document_id != document_id);
+        }
+        Ok(())
+    }
+
+    async fn list_documents(
+        &self,
+        collection: &str,
+        metadata_filter: Option<HashMap<String, String>>,
+    ) -> Result<Vec<DocumentSummary>, agent_scope_rag::error::VectorStoreError> {
+        let guard = self.collections.read().map_err(|e| {
+            agent_scope_rag::error::VectorStoreError::BackendError(format!("lock error: {e}"))
+        })?;
+        let (_dim, records) = guard.get(collection).ok_or_else(|| {
+            agent_scope_rag::error::VectorStoreError::CollectionNotFound(collection.to_string())
+        })?;
+
+        let mut summaries: HashMap<String, DocumentSummary> = HashMap::new();
+        for record in records {
+            if let Some(ref filter) = metadata_filter {
+                let matches = filter
+                    .iter()
+                    .all(|(k, v)| record.chunk.metadata.get(k) == Some(v));
+                if !matches {
+                    continue;
+                }
+            }
+            let entry = summaries
+                .entry(record.document_id.clone())
+                .or_insert_with(|| DocumentSummary {
+                    document_id: record.document_id.clone(),
+                    source: record.chunk.source.clone(),
+                    chunk_count: 0,
+                    metadata: record.chunk.metadata.clone(),
+                });
+            entry.chunk_count += 1;
+        }
+        Ok(summaries.into_values().collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RAG agent factory (T003)
+// ---------------------------------------------------------------------------
+
+/// Create a ReActAgent configured with RAGMiddleware backed by a mock
+/// vector store and DashScope embedding model.
+///
+/// * `api_key` — DashScope API key.
+/// * `model_name` — chat model id, e.g. `"qwen-plus"`.
+/// * `embedding_model_name` — embedding model name, e.g. `"text-embedding-v3"`.
+/// * `embedding_dims` — embedding dimensions, e.g. `1536`.
+pub fn create_rag_agent(
+    api_key: &str,
+    model_name: &str,
+    embedding_model_name: &str,
+    embedding_dims: u32,
+) -> Result<(ReActAgent, Arc<KnowledgeBase>, Arc<MockVectorStore>), Box<dyn std::error::Error>> {
+    let model = create_model(api_key, model_name);
+
+    // Build embedding model
+    let card = EmbeddingModelCard::new(embedding_model_name, embedding_dims, false);
+    let embedding_model: Arc<dyn agent_scope_embedding::EmbeddingModel> =
+        Arc::new(DashScopeEmbeddingModel::new(api_key.to_string(), card));
+
+    // Build in-memory vector store
+    let vector_store: Arc<MockVectorStore> = Arc::new(MockVectorStore::new());
+    let vs_for_kb: Arc<dyn VectorStore> = vector_store.clone() as Arc<dyn VectorStore>;
+
+    // Build KnowledgeBase
+    let kb = Arc::new(KnowledgeBase::new(
+        "test_kb".into(),
+        "Test knowledge base for integration testing".into(),
+        embedding_model,
+        vs_for_kb,
+        "test_collection".into(),
+        None,
+    ));
+
+    // Build RAGMiddleware in Static mode
+    let rag_middleware = RAGMiddleware::new(vec![Arc::clone(&kb)], RAGMode::Static, 3, None);
+
+    let system_prompt = concat!(
+        "You are a helpful AI assistant with access to a knowledge base. ",
+        "Use the injected knowledge to answer questions accurately. ",
+        "If no knowledge is provided, respond based on your general knowledge."
+    );
+
+    let builder = AgentConfig::builder()
+        .name("rag_agent")
+        .system_prompt(system_prompt)
+        .model(model);
+
+    let config = builder
+        .build()
+        .map_err(|e| format!("agent config error: {e}"))?;
+
+    let agent = ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![Arc::new(rag_middleware)],
+    )?;
+
+    Ok((agent, kb, vector_store))
+}
+
+// ---------------------------------------------------------------------------
+// TestResult and output utilities (T004)
+// ---------------------------------------------------------------------------
+
+/// Standardized result for a single test scenario.
+#[derive(Debug, Clone)]
+pub struct TestResult {
+    pub name: &'static str,
+    pub passed: bool,
+    pub detail: String,
+    pub duration_ms: u64,
+}
+
+/// Print a single test result line.
+pub fn print_result(result: &TestResult) {
+    let icon = if result.passed {
+        "\x1b[32m✓\x1b[0m"
+    } else {
+        "\x1b[31m✗\x1b[0m"
+    };
+    let duration_s = result.duration_ms as f64 / 1000.0;
+    println!("  {icon} {} ({duration_s:.1}s)", result.name,);
+    if !result.detail.is_empty() {
+        println!("    {}", result.detail);
+    }
+}
+
+/// Print a section header for a test.
+pub fn print_test_header(n: usize, name: &str) {
+    println!("── {}. {} ──", n, name);
+}
+
+/// Print a summary of all test results.
+pub fn print_summary(results: &[TestResult], total_start: std::time::Instant) {
+    let total_ms = total_start.elapsed().as_millis() as u64;
+    let passed = results.iter().filter(|r| r.passed).count();
+    let failed = results.len() - passed;
+    println!();
+    if failed == 0 {
+        println!(
+            "\x1b[32mALL {} TESTS PASSED\x1b[0m ({:.1}s total)",
+            results.len(),
+            total_ms as f64 / 1000.0,
+        );
+    } else {
+        println!(
+            "\x1b[31m{} passed, {} FAILED\x1b[0m ({:.1}s total)",
+            passed,
+            failed,
+            total_ms as f64 / 1000.0,
+        );
+    }
+}
+
+/// Print an example header banner.
+pub fn print_banner(name: &str, model: &str) {
+    println!("╔══════════════════════════════════════════════╗");
+    println!("║   AgentScope {} Test       ║", name);
+    println!("║   Model: {:<36}║", model);
+    println!("╚══════════════════════════════════════════════╝");
+    println!();
 }

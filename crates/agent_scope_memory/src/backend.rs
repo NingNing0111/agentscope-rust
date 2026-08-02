@@ -1,3 +1,6 @@
+//! Storage backend abstraction — defines the [`Backend`] trait for pluggable filesystem
+//! operations and provides a built-in [`LocalBackend`] implementation.
+
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 

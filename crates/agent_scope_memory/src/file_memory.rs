@@ -1,3 +1,6 @@
+//! File-based [`Memory`] implementation — stores each memory entry as a Markdown file
+//! with YAML frontmatter in a configurable directory, backed by [`crate::Backend`].
+
 use std::sync::Arc;
 
 use regex::Regex;

@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent_error::AgentError;
 use crate::config::{ContextConfig, ReActConfig};
-use crate::context_compression::compress_context;
+use crate::context_compression::{compress_context, truncate_context};
 use crate::middleware::Middleware;
 use crate::permission::{PermissionBehavior, PermissionEngine};
 
@@ -142,14 +142,22 @@ pub(crate) async fn run_react_loop(
         let tool_schemas = ctx.toolkit.as_ref().map(|tk| tk.get_tool_schemas());
 
         // Context compression check — mirrors Python `_compress_memory_if_needed()`
-        if ctx.context_config.enable {
-            let token_count = ctx
-                .model
-                .count_tokens(&hook_messages, tool_schemas.as_deref());
-            let context_size = ctx.model.context_size();
-            let trigger = (context_size as f64 * ctx.context_config.trigger_ratio) as usize;
-            if token_count > trigger {
-                compress_context(ctx.model, ctx.state, ctx.context_config, ctx.session_id).await?;
+        let token_count = ctx
+            .model
+            .count_tokens(&hook_messages, tool_schemas.as_deref());
+        let context_size = ctx.model.context_size();
+        let trigger = (context_size as f64 * ctx.context_config.trigger_ratio) as usize;
+        if ctx.context_config.enable && token_count > trigger {
+            let result =
+                compress_context(ctx.model, ctx.state, ctx.context_config, ctx.session_id).await;
+            if let Err(e) = result {
+                tracing::warn!(
+                    error = %e,
+                    "Context compression failed, falling back to truncation"
+                );
+                let mut state_write = ctx.state.write().unwrap();
+                let max_messages = (state_write.context.len() / 2).max(10);
+                truncate_context(&mut state_write, ctx.context_config, max_messages);
             }
         }
 

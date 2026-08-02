@@ -1,3 +1,6 @@
+//! Core [`Memory`] trait — the unified interface for long-term memory backends,
+//! covering write, read, delete, list, search, index access, and model-based relevant-memory retrieval.
+
 use std::sync::Arc;
 
 use agent_scope_model::ChatModel;

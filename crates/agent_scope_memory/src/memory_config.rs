@@ -1,3 +1,6 @@
+//! Configuration types for the memory system — [`MemoryConfig`] with directory paths,
+//! token limits, retrieval settings, and customizable instruction prompts.
+
 use crate::MemoryError;
 
 pub const DEFAULT_MEMORY_INSTRUCTIONS: &str = r#"You have access to long-term memory. Use MEMORY.md as an index of saved facts and preferences. When information is relevant, use it to personalize and improve your response. If the index is empty, continue normally and do not mention it unless asked."#;

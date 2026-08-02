@@ -88,8 +88,8 @@ pub(crate) async fn compress_context(
 /// Fallback truncation: keep last N messages fitting within reserve_ratio.
 ///
 /// Corresponds to Python AgentScope's context truncation path.
-/// **TODO:** Wire into `react_loop.rs` as fallback when compression fails.
-#[allow(dead_code)]
+/// Used as fallback inside `compress_context` when token-count-based compression
+/// cannot reduce context enough.
 pub(crate) fn truncate_context(
     state: &mut AgentState,
     _config: &ContextConfig,

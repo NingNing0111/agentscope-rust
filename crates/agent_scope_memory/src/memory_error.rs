@@ -1,3 +1,6 @@
+//! Error types for the memory system — [`MemoryError`] covers I/O, parsing, validation,
+//! indexing, retrieval, and semantic-index failures.
+
 use std::fmt;
 
 #[derive(Debug)]

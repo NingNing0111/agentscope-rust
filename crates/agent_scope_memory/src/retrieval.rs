@@ -1,3 +1,6 @@
+//! Model-based relevant memory selection — [`MemorySelection`] uses a [`ChatModel`] with
+//! structured output to choose which memory files are relevant to a user query.
+
 use std::sync::Arc;
 
 use agent_scope_message::{Msg, factory::user_msg};

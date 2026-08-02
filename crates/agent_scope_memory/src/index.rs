@@ -1,3 +1,6 @@
+//! `MEMORY.md` index file management — read, write, append, remove lines, and truncate
+//! the memory index to stay within a configurable token budget.
+
 use std::sync::Arc;
 
 use agent_scope_message::{ContentBlock, Msg, TextBlock};

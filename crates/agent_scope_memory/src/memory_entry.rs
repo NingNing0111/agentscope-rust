@@ -1,3 +1,6 @@
+//! Core memory data models — [`MemoryEntry`], [`MemoryMetadata`], [`MemoryType`],
+//! and [`MemoryFileHeader`] types used across the memory system.
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 

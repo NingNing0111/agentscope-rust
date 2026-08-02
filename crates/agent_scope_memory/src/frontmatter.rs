@@ -1,3 +1,6 @@
+//! YAML frontmatter parser and serializer for memory Markdown files.
+//! Handles the `---` delimited metadata block at the top of each `.md` memory file.
+
 use std::collections::HashMap;
 
 use regex::Regex;

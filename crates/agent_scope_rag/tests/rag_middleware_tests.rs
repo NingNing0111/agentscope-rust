@@ -401,7 +401,11 @@ impl ChatModel for MockChatModel {
         _tools: Option<&[JsonValue]>,
         _tool_choice: Option<&ToolChoice>,
     ) -> Result<ModelCallResult, ModelError> {
-        unimplemented!()
+        Err(ModelError::ApiError {
+            status: 500,
+            message: "call_api not configured for this mock".into(),
+            provider: "mock".into(),
+        })
     }
 }
 

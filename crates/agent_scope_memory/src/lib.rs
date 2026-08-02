@@ -11,6 +11,7 @@ pub mod memory_entry;
 pub mod memory_error;
 pub mod memory_trait;
 pub mod retrieval;
+pub mod turbovec_memory;
 
 pub use backend::{Backend, LocalBackend};
 pub use file_memory::FileMemory;
@@ -23,3 +24,7 @@ pub use memory_entry::{MemoryEntry, MemoryFileHeader, MemoryMetadata, MemoryType
 pub use memory_error::MemoryError;
 pub use memory_trait::Memory;
 pub use retrieval::MemorySelection;
+pub use turbovec_memory::{
+    MemoryRebuildReport, MemorySearchResult, MemoryVectorHit, MemoryVectorIndex,
+    MemoryVectorRecord, TurbovecMemory, TurbovecMemoryConfig, VectorIndexStatus,
+};

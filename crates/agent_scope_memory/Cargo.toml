@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agent_scope_embedding = { path = "../agent_scope_embedding" }
 agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_model = { path = "../agent_scope_model" }
 

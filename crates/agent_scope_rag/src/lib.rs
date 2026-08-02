@@ -9,5 +9,6 @@ pub mod error;
 pub mod knowledge_base;
 pub mod parser;
 pub mod rag_middleware;
+pub mod turbovec_memory_adapter;
 pub mod turbovec_store;
 pub mod vector_store;

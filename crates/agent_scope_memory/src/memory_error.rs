@@ -8,6 +8,7 @@ pub enum MemoryError {
     NotFound { name: String },
     IndexError { message: String },
     RetrievalError { reason: String },
+    SemanticIndexError { reason: String },
 }
 
 impl fmt::Display for MemoryError {
@@ -23,6 +24,9 @@ impl fmt::Display for MemoryError {
             Self::NotFound { name } => write!(f, "Memory '{name}' was not found"),
             Self::IndexError { message } => write!(f, "Memory index error: {message}"),
             Self::RetrievalError { reason } => write!(f, "Memory retrieval error: {reason}"),
+            Self::SemanticIndexError { reason } => {
+                write!(f, "Semantic index error: {reason}")
+            }
         }
     }
 }

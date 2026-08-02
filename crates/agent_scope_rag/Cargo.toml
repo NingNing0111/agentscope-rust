@@ -11,6 +11,7 @@ agent_scope_types = { path = "../agent_scope_types" }
 agent_scope_embedding = { path = "../agent_scope_embedding" }
 agent_scope_model = { path = "../agent_scope_model" }
 agent_scope_agent = { path = "../agent_scope_agent" }
+agent_scope_memory = { path = "../agent_scope_memory" }
 agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_tool = { path = "../agent_scope_tool" }
 serde.workspace = true

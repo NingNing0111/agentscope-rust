@@ -137,6 +137,12 @@ Before executing a tool, the Agent uses `PermissionEngine` to check `PermissionC
 
 Rule priority is: `deny` → `ask` → `allow` → mode default. Rules support exact matching, `*` wildcard matching, and `prefix*` prefix matching; `rule_content` can match substrings inside serialized tool input.
 
+### 2.8 SubAgent collaboration
+
+`agent_scope_agent` exposes an in-process SubAgent collaboration layer for bounded parent-to-collaborator tasks. A parent creates a `SubAgentRegistry`, registers named `SubAgent` values or validates reusable `SubAgentTemplate` blueprints, and sends an explicit `DelegationRequest` to `delegate_once()` or `delegate_many()`.
+
+Successful results are returned as `CollaborationResult` with `CollaborationStatus::Succeeded` and a result `Msg` whose `name` remains the SubAgent speaker identity. `ContextSharingPolicy` defaults to least privilege, and `CapabilityScope` gates tools, memory, session, workspace, sandbox, model access, and side effects. Deferred Python app-service/message-bus/distributed patterns return `SubAgentErrorCategory::UnsupportedFeature` rather than silent success.
+
 ## 3. Quick Example (Quick Example)
 
 This is the standard construction path from the repository examples: create a model, optionally register tools, then construct a `ReActAgent`.
@@ -450,3 +456,29 @@ The Agent module is designed to “orchestrate without coupling”: model provid
 - [Tool System](./tool.md) — `FunctionTool` / `ToolKit` / tool-call lifecycle
 - [Event & Streaming](./event-streaming.md) — `AgentEvent` and real-time UI rendering
 - [Memory and Session Management](../getting-started.md#5-understand-the-code-in-ten-minutes) — extend Agent through `MemoryMiddleware`, `AgentState`, and session stores
+
+
+## Planner + ReActAgent orchestration
+
+The `agent_scope_agent` crate also exposes an additive `Planner` wrapper for deterministic multi-step work on top of any `Agent` implementation, including `ReActAgent`. A planner has two collaborators: a planning `ChatModel` that returns a JSON plan, and an execution agent that handles each step through the existing reply/tool/middleware behavior.
+
+Basic usage:
+
+```rust
+use std::sync::Arc;
+use agent_scope_agent::{Planner, PlannerConfig};
+
+let planner = Planner::new(
+    Arc::new(agent),          // ReAct-capable execution agent
+    Arc::new(planner_model),  // model that emits {"objective":"...","steps":[...]}
+    PlannerConfig::default(),
+)?;
+let result = planner.run("prepare a release summary").await?;
+```
+
+Planner execution records `PlanningStarted`, `PlanningCompleted`, step lifecycle events, optional replanning events, and a terminal task outcome in `PlanningTrace`. `run_stream` exposes the same lifecycle as `AgentEvent::Custom` events named `planner.lifecycle`, so existing consumers do not need new event variants.
+
+Recoverable step failures trigger explicit replanning until `PlannerConfig::max_replans` is reached. Failed/skipped/replaced work is preserved through `PlanRevision` records and the final plan version. Terminal outcomes include `Completed`, `PartiallyCompleted`, `Cancelled`, `Failed`, and `Unsupported`.
+
+Unsupported scope is explicit: Feature 021 does not silently emulate Python-only distributed scheduling, parallel DAG execution, durable queues, or remote worker orchestration. Use `unsupported_capability` or inspect the compatibility matrix when an application needs those capabilities.
+

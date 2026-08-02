@@ -108,5 +108,47 @@
       "description": "string",
       "type": "string"
     }
+  ],
+  "planning_trace": {
+    "trace_id": "string (auto-generated, normalized)",
+    "task_id": "string (stable mapped)",
+    "events": [
+      {
+        "sequence": 0,
+        "event_type": "PlanningStarted",
+        "task_id": "string",
+        "plan_id": "string or null",
+        "step_id": "string or null",
+        "summary": "string or null",
+        "error": "object or null",
+        "timestamp": "string (generated, normalized)"
+      }
+    ],
+    "final_outcome": {},
+    "redaction_policy": "string"
+  },
+  "plans": [
+    {
+      "plan_id": "string",
+      "version": 1,
+      "objective": "string",
+      "steps": [
+        {
+          "step_id": "string",
+          "index": 0,
+          "objective": "string",
+          "status": "pending"
+        }
+      ]
+    }
+  ],
+  "plan_revisions": [
+    {
+      "revision_id": "string",
+      "from_plan_id": "string",
+      "to_plan_id": "string",
+      "trigger": "recoverable_failure",
+      "rationale": "string"
+    }
   ]
 }

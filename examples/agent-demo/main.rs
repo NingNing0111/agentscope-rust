@@ -1,4 +1,6 @@
-use std::collections::HashSet;
+#![allow(clippy::result_large_err)]
+
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -6,7 +8,8 @@ use std::sync::Arc;
 
 use agent_scope_agent::{
     Agent, AgentConfig, AgentError, ContextConfig, MemoryMiddleware, Middleware, PermissionContext,
-    PermissionRule, ReActAgent, ReActConfig,
+    PermissionRule, Planner, PlannerConfig, PlannerError, ReActAgent, ReActConfig, SubAgent,
+    SubAgentError, SubAgentRegistry,
 };
 use agent_scope_dashscope::{DashScopeChatModel, DashScopeEmbeddingModel};
 use agent_scope_embedding::EmbeddingModelCard;
@@ -19,7 +22,7 @@ use agent_scope_rag::parser::{Parser, TextParser};
 use agent_scope_rag::rag_middleware::{RAGMiddleware, RAGMode};
 use agent_scope_rag::turbovec_store::TurbovecVectorStore;
 use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, Skill, WorkspaceBase};
-use clap::Parser as ClapParser;
+use clap::{Parser as ClapParser, ValueEnum};
 use futures::StreamExt;
 
 mod render;
@@ -29,6 +32,23 @@ use render::{RenderOptions, Renderer, mask_text};
 use tools::{
     MemorySnapshot, RagSnapshot, ToolState, WorkspaceSnapshot, WorkspaceToolSummary, build_toolkit,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum RunMode {
+    React,
+    Planner,
+    Team,
+}
+
+impl fmt::Display for RunMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::React => f.write_str("react"),
+            Self::Planner => f.write_str("planner"),
+            Self::Team => f.write_str("team"),
+        }
+    }
+}
 
 #[derive(Debug, ClapParser)]
 #[command(
@@ -47,6 +67,26 @@ struct Cli {
     /// DashScope embedding model name used by RAG.
     #[arg(long, default_value = "text-embedding-v3")]
     embedding_model: String,
+
+    /// Runtime mode: planner plans then executes by default; react streams directly; team keeps parent-agent turns while SubAgent commands remain available.
+    #[arg(long, value_enum, default_value_t = RunMode::Planner)]
+    mode: RunMode,
+
+    /// Disable Planner runtime. By default the demo builds Planner and --mode planner routes normal prompts through it.
+    #[arg(long)]
+    no_planner: bool,
+
+    /// Disable demo SubAgents and /delegate commands.
+    #[arg(long)]
+    no_subagents: bool,
+
+    /// DashScope chat model used for Planner plan generation. Defaults to --model.
+    #[arg(long)]
+    planner_model: Option<String>,
+
+    /// Maximum executable steps Planner may generate.
+    #[arg(long, default_value_t = 5)]
+    planner_max_steps: usize,
 
     /// Maximum ReAct reasoning/acting iterations per reply.
     #[arg(long, default_value_t = 20)]
@@ -126,6 +166,8 @@ enum DemoError {
     MissingApiKey,
     InvalidConfig(String),
     Agent(AgentError),
+    Planner(PlannerError),
+    SubAgent(SubAgentError),
     Io(io::Error),
 }
 
@@ -138,6 +180,8 @@ impl fmt::Display for DemoError {
             ),
             Self::InvalidConfig(message) => write!(f, "Invalid configuration: {message}"),
             Self::Agent(err) => write!(f, "Agent error: {err}"),
+            Self::Planner(err) => write!(f, "Planner error: {err}"),
+            Self::SubAgent(err) => write!(f, "SubAgent error: {err}"),
             Self::Io(err) => write!(f, "I/O error: {err}"),
         }
     }
@@ -148,6 +192,18 @@ impl std::error::Error for DemoError {}
 impl From<AgentError> for DemoError {
     fn from(value: AgentError) -> Self {
         Self::Agent(value)
+    }
+}
+
+impl From<PlannerError> for DemoError {
+    fn from(value: PlannerError) -> Self {
+        Self::Planner(value)
+    }
+}
+
+impl From<SubAgentError> for DemoError {
+    fn from(value: SubAgentError) -> Self {
+        Self::SubAgent(value)
     }
 }
 
@@ -162,6 +218,11 @@ struct RuntimeConfig {
     api_key: String,
     model: String,
     embedding_model: String,
+    mode: RunMode,
+    planner_model: String,
+    planner_enabled: bool,
+    subagents_enabled: bool,
+    planner_max_steps: usize,
     max_iters: u32,
     show_events: bool,
     show_json_events: bool,
@@ -195,6 +256,11 @@ impl RuntimeConfig {
                 "--max-iters must be greater than 0".to_string(),
             ));
         }
+        if cli.planner_max_steps == 0 {
+            return Err(DemoError::InvalidConfig(
+                "--planner-max-steps must be greater than 0".to_string(),
+            ));
+        }
         if cli.rag_top_k == 0 {
             return Err(DemoError::InvalidConfig(
                 "--rag-top-k must be greater than 0".to_string(),
@@ -218,11 +284,21 @@ impl RuntimeConfig {
                 "--rag-collection must not be empty".to_string(),
             ));
         }
+        let planner_model = cli
+            .planner_model
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| cli.model.clone());
 
         Ok(Self {
             api_key,
             model: cli.model,
             embedding_model: cli.embedding_model,
+            mode: cli.mode,
+            planner_model,
+            planner_enabled: !cli.no_planner,
+            subagents_enabled: !cli.no_subagents,
+            planner_max_steps: cli.planner_max_steps,
             max_iters: cli.max_iters,
             show_events: cli.show_events,
             show_json_events: cli.show_json_events,
@@ -288,17 +364,32 @@ async fn run(config: RuntimeConfig) -> Result<(), DemoError> {
 }
 
 struct AgentContext {
-    agent: ReActAgent,
+    mode: RunMode,
+    agent: Arc<ReActAgent>,
+    planner: Option<Planner>,
+    subagents: Option<SubAgentRuntime>,
     workspace: WorkspaceBuildResult,
     memory: MemoryBuildResult,
     rag: RagBuildResult,
     session_id: String,
 }
 
+struct SubAgentRuntime {
+    registry: SubAgentRegistry,
+    agents: HashMap<String, Arc<dyn Agent>>,
+}
+
 fn print_banner(config: &RuntimeConfig) {
     println!("AgentScope Rust Interactive Agent");
+    println!("Mode: {}", config.mode);
     println!("Chat model: {}", config.model);
     println!("Embedding model: {}", config.embedding_model);
+    if config.planner_enabled {
+        println!(
+            "Planner model: {} (non-streaming, max {} step(s))",
+            config.planner_model, config.planner_max_steps
+        );
+    }
     println!(
         "API key: {}",
         mask_text(&config.api_key, std::slice::from_ref(&config.api_key))
@@ -350,11 +441,30 @@ fn print_runtime_summary(context: &AgentContext) {
     } else {
         println!("RAG: disabled");
     }
+    if context.planner.is_some() {
+        println!("Planner: enabled");
+    } else {
+        println!("Planner: disabled");
+    }
+    if let Some(subagents) = &context.subagents {
+        let names = subagents
+            .registry
+            .list()
+            .into_iter()
+            .map(|agent| agent.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "SubAgents: {}",
+            if names.is_empty() { "none" } else { &names }
+        );
+    } else {
+        println!("SubAgents: disabled");
+    }
     println!();
 }
 
 async fn build_agent(config: &RuntimeConfig) -> Result<AgentContext, DemoError> {
-    let model = Arc::new(DashScopeChatModel::new(&config.api_key, &config.model).with_stream(true));
     let mut middlewares: Vec<Arc<dyn Middleware>> = Vec::new();
 
     let workspace = build_workspace_snapshot(config).await?;
@@ -374,34 +484,107 @@ async fn build_agent(config: &RuntimeConfig) -> Result<AgentContext, DemoError> 
         memory_store: memory.memory.clone(),
     };
 
-    let mut builder = AgentConfig::builder().name("agent_demo").model(model);
+    let agent = Arc::new(build_react_agent(
+        AgentBuildSpec {
+            name: "agent_demo",
+            role_prefix: None,
+            tool_state: tool_state.clone(),
+            middlewares: middlewares.clone(),
+        },
+        config,
+        &workspace,
+        &memory.snapshot,
+        &rag.snapshot,
+    )?);
 
-    if !config.no_tools {
-        let toolkit = build_toolkit(tool_state, workspace.skills.clone());
-        let skill_instructions = toolkit.get_skill_instructions(None);
-        builder = builder
-            .system_prompt(system_prompt(
-                config,
-                &workspace,
-                &memory.snapshot,
-                &rag.snapshot,
-                Some(&skill_instructions),
-            ))
-            .toolkit(toolkit)
-            .permission_context(build_permission_context(
-                config,
-                !workspace.skills.is_empty(),
-                memory.memory.is_some(),
-                workspace.snapshot.is_some(),
-            ));
+    let agent_for_planner: Arc<dyn Agent> = agent.clone();
+    let planner = if config.planner_enabled {
+        let planner_model = Arc::new(
+            DashScopeChatModel::new(&config.api_key, &config.planner_model).with_stream(false),
+        );
+        let planner_config = PlannerConfig {
+            max_steps: config.planner_max_steps,
+            ..PlannerConfig::default()
+        };
+        Some(Planner::new(
+            agent_for_planner,
+            planner_model,
+            planner_config,
+        )?)
     } else {
-        builder = builder.system_prompt(system_prompt(
+        None
+    };
+
+    let subagents = if config.subagents_enabled {
+        Some(build_subagent_runtime(
             config,
             &workspace,
             &memory.snapshot,
             &rag.snapshot,
-            None,
-        ));
+            tool_state,
+            middlewares,
+        )?)
+    } else {
+        None
+    };
+
+    Ok(AgentContext {
+        mode: config.mode,
+        agent,
+        planner,
+        subagents,
+        workspace,
+        memory,
+        rag,
+        session_id,
+    })
+}
+
+struct AgentBuildSpec<'a> {
+    name: &'a str,
+    role_prefix: Option<&'a str>,
+    tool_state: ToolState,
+    middlewares: Vec<Arc<dyn Middleware>>,
+}
+
+fn build_react_agent(
+    spec: AgentBuildSpec<'_>,
+    config: &RuntimeConfig,
+    workspace: &WorkspaceBuildResult,
+    memory: &MemorySnapshot,
+    rag: &RagSnapshot,
+) -> Result<ReActAgent, DemoError> {
+    let AgentBuildSpec {
+        name,
+        role_prefix,
+        tool_state,
+        middlewares,
+    } = spec;
+    let model = Arc::new(DashScopeChatModel::new(&config.api_key, &config.model).with_stream(true));
+    let mut builder = AgentConfig::builder().name(name).model(model);
+    let base_prompt = system_prompt(config, workspace, memory, rag, None);
+    let prompt = role_prefix
+        .map(|prefix| format!("{prefix}\n\n{base_prompt}"))
+        .unwrap_or(base_prompt);
+
+    if !config.no_tools {
+        let toolkit = build_toolkit(tool_state, workspace.skills.clone());
+        let skill_instructions = toolkit.get_skill_instructions(None);
+        let prompt = system_prompt(config, workspace, memory, rag, Some(&skill_instructions));
+        let prompt = role_prefix
+            .map(|prefix| format!("{prefix}\n\n{prompt}"))
+            .unwrap_or(prompt);
+        builder = builder
+            .system_prompt(prompt)
+            .toolkit(toolkit)
+            .permission_context(build_permission_context(
+                config,
+                !workspace.skills.is_empty(),
+                memory.enabled,
+                workspace.snapshot.is_some(),
+            ));
+    } else {
+        builder = builder.system_prompt(prompt);
     }
 
     let agent_config = builder.build()?;
@@ -410,20 +593,49 @@ async fn build_agent(config: &RuntimeConfig) -> Result<AgentContext, DemoError> 
         ..ReActConfig::default()
     };
 
-    let agent = ReActAgent::new(
+    Ok(ReActAgent::new(
         agent_config,
         react_config,
         ContextConfig::default(),
         middlewares,
-    )?;
+    )?)
+}
 
-    Ok(AgentContext {
-        agent,
+fn build_subagent_runtime(
+    config: &RuntimeConfig,
+    workspace: &WorkspaceBuildResult,
+    memory: &MemorySnapshot,
+    rag: &RagSnapshot,
+    tool_state: ToolState,
+    middlewares: Vec<Arc<dyn Middleware>>,
+) -> Result<SubAgentRuntime, DemoError> {
+    const RESEARCHER_NAME: &str = "researcher";
+    let researcher = Arc::new(build_react_agent(
+        AgentBuildSpec {
+            name: RESEARCHER_NAME,
+            role_prefix: Some(
+                "You are the researcher SubAgent in an AgentScope Rust team demo. Focus on checking facts with available tools, RAG, memory, and workspace context, then return concise findings.",
+            ),
+            tool_state,
+            middlewares,
+        },
+        config,
         workspace,
         memory,
         rag,
-        session_id,
-    })
+    )?);
+    let researcher_dyn: Arc<dyn Agent> = researcher;
+    let subagent = SubAgent::new(
+        RESEARCHER_NAME,
+        "Research-oriented helper agent for checking facts and summarizing findings.",
+        researcher_dyn.clone(),
+    )?;
+    let mut registry = SubAgentRegistry::new("agent_demo");
+    registry.register_subagent(subagent)?;
+
+    let mut agents = HashMap::new();
+    agents.insert(RESEARCHER_NAME.to_string(), researcher_dyn);
+    Ok(SubAgentRuntime { registry, agents })
 }
 
 #[derive(Clone)]
@@ -582,22 +794,30 @@ async fn build_rag_middleware(config: &RuntimeConfig) -> Result<RagBuildResult, 
     let chunk_count = chunks.len();
     let embedding = Arc::new(DashScopeEmbeddingModel::new(
         config.api_key.clone(),
-        EmbeddingModelCard::new(&config.embedding_model, 1536, false),
+        EmbeddingModelCard::new(&config.embedding_model, 1024, false),
     ));
     let store = Arc::new(TurbovecVectorStore::new(4).map_err(|err| {
         DemoError::InvalidConfig(format!("failed to create Turbovec vector store: {err}"))
     })?);
     let kb = Arc::new(KnowledgeBase::new(
         "agent_demo_docs".to_string(),
-        "User-provided documents indexed for this AgentScope Rust run.".to_string(),
+        "Configured/default documents indexed for this AgentScope Rust run.".to_string(),
         embedding,
         store,
         config.rag_collection.clone(),
         None,
     ));
-    kb.insert_document(chunks, Some("agent-demo-input-docs".to_string()), None)
-        .await
-        .map_err(|err| DemoError::InvalidConfig(format!("failed to index RAG documents: {err}")))?;
+    let mut batch = Vec::new();
+    let mut batch_index = 0;
+    for chunk in chunks {
+        batch.push(chunk);
+        if batch.len() == 10 {
+            insert_rag_batch(&kb, &mut batch, &mut batch_index).await?;
+        }
+    }
+    if !batch.is_empty() {
+        insert_rag_batch(&kb, &mut batch, &mut batch_index).await?;
+    }
 
     let snapshot = RagSnapshot {
         enabled: true,
@@ -619,7 +839,29 @@ async fn build_rag_middleware(config: &RuntimeConfig) -> Result<RagBuildResult, 
     })
 }
 
+async fn insert_rag_batch(
+    kb: &KnowledgeBase,
+    batch: &mut Vec<Chunk>,
+    batch_index: &mut usize,
+) -> Result<(), DemoError> {
+    let chunks = std::mem::take(batch);
+    let document_id = format!("agent-demo-input-docs-{batch_index}");
+    *batch_index += 1;
+    kb.insert_document(chunks, Some(document_id), None)
+        .await
+        .map_err(|err| DemoError::InvalidConfig(format!("failed to index RAG documents: {err}")))?;
+    Ok(())
+}
+
 fn collect_rag_paths(config: &RuntimeConfig) -> Result<Vec<PathBuf>, DemoError> {
+    if config.rag_docs.is_empty() && config.rag_dirs.is_empty() {
+        let mut paths = infer_default_rag_paths();
+        paths.sort();
+        let mut seen = HashSet::new();
+        paths.retain(|path| seen.insert(path.clone()));
+        return Ok(paths);
+    }
+
     let mut paths = Vec::new();
     for doc in &config.rag_docs {
         if !doc.exists() {
@@ -670,6 +912,41 @@ fn collect_rag_paths(config: &RuntimeConfig) -> Result<Vec<PathBuf>, DemoError> 
     }
 
     Ok(paths)
+}
+
+fn infer_default_rag_paths() -> Vec<PathBuf> {
+    let Some(root) = find_repo_root() else {
+        return Vec::new();
+    };
+    let candidates = [
+        "README.md",
+        "examples/agent-demo/README.md",
+        "docs/zh/modules/agent.md",
+        "docs/en/modules/agent.md",
+    ];
+    candidates
+        .iter()
+        .map(|relative| root.join(relative))
+        .filter(|path| path.is_file() && is_supported_rag_file(path))
+        .collect()
+}
+
+fn find_repo_root() -> Option<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .ancestors()
+        .find(|path| path.join("Cargo.toml").is_file() && path.join("examples/agent-demo").is_dir())
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            std::env::current_dir().ok().and_then(|cwd| {
+                cwd.ancestors()
+                    .find(|path| {
+                        path.join("Cargo.toml").is_file()
+                            && path.join("examples/agent-demo").is_dir()
+                    })
+                    .map(Path::to_path_buf)
+            })
+        })
 }
 
 fn collect_rag_dir(dir: &Path, recursive: bool, paths: &mut Vec<PathBuf>) -> Result<(), DemoError> {
@@ -815,11 +1092,21 @@ fn system_prompt(
         prompt.push_str("\n- LocalWorkspace: disabled for this run.");
     }
     if rag.enabled {
-        prompt.push_str("\n- Static RAGMiddleware: user-provided documents were indexed with DashScope embeddings and Turbovec. Use injected RAG context when it appears relevant and avoid inventing sources.");
+        prompt.push_str("\n- Static RAGMiddleware: configured/default documents were indexed with DashScope embeddings and Turbovec. Use injected RAG context when it appears relevant and avoid inventing sources.");
     } else {
         prompt.push_str(
-            "\n- Static RAGMiddleware: disabled for this run or no RAG documents were provided.",
+            "\n- Static RAGMiddleware: disabled for this run or no configured/default RAG documents were found.",
         );
+    }
+    if config.planner_enabled {
+        prompt.push_str("\n- Planner: enabled as a runtime orchestration layer. It may generate and execute a plan before producing the final answer, but it is not an ordinary callable tool.");
+    } else {
+        prompt.push_str("\n- Planner: disabled for this run.");
+    }
+    if config.subagents_enabled {
+        prompt.push_str("\n- SubAgents: demo SubAgents are registered for REPL /subagents and /delegate commands. They are runtime orchestration features, not ordinary callable tools.");
+    } else {
+        prompt.push_str("\n- SubAgents: disabled for this run.");
     }
 
     if let Some(instructions) = workspace.instructions.as_deref() {
@@ -851,6 +1138,10 @@ async fn run_repl(
             continue;
         }
 
+        if handle_async_command(input, &agent_context, &render_options).await? {
+            continue;
+        }
+
         if handle_command(input, &config, &mut render_options)? {
             continue;
         }
@@ -859,6 +1150,58 @@ async fn run_repl(
     }
 }
 
+async fn handle_async_command(
+    input: &str,
+    context: &AgentContext,
+    render_options: &RenderOptions,
+) -> Result<bool, DemoError> {
+    if input == "/subagents" {
+        let Some(subagents) = &context.subagents else {
+            println!(
+                "SubAgents are disabled for this run. Restart without --no-subagents to register demo SubAgents."
+            );
+            return Ok(true);
+        };
+        let agents = subagents.registry.list();
+        if agents.is_empty() {
+            println!("No SubAgents are registered.");
+        } else {
+            println!("Registered SubAgents:");
+            for agent in agents {
+                println!("  - {}: {}", agent.name, agent.description);
+            }
+        }
+        return Ok(true);
+    }
+
+    if let Some(rest) = input.strip_prefix("/delegate ") {
+        let Some(subagents) = &context.subagents else {
+            println!(
+                "SubAgents are disabled for this run. Restart without --no-subagents to use /delegate."
+            );
+            return Ok(true);
+        };
+        let Some((name, prompt)) = rest.trim().split_once(char::is_whitespace) else {
+            println!("Usage: /delegate <name> <prompt>");
+            return Ok(true);
+        };
+        let name = name.trim();
+        let prompt = prompt.trim();
+        if name.is_empty() || prompt.is_empty() {
+            println!("Usage: /delegate <name> <prompt>");
+            return Ok(true);
+        }
+        let key = name.to_ascii_lowercase();
+        let Some(agent) = subagents.agents.get(&key) else {
+            println!("Unknown SubAgent: {name}. Use /subagents to list registered SubAgents.");
+            return Ok(true);
+        };
+        run_subagent_turn(context, name, Arc::clone(agent), prompt, render_options).await?;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
 fn handle_command(
     input: &str,
     config: &RuntimeConfig,
@@ -871,13 +1214,18 @@ fn handle_command(
             println!("  /help          Show this help");
             println!("  /model         Show current model");
             println!("  /tools         Show configured tool categories");
+            println!("  /subagents     List registered SubAgents");
+            println!("  /delegate NAME PROMPT  Send a prompt to a SubAgent");
             println!("  /events on|off Toggle lifecycle event rendering");
             println!("  /json on|off   Toggle redacted AgentEvent JSON output");
             println!("  /exit, /quit   Quit");
             println!("\nConfiguration:");
+            println!("  mode:      {}", config.mode);
             println!("  memory:    {}", enabled_label(config.memory_enabled));
             println!("  workspace: {}", enabled_label(config.workspace_enabled));
             println!("  rag:       {}", enabled_label(config.rag_enabled));
+            println!("  planner:   {}", enabled_label(config.planner_enabled));
+            println!("  subagents: {}", enabled_label(config.subagents_enabled));
             println!("  workdir:   {}", config.workdir);
             println!("\nUseful prompts:");
             println!("  请用 calculator 计算 23 * (17 + 5)");
@@ -924,7 +1272,10 @@ fn handle_command(
                     println!("  memory_list              List durable memory entries");
                 }
                 println!(
-                    "\nRAG is middleware-based and is enabled only when real documents are provided with --rag-doc or --rag-dir."
+                    "\nRAG is middleware-based and uses default project documents unless --rag-doc or --rag-dir are provided. Use --no-rag to disable it."
+                );
+                println!(
+                    "Planner and SubAgent modes are orchestration features, not ordinary tools in this demo."
                 );
             }
             Ok(true)
@@ -966,22 +1317,107 @@ async fn run_turn(
     input: &str,
     render_options: &RenderOptions,
 ) -> Result<(), DemoError> {
+    match context.mode {
+        RunMode::Planner if context.planner.is_some() => {
+            run_planner_turn(context, input, render_options).await
+        }
+        RunMode::Planner | RunMode::React | RunMode::Team => {
+            run_react_turn(context, input, render_options).await
+        }
+    }
+}
+
+async fn run_react_turn(
+    context: &AgentContext,
+    input: &str,
+    render_options: &RenderOptions,
+) -> Result<(), DemoError> {
     let msg =
         user_msg("user", input).map_err(|err| DemoError::InvalidConfig(format!("{err:?}")))?;
-    if let Some(workspace) = &context.workspace.workspace {
-        workspace
-            .offload_context(&context.session_id, std::slice::from_ref(&msg))
-            .await
-            .map_err(|err| {
-                DemoError::InvalidConfig(format!("failed to offload user context: {err}"))
-            })?;
-    }
+    offload_messages(context, std::slice::from_ref(&msg), "user").await?;
 
     let mut stream = context.agent.reply_stream(Some(vec![msg])).await?;
+    let assistant_text = render_agent_stream("assistant", &mut stream, render_options).await?;
+    offload_messages(
+        context,
+        &[assistant_msg("agent_demo", &assistant_text)],
+        "assistant",
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn run_planner_turn(
+    context: &AgentContext,
+    input: &str,
+    render_options: &RenderOptions,
+) -> Result<(), DemoError> {
+    let Some(planner) = &context.planner else {
+        return Err(DemoError::InvalidConfig(
+            "Planner mode is selected but Planner runtime was not built".to_string(),
+        ));
+    };
+    let msg =
+        user_msg("user", input).map_err(|err| DemoError::InvalidConfig(format!("{err:?}")))?;
+    offload_messages(context, std::slice::from_ref(&msg), "user").await?;
+
+    println!("planner>");
+    let planner_goal = planner_goal_prompt(input, config_mode_hint(context.mode));
+    let result = planner.run(planner_goal).await?;
+    print_planner_result(&result, render_options)?;
+    let assistant_text = result
+        .final_message
+        .get_text_content("\n")
+        .unwrap_or_default();
+    if !assistant_text.trim().is_empty() {
+        println!(
+            "\nassistant>\n{}",
+            mask_text(&assistant_text, &render_options.secrets)
+        );
+    }
+    offload_messages(
+        context,
+        &[assistant_msg(
+            "planner",
+            &planner_summary_for_offload(&result),
+        )],
+        "planner result",
+    )
+    .await?;
+    Ok(())
+}
+
+async fn run_subagent_turn(
+    context: &AgentContext,
+    name: &str,
+    agent: Arc<dyn Agent>,
+    input: &str,
+    render_options: &RenderOptions,
+) -> Result<(), DemoError> {
+    let msg =
+        user_msg("user", input).map_err(|err| DemoError::InvalidConfig(format!("{err:?}")))?;
+    let mut stream = agent.reply_stream(Some(vec![msg])).await?;
+    let assistant_text =
+        render_agent_stream(&format!("subagent {name}"), &mut stream, render_options).await?;
+    offload_messages(
+        context,
+        &[assistant_msg(name, &assistant_text)],
+        "subagent assistant",
+    )
+    .await?;
+    Ok(())
+}
+
+async fn render_agent_stream(
+    label: &str,
+    stream: &mut (impl futures::Stream<Item = AgentEvent> + Unpin),
+    render_options: &RenderOptions,
+) -> Result<String, DemoError> {
     let mut renderer = Renderer::new(render_options.clone());
     let mut assistant_text = String::new();
 
-    println!("assistant>");
+    println!("{label}>");
     while let Some(event) = stream.next().await {
         if let AgentEvent::TextBlockDelta(delta) = &event {
             assistant_text.push_str(&delta.delta);
@@ -990,16 +1426,110 @@ async fn run_turn(
     }
     renderer.finish()?;
     println!();
+    Ok(assistant_text)
+}
 
+fn config_mode_hint(mode: RunMode) -> &'static str {
+    match mode {
+        RunMode::React => "react",
+        RunMode::Planner => "planner",
+        RunMode::Team => "team",
+    }
+}
+
+fn planner_goal_prompt(user_goal: &str, mode: &str) -> String {
+    format!(
+        "You are the planning stage for the AgentScope Rust agent_demo ({mode} mode). Return ONLY valid JSON with this exact shape: {{\"objective\":\"...\",\"steps\":[\"...\"]}}. Create 1-3 concise executable ReActAgent step objectives for the user goal. Do not include Markdown fences or explanatory text. User goal: {user_goal}"
+    )
+}
+
+fn print_planner_result(
+    result: &agent_scope_agent::PlannerRunResult,
+    render_options: &RenderOptions,
+) -> Result<(), DemoError> {
+    if let Some(plan) = &result.task.plan {
+        println!(
+            "Plan: {}",
+            mask_text(&plan.objective, &render_options.secrets)
+        );
+        for step in &plan.steps {
+            println!(
+                "  {}. [{:?}] {}",
+                step.index + 1,
+                step.status,
+                mask_text(&step.objective, &render_options.secrets)
+            );
+            if let Some(reason) = &step.reason {
+                println!(
+                    "     reason: {}",
+                    mask_text(reason, &render_options.secrets)
+                );
+            }
+        }
+    } else {
+        println!("Plan: (not available)");
+    }
+    println!("Outcome: {:?}", result.outcome);
+
+    if render_options.show_events || render_options.show_json_events {
+        println!("\nPlanning trace:");
+        for event in &result.trace.events {
+            if render_options.show_json_events {
+                let json = serde_json::to_string(event).map_err(|err| {
+                    DemoError::InvalidConfig(format!("failed to serialize planning event: {err}"))
+                })?;
+                println!("{}", mask_text(&json, &render_options.secrets));
+            } else {
+                let summary = event.summary.as_deref().unwrap_or("");
+                println!(
+                    "  #{} {:?} plan={:?} step={:?} {}",
+                    event.sequence,
+                    event.event_type,
+                    event.plan_id,
+                    event.step_id,
+                    mask_text(summary, &render_options.secrets)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn planner_summary_for_offload(result: &agent_scope_agent::PlannerRunResult) -> String {
+    let mut summary = format!("Planner outcome: {:?}", result.outcome);
+    if let Some(plan) = &result.task.plan {
+        summary.push_str("\nPlan steps:");
+        for step in &plan.steps {
+            summary.push_str(&format!(
+                "\n- [{}] {}",
+                format!("{:?}", step.status).to_ascii_lowercase(),
+                step.objective
+            ));
+        }
+    }
+    let final_text = result
+        .final_message
+        .get_text_content("\n")
+        .unwrap_or_default();
+    if !final_text.trim().is_empty() {
+        summary.push_str("\nFinal answer:\n");
+        summary.push_str(&final_text);
+    }
+    summary
+}
+
+async fn offload_messages(
+    context: &AgentContext,
+    messages: &[agent_scope_message::Msg],
+    label: &str,
+) -> Result<(), DemoError> {
     if let Some(workspace) = &context.workspace.workspace {
-        let assistant = assistant_msg("agent_demo", &assistant_text);
         workspace
-            .offload_context(&context.session_id, &[assistant])
+            .offload_context(&context.session_id, messages)
             .await
             .map_err(|err| {
-                DemoError::InvalidConfig(format!("failed to offload assistant context: {err}"))
+                DemoError::InvalidConfig(format!("failed to offload {label} context: {err}"))
             })?;
     }
-
     Ok(())
 }

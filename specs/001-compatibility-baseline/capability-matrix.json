@@ -3680,6 +3680,94 @@
         "sandbox_backend"
       ],
       "notes": "Adapter preserves sandbox policy errors as WorkspaceError gateway/path traversal categories."
+    },
+    {
+      "capability_id": "subagent-in-process-delegation",
+      "category": "agent",
+      "upstream_symbol": "SubAgent collaboration lifecycle",
+      "source_location": "specs/020-subagent",
+      "description": "Parent-to-SubAgent in-process delegation with attributable CollaborationResult and DelegationTrace.",
+      "dependencies": [
+        "agent-agent"
+      ],
+      "priority": "MVP_REQUIRED",
+      "target_level": "L2",
+      "status": "IMPLEMENTED",
+      "test_fixture_ids": [
+        "subagent_delegation_tests",
+        "multi_subagent_tests",
+        "subagent_trace_tests"
+      ],
+      "notes": "Supports named collaborators, sequential multi-delegation, typed terminal outcomes, safe trace summaries, and Msg.name speaker identity."
+    },
+    {
+      "capability_id": "app-service-message-bus-distributed-subagent",
+      "category": "service",
+      "upstream_symbol": "app service/message bus/distributed SubAgent runtime",
+      "source_location": "src/agentscope/app",
+      "description": "Remote workers, durable queue, cross-host migration, and app-service dispatch for SubAgents.",
+      "dependencies": [],
+      "priority": "DEFERRED",
+      "target_level": "L0",
+      "status": "UNSUPPORTED",
+      "test_fixture_ids": [
+        "subagent_error_tests"
+      ],
+      "notes": "Explicit UnsupportedFeature helpers: remote_worker, durable_queue, cross_host_migration, app_service_dispatch."
+    },
+    {
+      "capability_id": "provider-multi-agent-formatter-parity",
+      "category": "provider",
+      "upstream_symbol": "*MultiAgentFormatter",
+      "source_location": "src/agentscope/formatter",
+      "description": "Provider-specific multi-agent formatter parity.",
+      "dependencies": [
+        "subagent-in-process-delegation"
+      ],
+      "priority": "DEFERRED",
+      "target_level": "L0",
+      "status": "DEFERRED",
+      "test_fixture_ids": [],
+      "notes": "Speaker identity is preserved via Msg.name; provider-specific formatter compatibility is deferred."
+    },
+    {
+      "capability_id": "planner-react-agent-in-process",
+      "category": "agent",
+      "upstream_symbol": "agent.ReActAgent + planner-compatible task decomposition",
+      "source_location": "Feature 021 deterministic compatibility scenarios",
+      "description": "In-process Planner orchestration over ReActAgent with ordered plan steps, traceable step status, and explicit final outcome.",
+      "dependencies": [
+        "agent-agent",
+        "agent-reasoning",
+        "agent-acting",
+        "event-agent-event"
+      ],
+      "priority": "ADVANCED",
+      "target_level": "L3",
+      "status": "IN_PROGRESS",
+      "test_fixture_ids": [
+        "planner_success",
+        "planner_tool_step",
+        "planner_replan",
+        "planner_cancel",
+        "planner_unsupported"
+      ],
+      "notes": "Feature 021 MVP uses in-memory planning state and deterministic traces; no distributed scheduler or durable queue."
+    },
+    {
+      "capability_id": "planner-distributed-runtime",
+      "category": "agent",
+      "upstream_symbol": "app scheduler/message-bus backed planner runtime",
+      "source_location": "Feature 021 unsupported scope",
+      "description": "Distributed, durable, or parallel DAG planner execution.",
+      "dependencies": [],
+      "priority": "DEFERRED",
+      "target_level": "L0",
+      "status": "UNSUPPORTED",
+      "test_fixture_ids": [
+        "planner_unsupported"
+      ],
+      "notes": "Explicitly out of scope for Feature 021; callers must receive UnsupportedCapability instead of no-op success."
     }
   ]
 }

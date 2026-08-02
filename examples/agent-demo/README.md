@@ -1,8 +1,8 @@
 # AgentScope Rust Interactive Agent
 
-`agent_demo` 是一个真实可用的交互式 Agent 示例。它使用真实 DashScope chat API、可选的 DashScope embedding + Turbovec RAG、真实 `FileMemory`、真实 `LocalWorkspace`，并且只从 workspace 中读取实际存在的 skills。
+`agent_demo` 是一个真实可用的交互式 Agent 示例。它使用真实 DashScope chat API、默认启用 DashScope embedding + Turbovec RAG、真实 `FileMemory`、真实 `LocalWorkspace`、Planner runtime 和内置 `researcher` SubAgent，并且只从 workspace 中读取实际存在的 skills。
 
-> 这个示例会调用真实 DashScope API；启用 RAG 时还会调用真实 DashScope embedding API，可能产生模型服务费用。不要在终端、文档或 issue 中粘贴真实 API Key。
+> 这个示例会调用真实 DashScope API；默认 RAG 会调用真实 DashScope embedding API 并索引项目文档，可能产生模型服务费用。默认 `--mode planner` 会额外调用 planner chat model 并按计划步骤调用 executor；`/delegate` 会调用子 Agent。不要在终端、文档或 issue 中粘贴真实 API Key。
 
 ## 1. 准备 API Key
 
@@ -21,10 +21,47 @@ cargo run --example agent_demo -- --api-key sk-your-real-key
 
 ## 2. 启动交互式 Agent
 
-默认启动 REPL：
+默认启动 REPL，等价于 `--mode planner`，并默认启用 Memory、Workspace、RAG、Planner 和 SubAgents：
 
 ```bash
 cargo run --example agent_demo
+```
+
+### 运行模式
+
+`agent_demo` 支持三种显式运行模式：
+
+- `--mode react`：直接使用真实 DashScope `ReActAgent` token-level streaming、工具、memory、workspace、skills、RAG 行为；Planner 和 SubAgents runtime 仍会默认构建，除非显式关闭。
+- `--mode planner`：默认模式。先用 non-streaming planner model 生成 JSON plan，再由同一个 ReActAgent executor 按步骤执行并打印 plan/trace/final answer。Planner step 执行使用 `agent.reply`，不是 token-level interleaved streaming。
+- `--mode team`：普通输入由 parent ReActAgent 回复，同时保留已注册 SubAgent 命令。REPL 中可用 `/subagents` 和 `/delegate` 调用子 Agent。
+
+示例：
+
+```bash
+cargo run --example agent_demo -- --mode react --prompt "请用 calculator 计算 23 * (17 + 5)"
+
+cargo run --example agent_demo -- \
+  --mode planner \
+  --planner-max-steps 3 \
+  --prompt "请制定并执行一个两步计划：先看当前 UTC 时间，再计算 6 * 7"
+
+cargo run --example agent_demo -- --mode team --show-events
+```
+
+Team REPL 示例：
+
+```text
+you> /subagents
+you> /delegate researcher 请调用 safe_time 查看当前时间，并用一句话总结。
+```
+
+Planner/SubAgent 相关参数：
+
+```text
+--planner-model <MODEL>     Planner plan generation model，默认复用 --model
+--planner-max-steps <N>     Planner 最大 executable steps，默认 5
+--no-planner                禁用 Planner runtime；--mode planner 会回退为直接 ReAct 回复
+--no-subagents              禁用内置 SubAgent registry、/subagents 和 /delegate
 ```
 
 指定模型并显示事件边界：
@@ -52,13 +89,15 @@ cargo run --example agent_demo -- --workdir .agent-demo-local
 cargo run --example agent_demo -- --no-memory --prompt "memory 功能是否启用？"
 cargo run --example agent_demo -- --no-workspace --prompt "workspace 功能是否启用？"
 cargo run --example agent_demo -- --no-rag --prompt "RAG 功能是否启用？"
+cargo run --example agent_demo -- --no-planner --prompt "请直接回答，不经过 Planner。"
+cargo run --example agent_demo -- --no-subagents --prompt "SubAgents 功能是否启用？"
 ```
 
-说明：workspace 初始化会在 workdir 下创建 `workspace/`、`.mcp`、`skills/`、`sessions/`、`data/` 等运行文件；memory 会在 workdir 下创建 `Memory/` 和 `MEMORY.md`。示例不会预置 memory、skill 或 RAG 文档。每轮对话会追加落盘到 `workspace/sessions/<session_id>/context.jsonl`；`data/` 只在消息或工具结果包含 base64 `DataBlock` 并触发 offload 时写入真实数据文件。
+说明：workspace 初始化会在 workdir 下创建 `workspace/`、`.mcp`、`skills/`、`sessions/`、`data/` 等运行文件；memory 会在 workdir 下创建 `Memory/` 和 `MEMORY.md`。示例不会预置 memory 或 skill。RAG 默认使用项目文档构建临时索引，也可以通过 `--rag-doc` / `--rag-dir` 指定真实文档源。每轮对话会追加落盘到 `workspace/sessions/<session_id>/context.jsonl`；`data/` 只在消息或工具结果包含 base64 `DataBlock` 并触发 offload 时写入真实数据文件。
 
 ## 3. RAG：真实文档 + DashScope embedding + Turbovec
 
-默认不会内置任何知识库。未提供 `--rag-doc` 或 `--rag-dir` 时，RAG 不启用。
+默认使用项目文档构建临时知识库（`README.md`、`examples/agent-demo/README.md`、`docs/zh/modules/agent.md`、`docs/en/modules/agent.md` 中存在的文件）。因此未提供 `--rag-doc` 或 `--rag-dir` 时，RAG 也会默认启用；如需关闭，请传 `--no-rag`。
 
 加载单个真实文档：
 
@@ -133,14 +172,16 @@ Use these instructions when the user asks for ...
 ## 5. REPL 命令
 
 ```text
-/help          Show help
-/model         Show current model
-/tools         Show configured tool categories
-/events on     Enable lifecycle event rendering
-/events off    Disable lifecycle event rendering
-/json on       Enable redacted AgentEvent JSON output
-/json off      Disable JSON event output
-/exit, /quit   Quit
+/help                    Show help
+/model                   Show current model
+/tools                   Show configured tool categories
+/subagents               List registered SubAgents
+/delegate <name> <prompt> Send a prompt to a SubAgent
+/events on               Enable lifecycle event rendering
+/events off              Disable lifecycle event rendering
+/json on                 Enable redacted AgentEvent JSON output
+/json off                Disable JSON event output
+/exit, /quit             Quit
 ```
 
 ## 6. 工具
@@ -193,12 +234,36 @@ cargo check --example agent_demo
 cargo build --example agent_demo
 ```
 
-无 RAG 文档时：
+默认 RAG 文档与关闭开关：
 
 ```bash
 cargo run --example agent_demo -- --prompt "请一句话介绍你能做什么"
-cargo run --example agent_demo -- --no-rag --prompt "请调用 Bash 执行 pwd，并告诉我返回了什么"
+cargo run --example agent_demo -- --no-rag --no-planner --no-subagents --prompt "请直接介绍当前启用能力"
 ```
+
+## 9. Planner 与 SubAgent 验证
+
+Planner 默认模式会先要求 live model 返回 JSON plan，再按 step 调用 ReActAgent executor：
+
+```bash
+cargo run --example agent_demo -- \
+  --planner-max-steps 3 \
+  --show-events \
+  --prompt "请制定并执行一个两步计划：先看当前 UTC 时间，再计算 6 * 7"
+```
+
+SubAgent 默认已注册；普通输入是否走 Planner/React 由 `--mode` 控制，使用 REPL 命令调用内置 `researcher`：
+
+```bash
+cargo run --example agent_demo -- --show-events
+```
+
+```text
+you> /subagents
+you> /delegate researcher 请调用 safe_time 查看当前时间，并用一句话总结。
+```
+
+Planner/SubAgent 都是 in-process library primitives：`Planner::new(Arc<dyn Agent>, Arc<dyn ChatModel>, PlannerConfig)`、`SubAgentRegistry`、`SubAgent::new(...)`。Distributed workers、durable queues、full app-service dispatch 和 parallel DAG planner 仍是显式 unsupported/deferred，不在这个终端 demo 中模拟。
 
 运行后可在 `workspace/sessions/<session_id>/context.jsonl` 查看本轮 user/assistant 消息，例如：
 

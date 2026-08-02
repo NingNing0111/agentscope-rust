@@ -1,0 +1,69 @@
+{
+  "_fixture_name": "Planner-tool-step",
+  "_generated_at": "2026-08-01T22:14:03.979074+00:00",
+  "_description": "Planner step delegates deterministic tool work through ReAct behavior.",
+  "data": {
+    "trace_id": "trace-001",
+    "task_id": "task-001",
+    "normalized_fields": [
+      "trace_id",
+      "task_id",
+      "plan_id",
+      "step_id",
+      "timestamp"
+    ],
+    "events": [
+      {
+        "sequence": 1,
+        "event_type": "planning_started",
+        "task_id": "task-001"
+      },
+      {
+        "sequence": 2,
+        "event_type": "planning_completed",
+        "task_id": "task-001"
+      },
+      {
+        "sequence": 3,
+        "event_type": "step_started",
+        "task_id": "task-001"
+      },
+      {
+        "sequence": 4,
+        "event_type": "tool_call_start",
+        "task_id": "task-001"
+      },
+      {
+        "sequence": 5,
+        "event_type": "tool_result_end",
+        "task_id": "task-001"
+      },
+      {
+        "sequence": 6,
+        "event_type": "step_completed",
+        "task_id": "task-001"
+      },
+      {
+        "sequence": 7,
+        "event_type": "task_completed",
+        "task_id": "task-001"
+      }
+    ],
+    "steps": [],
+    "tool_activity": [
+      {
+        "tool_name": "calculator",
+        "arguments": {
+          "expression": "2+2"
+        },
+        "result_summary": "4"
+      }
+    ],
+    "revision": null,
+    "final_outcome": {
+      "completed": {
+        "summary": "planned task completed"
+      }
+    }
+  }
+}

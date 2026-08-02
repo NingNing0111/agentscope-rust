@@ -245,6 +245,92 @@ def generate_fixtures(output_dir: Path) -> list[str]:
     json.dump(f, path.open("w"), indent=2, ensure_ascii=False)
     files.append(path.name)
 
+    # ── Planner + ReActAgent compatibility fixtures ─────────────────────
+    planner_fixtures = {
+        "planner_success_trace.json": {
+            "name": "Planner-successful-planned-task",
+            "description": "Planner creates a plan, executes one step, and completes.",
+            "events": [
+                "planning_started",
+                "planning_completed",
+                "step_started",
+                "step_completed",
+                "task_completed",
+            ],
+            "steps": [{"status": "completed", "objective": "answer directly"}],
+            "outcome": {"completed": {"summary": "planned task completed"}},
+        },
+        "planner_tool_step_trace.json": {
+            "name": "Planner-tool-step",
+            "description": "Planner step delegates deterministic tool work through ReAct behavior.",
+            "events": [
+                "planning_started",
+                "planning_completed",
+                "step_started",
+                "tool_call_start",
+                "tool_result_end",
+                "step_completed",
+                "task_completed",
+            ],
+            "tool_activity": [{"tool_name": "calculator", "arguments": {"expression": "2+2"}, "result_summary": "4"}],
+            "outcome": {"completed": {"summary": "planned task completed"}},
+        },
+        "planner_replanning_trace.json": {
+            "name": "Planner-replanning-after-recoverable-failure",
+            "description": "Planner records a recoverable failure, replans, and completes replacement work.",
+            "events": [
+                "planning_started",
+                "planning_completed",
+                "step_started",
+                "step_failed",
+                "replanning_started",
+                "replanning_completed",
+                "step_started",
+                "step_completed",
+                "task_completed",
+            ],
+            "revision": {"trigger": "recoverable_failure", "rationale_contains": "recoverable"},
+            "outcome": {"completed": {"summary": "planned task completed"}},
+        },
+        "planner_cancellation_trace.json": {
+            "name": "Planner-cancellation",
+            "description": "Planner cancellation is explicit and terminal.",
+            "events": ["planning_started", "planning_completed", "step_cancelled", "task_cancelled"],
+            "outcome": {"cancelled": {"reason": "cancelled"}},
+        },
+        "planner_unsupported_trace.json": {
+            "name": "Planner-unsupported-capability",
+            "description": "Unsupported/deferred Planner capability is surfaced instead of silently simulated.",
+            "events": ["task_unsupported"],
+            "outcome": {
+                "unsupported": {
+                    "reason": "capability is outside Feature 021 scope",
+                    "capability": "parallel DAG scheduling",
+                }
+            },
+        },
+    }
+
+    for filename, spec in planner_fixtures.items():
+        f = fixture(spec["name"])
+        f["_description"] = spec["description"]
+        f["data"] = {
+            "trace_id": "trace-001",
+            "task_id": "task-001",
+            "normalized_fields": ["trace_id", "task_id", "plan_id", "step_id", "timestamp"],
+            "events": [
+                {"sequence": index + 1, "event_type": event, "task_id": "task-001"}
+                for index, event in enumerate(spec["events"])
+            ],
+            "steps": spec.get("steps", []),
+            "tool_activity": spec.get("tool_activity", []),
+            "revision": spec.get("revision"),
+            "final_outcome": spec["outcome"],
+        }
+        path = output_dir / filename
+        json.dump(f, path.open("w"), indent=2, ensure_ascii=False)
+        files.append(path.name)
+
     # ── Task fixture ──────────────────────────────────────────────
     f = fixture("Task-pending")
     f["data"] = {

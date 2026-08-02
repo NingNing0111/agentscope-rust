@@ -1,0 +1,32 @@
+{
+  "_fixture_name": "Planner-unsupported-capability",
+  "_generated_at": "2026-08-01T22:14:03.979449+00:00",
+  "_description": "Unsupported/deferred Planner capability is surfaced instead of silently simulated.",
+  "data": {
+    "trace_id": "trace-001",
+    "task_id": "task-001",
+    "normalized_fields": [
+      "trace_id",
+      "task_id",
+      "plan_id",
+      "step_id",
+      "timestamp"
+    ],
+    "events": [
+      {
+        "sequence": 1,
+        "event_type": "task_unsupported",
+        "task_id": "task-001"
+      }
+    ],
+    "steps": [],
+    "tool_activity": [],
+    "revision": null,
+    "final_outcome": {
+      "unsupported": {
+        "reason": "capability is outside Feature 021 scope",
+        "capability": "parallel DAG scheduling"
+      }
+    }
+  }
+}

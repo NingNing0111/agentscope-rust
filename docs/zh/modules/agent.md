@@ -137,6 +137,12 @@ cargo run --example agent_demo -- --model qwen-plus --show-events
 
 规则优先级是：`deny` → `ask` → `allow` → 模式默认值。规则支持精确匹配、`*` 全匹配，以及 `prefix*` 前缀匹配；可用 `rule_content` 对序列化后的工具输入做子串匹配。
 
+### 2.8 SubAgent 协作
+
+`agent_scope_agent` 提供进程内 SubAgent 协作层，用于父 Agent 将有边界的子任务委派给协作者。父 Agent 创建 `SubAgentRegistry`，注册具名 `SubAgent` 或验证可复用的 `SubAgentTemplate` 蓝图，然后用显式 `DelegationRequest` 调用 `delegate_once()` 或 `delegate_many()`。
+
+成功结果以 `CollaborationResult` 返回，状态为 `CollaborationStatus::Succeeded`，其中结果 `Msg.name` 保留 SubAgent 的说话者身份。`ContextSharingPolicy` 默认最小权限，`CapabilityScope` 控制工具、记忆、会话、workspace、sandbox、模型访问与副作用权限。Python app-service/message-bus/distributed 等延后模式会返回 `SubAgentErrorCategory::UnsupportedFeature`，不会静默伪装成功。
+
 ## 3. 快速示例 (Quick Example)
 
 下面是仓库示例中的标准构造方式：创建模型，按需注册工具，然后构造 `ReActAgent`。
@@ -450,3 +456,29 @@ Agent 模块的设计目标是“编排而不耦合”：模型 Provider、工�
 - [工具系统](./tool.md) — `FunctionTool` / `ToolKit` / 工具调用生命周期
 - [事件与流式](./event-streaming.md) — `AgentEvent` 与实时 UI 渲染
 - [记忆与 Session 管理](../getting-started.md#5-十分钟看懂代码) — 通过 `MemoryMiddleware`、`AgentState` 与 session store 扩展 Agent
+
+
+## Planner + ReActAgent 编排
+
+`agent_scope_agent` crate 还提供了增量式 `Planner` 封装，用于在任意 `Agent` 实现（包括 `ReActAgent`）之上执行确定性的多步骤任务。Planner 包含两个协作者：负责输出 JSON plan 的规划 `ChatModel`，以及负责逐步执行的 Agent；每个步骤仍复用现有 reply/tool/middleware 行为。
+
+基本用法：
+
+```rust
+use std::sync::Arc;
+use agent_scope_agent::{Planner, PlannerConfig};
+
+let planner = Planner::new(
+    Arc::new(agent),          // 可执行 ReAct 的 Agent
+    Arc::new(planner_model),  // 输出 {"objective":"...","steps":[...]} 的模型
+    PlannerConfig::default(),
+)?;
+let result = planner.run("准备发布摘要").await?;
+```
+
+Planner 会在 `PlanningTrace` 中记录 `PlanningStarted`、`PlanningCompleted`、步骤生命周期、可选 replanning 事件以及最终任务结果。`run_stream` 会把同一生命周期转换成名为 `planner.lifecycle` 的 `AgentEvent::Custom`，因此不需要新增事件变体即可接入现有流式消费者。
+
+可恢复的步骤失败会触发显式 replanning，直到达到 `PlannerConfig::max_replans`。失败、跳过或被替换的工作通过 `PlanRevision` 和最终 plan 版本保留。终态结果包括 `Completed`、`PartiallyCompleted`、`Cancelled`、`Failed` 和 `Unsupported`。
+
+不支持范围会被显式暴露：Feature 021 不会静默模拟 Python 侧的分布式调度、并行 DAG、持久队列或远程 worker 编排。如果应用需要这些能力，请使用 `unsupported_capability` 或查看兼容性矩阵。
+

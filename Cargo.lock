@@ -15,6 +15,7 @@ dependencies = [
  "agent_scope_types",
  "async-stream",
  "async-trait",
+ "chrono",
  "futures",
  "schemars",
  "serde",

@@ -60,6 +60,31 @@
       "field_path": "$.final_result",
       "normalization_strategy": "order_normalize",
       "description": "Final result object key ordering may differ between languages."
+    },
+    {
+      "field_path": "$.planning_trace.trace_id",
+      "normalization_strategy": "placeholder",
+      "description": "Planner trace IDs differ between Python and Rust runs."
+    },
+    {
+      "field_path": "$.planning_trace.events[*].timestamp",
+      "normalization_strategy": "placeholder",
+      "description": "Planner event timestamps are generated and differ between runs."
+    },
+    {
+      "field_path": "$.planning_trace.events[*].task_id",
+      "normalization_strategy": "stable_mapping",
+      "description": "Task IDs may be generated differently but must preserve correlation."
+    },
+    {
+      "field_path": "$.planning_trace.events[*].plan_id",
+      "normalization_strategy": "stable_mapping",
+      "description": "Plan IDs may be generated differently but must preserve revision relationships."
+    },
+    {
+      "field_path": "$.planning_trace.events[*].step_id",
+      "normalization_strategy": "stable_mapping",
+      "description": "Step IDs may be generated differently but must preserve order and references."
     }
   ],
   "immutable_fields": [
@@ -75,6 +100,11 @@
     "$.side_effects[*]",
     "$.memory_mutations[*].operation",
     "$.tool_calls[*].call_id",
-    "$.model_requests[*].messages[*].role"
+    "$.model_requests[*].messages[*].role",
+    "$.planning_trace.events[*].event_type",
+    "$.planning_trace.events[*].sequence",
+    "$.planning_trace.events[*].error.category",
+    "$.planning_trace.final_outcome",
+    "$.planning_trace.events[*].summary"
   ]
 }

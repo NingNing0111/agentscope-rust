@@ -1,6 +1,6 @@
 //! AgentScope Foundation Layer — Event system.
 //!
-//! 27 event types covering reply lifecycle, model calls, content block streaming,
+//! 33 event types covering reply lifecycle, model calls, content block streaming,
 //! tool execution, user interaction, and external execution.
 
 #![deny(unsafe_code)]

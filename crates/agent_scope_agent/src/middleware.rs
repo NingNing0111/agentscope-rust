@@ -1,6 +1,6 @@
 //! Middleware trait — extension hook interface.
 //!
-//! 8 optional hook methods, each defaulting to no-op, allowing middleware
+//! 9 optional hook methods, each defaulting to no-op, allowing middleware
 //! authors to implement only the hooks they need.
 
 use agent_scope_message::{Msg, ToolCallBlock};
@@ -13,7 +13,7 @@ use crate::agent_error::AgentError;
 
 /// Extension hook interface for intercepting agent behavior.
 ///
-/// All 8 hook methods default to no-op. Middleware implementors override
+/// All 9 hook methods default to no-op. Middleware implementors override
 /// only the hooks they need. Hooks are invoked in FIFO registration order.
 ///
 /// Note: Takes `agent_name: &str` instead of `&ReActAgent` to avoid

@@ -1,4 +1,4 @@
-//! EventType enumeration — all 28 event type variants.
+//! EventType enumeration — all 33 event type variants.
 
 use serde::{Deserialize, Serialize};
 

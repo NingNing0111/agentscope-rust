@@ -9,7 +9,8 @@ release/
 .env*
 .DS_Store
 # personal tooling
-.claude/
+.claude/*
+!.claude/skills/
+.claude/settings.local.json
 .omc/
 agentscope/
-.claude/settings.local.json

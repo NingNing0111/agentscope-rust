@@ -8,6 +8,7 @@ use agent_scope_message::ToolCallBlock;
 use agent_scope_workspace::Skill;
 use serde_json::Value as JsonValue;
 
+use crate::json_repair::{RepairOutcome, repair_tool_input};
 use crate::skill_loader::{LocalSkillLoader, SkillLoader, SkillOrLoader};
 use crate::skill_viewer::{DEFAULT_SKILL_INSTRUCTION, SkillViewer};
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
@@ -396,6 +397,9 @@ impl ToolKit {
     /// * `Ok(ToolExecOutput)` — the tool's execution result
     /// * `Err(ToolError::NotFound)` — no tool matches `tool_call.name`
     /// * `Err(ToolError::InvalidInput)` — `tool_call.input` is not valid JSON
+    ///   (a conservative automatic repair of common malformations is attempted
+    ///   first; see [`crate::repair_tool_input`]) or does not deserialize to
+    ///   the tool's input type
     /// * `Err(ToolError::Execution)` — the tool's handler panicked
     pub async fn call_tool(&self, tool_call: &ToolCallBlock) -> Result<ToolExecOutput, ToolError> {
         let tool = self
@@ -405,12 +409,39 @@ impl ToolKit {
                 tool_name: tool_call.name.clone(),
             })?;
 
-        // Parse input string → JsonValue
-        let input: JsonValue =
-            serde_json::from_str(&tool_call.input).map_err(|e| ToolError::InvalidInput {
-                tool_name: tool_call.name.clone(),
-                reason: format!("failed to parse tool input JSON: {e}"),
-            })?;
+        // Parse input string → JsonValue, repairing the unambiguous JSON
+        // malformations an LLM tool-call stream can produce (trailing extra
+        // brace, truncated string/object, ...). Valid JSON passes through
+        // untouched.
+        let input: JsonValue = match repair_tool_input(&tool_call.input) {
+            RepairOutcome::Valid(value) => value,
+            RepairOutcome::Repaired {
+                original,
+                repaired,
+                value,
+            } => {
+                tracing::warn!(
+                    tool = %tool_call.name,
+                    original = %original,
+                    repaired = %repaired,
+                    "repaired malformed tool argument JSON"
+                );
+                value
+            }
+            RepairOutcome::Failed { error } => {
+                return Err(ToolError::InvalidInput {
+                    tool_name: tool_call.name.clone(),
+                    reason: format!(
+                        "tool argument is not valid JSON and no safe automatic repair was \
+                         possible. The tool was NOT executed; do not report it as done. \
+                         Re-issue the tool call with a single complete, well-formed JSON \
+                         object: every opening brace must have exactly one closing brace, \
+                         strings must be closed with a matching quote, and the argument \
+                         must not be truncated. Raw parse error: {error}"
+                    ),
+                });
+            }
+        };
 
         tool.call(input).await
     }
@@ -603,6 +634,28 @@ mod tests {
 
         let err = tk.call_tool(&tc).await.unwrap_err();
         assert!(matches!(err, ToolError::InvalidInput { .. }));
+    }
+
+    // -- T036: malformed JSON input is conservatively repaired --
+    #[tokio::test]
+    async fn test_call_tool_repairs_malformed_json_input() {
+        let mut tk = ToolKit::new();
+        tk.register(make_search_tool());
+
+        // Trailing extra closing brace (the reported LLM-stream `"}}` bug).
+        let tc = ToolCallBlock::new("tc-rep".into(), "search".into(), r#"{"query":"x"}}"#.into());
+
+        let result = tk.call_tool(&tc).await.unwrap();
+        match result {
+            ToolExecOutput::Complete(chunk) => {
+                assert_eq!(chunk.state, ToolResultState::Success);
+                match &chunk.output {
+                    ToolOutput::Text(text) => assert!(text.contains("found: x")),
+                    _ => panic!("Expected Text output"),
+                }
+            }
+            _ => panic!("Expected Complete"),
+        }
     }
 
     // -- Skill-related tests (T018-T022 equivalent) --

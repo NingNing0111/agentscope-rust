@@ -416,31 +416,29 @@ fn test_end_event_backward_compat_missing_field() {
 #[test]
 fn test_planner_lifecycle_custom_event_round_trip() {
     let mut value = std::collections::HashMap::new();
-    value.insert("event_type".into(), serde_json::json!("planning_started"));
+    value.insert("event_type".into(), serde_json::json!("custom_started"));
     value.insert("sequence".into(), serde_json::json!(1));
     value.insert("task_id".into(), serde_json::json!("task-001"));
-    value.insert("plan_id".into(), serde_json::json!("plan-001"));
-    value.insert("step_id".into(), serde_json::json!("step-001"));
     value.insert("summary".into(), serde_json::json!("safe summary"));
 
     let event = AgentEvent::Custom(CustomEvent {
         base: make_base(),
-        name: "planner.lifecycle".into(),
+        name: "app.custom_event".into(),
         value,
     });
 
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains(r#""type":"CUSTOM""#));
-    assert!(json.contains(r#""name":"planner.lifecycle""#));
-    assert!(json.contains(r#""event_type":"planning_started""#));
+    assert!(json.contains(r#""name":"app.custom_event""#));
+    assert!(json.contains(r#""event_type":"custom_started""#));
 
     let restored: AgentEvent = serde_json::from_str(&json).unwrap();
     match restored {
         AgentEvent::Custom(custom) => {
-            assert_eq!(custom.name, "planner.lifecycle");
+            assert_eq!(custom.name, "app.custom_event");
             assert_eq!(
                 custom.value["event_type"],
-                serde_json::json!("planning_started")
+                serde_json::json!("custom_started")
             );
             assert_eq!(custom.value["sequence"], serde_json::json!(1));
             assert_eq!(custom.value["task_id"], serde_json::json!("task-001"));

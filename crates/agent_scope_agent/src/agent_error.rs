@@ -47,6 +47,15 @@ pub enum AgentError {
     /// A streaming reply is already in progress.
     /// Callers must consume or drop the existing stream before starting a new reply.
     AlreadyStreaming,
+
+    /// Session persistence failure (wraps SessionError from agent_scope_state).
+    ///
+    /// Raised when resuming a persisted session at build time, or when an
+    /// automatic save fails after a reply. Does not break the reply result
+    /// already produced.
+    SessionError {
+        source: agent_scope_state::SessionError,
+    },
 }
 
 impl fmt::Display for AgentError {
@@ -82,6 +91,9 @@ impl fmt::Display for AgentError {
             Self::AlreadyStreaming => {
                 write!(f, "A streaming reply is already in progress")
             }
+            Self::SessionError { source } => {
+                write!(f, "Session persistence error: {source}")
+            }
         }
     }
 }
@@ -91,6 +103,7 @@ impl std::error::Error for AgentError {
         match self {
             Self::ModelError { source } => Some(source),
             Self::ToolError { source } => Some(source),
+            Self::SessionError { source } => Some(source),
             _ => None,
         }
     }
@@ -105,6 +118,12 @@ impl From<agent_scope_model::ModelError> for AgentError {
 impl From<agent_scope_tool::ToolError> for AgentError {
     fn from(source: agent_scope_tool::ToolError) -> Self {
         Self::ToolError { source }
+    }
+}
+
+impl From<agent_scope_state::SessionError> for AgentError {
+    fn from(source: agent_scope_state::SessionError) -> Self {
+        Self::SessionError { source }
     }
 }
 

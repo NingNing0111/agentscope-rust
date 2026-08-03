@@ -163,3 +163,135 @@ async fn test_tool_lifecycle_event_sequence() {
         "TOOL_CALL_START must be after MODEL_CALL_END"
     );
 }
+
+/// T038: malformed tool-argument JSON is conservatively repaired so the tool
+/// executes successfully (layer-1 `json_repair` integration).
+#[tokio::test]
+async fn test_tool_call_repairs_malformed_json() {
+    use agent_scope_tool::{FunctionTool, ToolKit};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(Debug, Clone, Deserialize, JsonSchema)]
+    struct CalcInput {
+        a: i32,
+        b: i32,
+    }
+    async fn calc_handler(input: CalcInput) -> String {
+        format!("{}", input.a + input.b)
+    }
+
+    let mut toolkit = ToolKit::new();
+    toolkit.register(FunctionTool::new(
+        "calculator",
+        "Add two numbers",
+        calc_handler,
+    ));
+
+    // Trailing extra closing brace (the reported LLM-stream `"}}` bug).
+    let script = vec![
+        ScriptedResponse::ToolCall {
+            id: "tc-rep".into(),
+            name: "calculator".into(),
+            input: r#"{"a":1,"b":2}}"#.into(),
+        },
+        ScriptedResponse::Text("done".into()),
+    ];
+    let model = Arc::new(ScriptedModel::new("scripted", script));
+    let config = AgentConfig::builder()
+        .name("repair-agent")
+        .model(model)
+        .toolkit(toolkit)
+        .build()
+        .unwrap();
+    let agent = ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![],
+    )
+    .unwrap();
+
+    let input = user_msg("user", "add 1 and 2").unwrap();
+    let stream = agent.reply_stream(Some(vec![input])).await.unwrap();
+
+    tokio::pin!(stream);
+    let mut saw_result_delta = false;
+    let mut saw_result_text = String::new();
+    while let Some(event) = stream.next().await {
+        if let agent_scope_event::AgentEvent::ToolResultTextDelta(d) = event {
+            saw_result_delta = true;
+            saw_result_text.push_str(&d.delta);
+        }
+    }
+    assert!(saw_result_delta, "expected a ToolResultTextDelta");
+    assert!(saw_result_text.contains('3'), "got: {saw_result_text}");
+}
+
+/// T039: when no safe JSON repair exists, the error feedback is surfaced as a
+/// ToolResultTextDelta and explains the tool was NOT executed.
+#[tokio::test]
+async fn test_unfixable_tool_error_feedback_emitted() {
+    use agent_scope_tool::{FunctionTool, ToolKit};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(Debug, Clone, Deserialize, JsonSchema)]
+    struct CalcInput {
+        a: i32,
+        b: i32,
+    }
+    async fn calc_handler(input: CalcInput) -> String {
+        format!("{}", input.a + input.b)
+    }
+
+    let mut toolkit = ToolKit::new();
+    toolkit.register(FunctionTool::new(
+        "calculator",
+        "Add two numbers",
+        calc_handler,
+    ));
+
+    // "not valid json" cannot be repaired by json_repair → InvalidInput.
+    let script = vec![
+        ScriptedResponse::ToolCall {
+            id: "tc-bad".into(),
+            name: "calculator".into(),
+            input: "not valid json".into(),
+        },
+        ScriptedResponse::Text("gave up".into()),
+    ];
+    let model = Arc::new(ScriptedModel::new("scripted", script));
+    let config = AgentConfig::builder()
+        .name("feedback-agent")
+        .model(model)
+        .toolkit(toolkit)
+        .build()
+        .unwrap();
+    let agent = ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![],
+    )
+    .unwrap();
+
+    let input = user_msg("user", "add").unwrap();
+    let stream = agent.reply_stream(Some(vec![input])).await.unwrap();
+
+    tokio::pin!(stream);
+    let mut saw_feedback = false;
+    let mut feedback = String::new();
+    while let Some(event) = stream.next().await {
+        if let agent_scope_event::AgentEvent::ToolResultTextDelta(d) = event {
+            feedback.push_str(&d.delta);
+            if feedback.contains("was NOT executed") {
+                saw_feedback = true;
+            }
+        }
+    }
+    assert!(
+        saw_feedback,
+        "expected actionable error feedback, got: {feedback}"
+    );
+}

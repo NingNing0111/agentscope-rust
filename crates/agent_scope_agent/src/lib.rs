@@ -43,18 +43,16 @@ pub mod event_emitter;
 pub mod memory_middleware;
 pub mod middleware;
 pub mod permission;
-pub mod plan;
-pub mod planner;
-pub mod planner_error;
-pub mod planner_stream;
-pub mod planning_trace;
 pub mod react_agent;
 pub(crate) mod react_loop;
 pub(crate) mod stream_handle;
 pub(crate) mod streaming_reactor;
 pub mod subagent;
 pub mod subagent_error;
+pub mod task_reminder;
+pub mod task_tools;
 pub(crate) mod token_counter;
+pub(crate) mod tool_feedback;
 
 // Re-exports
 pub use agent_error::AgentError;
@@ -78,18 +76,9 @@ pub use permission::{
     PermissionBehavior, PermissionContext, PermissionDecision, PermissionEngine, PermissionMode,
     PermissionResult, PermissionRule,
 };
-pub use plan::{
-    Plan, PlanRevision, PlanRevisionTrigger, PlanStatus, PlanStep, PlanStepStatus, PlannedTask,
-    PlannerOutcome, ToolActivityRecord, parse_plan_json, validate_goal,
-};
-pub use planner::{Planner, PlannerConfig, PlannerRunResult};
-pub use planner_error::{PlannerError, PlannerErrorCategory};
-pub use planning_trace::{
-    PlanningEvent, PlanningEventType, PlanningTrace, redact_json,
-    safe_summary as planner_safe_summary,
-};
 pub use react_agent::ReActAgent;
 pub use subagent::{
     SelectionPolicy, SubAgent, SubAgentRegistry, SubAgentState, SubAgentTemplate, TemplateStatus,
 };
 pub use subagent_error::{SubAgentError, SubAgentErrorCategory, SubAgentErrorInfo};
+pub use task_tools::{TASK_TOOL_NAMES, TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool};

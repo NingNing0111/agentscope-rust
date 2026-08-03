@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use agent_scope_model::ChatModel;
+use agent_scope_state::SessionStore;
 use agent_scope_tool::ToolKit;
 
 use crate::agent_error::AgentError;
@@ -31,6 +32,21 @@ pub struct AgentConfig {
     pub stream_channel_capacity: Option<usize>,
     /// Permission context used to authorize tool execution.
     pub permission_context: PermissionContext,
+    /// Whether the built-in task planning tools (TaskCreate/TaskList/TaskGet/
+    /// TaskUpdate) are registered at construction time, and whether the
+    /// unfinished-task reminder injection is active. Default: `true`.
+    pub task_tools_enabled: bool,
+    /// Session storage backend for agent-state persistence. When `None`, the
+    /// default [`JsonFileSessionStore`](agent_scope_state::JsonFileSessionStore)
+    /// rooted at `sessions/` is used at construction time (Feature 025).
+    pub session_store: Option<Arc<dyn SessionStore>>,
+    /// Session identifier. When set, the agent is built from any state already
+    /// persisted under this id; when unset, a fresh session id is generated.
+    pub session_id: Option<String>,
+    /// Whether the agent automatically persists its latest state after each
+    /// reply ends (including interruption/cancellation). Default: `true`.
+    /// When `false`, no storage writes occur at all.
+    pub auto_persist: bool,
 }
 
 impl AgentConfig {
@@ -41,7 +57,6 @@ impl AgentConfig {
 }
 
 /// Builder for [`AgentConfig`].
-#[derive(Default)]
 pub struct AgentConfigBuilder {
     name: Option<String>,
     system_prompt: String,
@@ -49,6 +64,27 @@ pub struct AgentConfigBuilder {
     toolkit: Option<ToolKit>,
     stream_channel_capacity: Option<usize>,
     permission_context: PermissionContext,
+    task_tools_enabled: bool,
+    session_store: Option<Arc<dyn SessionStore>>,
+    session_id: Option<String>,
+    auto_persist: bool,
+}
+
+impl Default for AgentConfigBuilder {
+    fn default() -> Self {
+        Self {
+            name: None,
+            system_prompt: String::new(),
+            model: None,
+            toolkit: None,
+            stream_channel_capacity: None,
+            permission_context: PermissionContext::default(),
+            task_tools_enabled: true,
+            session_store: None,
+            session_id: None,
+            auto_persist: true,
+        }
+    }
 }
 
 impl AgentConfigBuilder {
@@ -81,6 +117,41 @@ impl AgentConfigBuilder {
     /// Set the permission mode while keeping existing rules.
     pub fn permission_mode(mut self, mode: PermissionMode) -> Self {
         self.permission_context.mode = mode;
+        self
+    }
+
+    /// Enable or disable the built-in task planning tools
+    /// (TaskCreate/TaskList/TaskGet/TaskUpdate) and the unfinished-task
+    /// reminder injection. Enabled by default.
+    pub fn task_tools_enabled(mut self, enabled: bool) -> Self {
+        self.task_tools_enabled = enabled;
+        self
+    }
+
+    /// Inject a session storage backend for agent-state persistence.
+    ///
+    /// When not set, a default `JsonFileSessionStore` rooted at `sessions/` is
+    /// created at agent construction time (Feature 025).
+    pub fn session_store(mut self, store: Arc<dyn SessionStore>) -> Self {
+        self.session_store = Some(store);
+        self
+    }
+
+    /// Set the session identifier used to persist / resume agent state.
+    ///
+    /// When set, the agent is built from any state already persisted under
+    /// this id; when unset, a fresh session id is generated.
+    pub fn session_id(mut self, id: impl Into<String>) -> Self {
+        self.session_id = Some(id.into());
+        self
+    }
+
+    /// Toggle automatic persistence of agent state after each reply.
+    ///
+    /// Defaults to `true`. When `false`, no storage writes occur at all
+    /// (spec FR-007 / SC-007).
+    pub fn auto_persist(mut self, enabled: bool) -> Self {
+        self.auto_persist = enabled;
         self
     }
 
@@ -124,6 +195,10 @@ impl AgentConfigBuilder {
             toolkit: self.toolkit,
             stream_channel_capacity: self.stream_channel_capacity,
             permission_context: self.permission_context,
+            task_tools_enabled: self.task_tools_enabled,
+            session_store: self.session_store,
+            session_id: self.session_id,
+            auto_persist: self.auto_persist,
         })
     }
 }
@@ -301,6 +376,31 @@ mod tests {
         assert_eq!(config.name, "test-agent");
         assert!(config.system_prompt.is_empty());
         assert!(config.toolkit.is_none());
+        assert!(config.task_tools_enabled);
+    }
+
+    /// T024: task_tools_enabled defaults to true; explicit disable works.
+    #[test]
+    fn test_agent_config_task_tools_toggle() {
+        let model = || {
+            Arc::new(DummyModel {
+                name: "dummy".into(),
+            }) as Arc<dyn ChatModel>
+        };
+        let enabled = AgentConfig::builder()
+            .name("a")
+            .model(model())
+            .build()
+            .unwrap();
+        assert!(enabled.task_tools_enabled);
+
+        let disabled = AgentConfig::builder()
+            .name("a")
+            .model(model())
+            .task_tools_enabled(false)
+            .build()
+            .unwrap();
+        assert!(!disabled.task_tools_enabled);
     }
 
     /// T015: ReActConfig default values.

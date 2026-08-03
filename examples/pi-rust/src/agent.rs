@@ -97,7 +97,11 @@ fn build_react_agent(
     let mut builder = AgentConfig::builder()
         .name("pi_rust")
         .model(model.clone())
-        .system_prompt(system_prompt(config, skill_instructions));
+        .system_prompt(system_prompt(config, skill_instructions))
+        // pi-rust persists conversations via its own SessionRecord store
+        // (workdir/sessions); disable the library's default auto-persist so no
+        // extra session files are written (Feature 025).
+        .auto_persist(false);
 
     if !config.no_tools {
         builder = builder
@@ -175,7 +179,8 @@ fn system_prompt(config: &RuntimeConfig, skill_instructions: &str) -> String {
 Coding workflow:
 1. Understand: inspect relevant files before editing.
 2. Plan: identify the minimal change before modifying files.
-3. Change: prefer Edit for existing files and Write for new files.
+3. Change: prefer Edit for existing files and Write for new files. For very large
+   content, write a placeholder file first, then append with Edit in chunks.
 4. Verify: run the narrowest relevant check/test with Bash.
 5. Iterate: if verification fails, inspect the error, make a targeted fix, and rerun verification within the iteration budget.
 6. Report: final answer must include Summary, Files changed, Verification, and Remaining risks.
@@ -189,6 +194,19 @@ Coding workflow:
             "Use Skill only for skills listed in <agent-skills>. When a user task matches a listed skill, call Skill first to read the full instructions.\n\n{skill_instructions}\n"
         )
     };
+    let task_tools_guidance = r#"
+Task tools (TaskCreate / TaskList / TaskGet / TaskUpdate) are available.
+Use them only for genuinely multi-step work (3+ steps). The correct lifecycle is:
+  TaskCreate -> do the actual work with Read/Write/Edit/Bash -> TaskUpdate(status=completed).
+NEVER mark a task completed before its work has actually succeeded.
+If only one step remains, just do it directly without creating a task.
+"#;
+    let failure_recovery_guidance = r#"
+If a tool reports an argument/JSON error or "was NOT executed", the tool call was
+NOT performed. Re-issue it with a corrected, complete JSON argument instead of
+stopping or pretending it succeeded. Repeated failures on large arguments mean
+the argument is too big: prefer incremental writes.
+"#;
     format!(
         r#"You are pi-rust, a coding Agent implemented in Rust on agentscope-rust.
 
@@ -201,6 +219,8 @@ Capabilities:
 - Never reveal API keys or secrets.
 {mode_guidance}
 {skills_guidance}
+{task_tools_guidance}
+{failure_recovery_guidance}
 Current provider: {provider}
 Current model: {model}
 Run mode: {mode}
@@ -224,4 +244,68 @@ pub fn unsupported_provider(provider: &str) -> PiError {
     PiError::unsupported(format!(
         "provider '{provider}' is not implemented; pi-rust currently supports DashScope"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ProviderConfig, RunMode, RuntimeConfig};
+    use std::path::PathBuf;
+
+    fn config(mode: RunMode) -> RuntimeConfig {
+        RuntimeConfig {
+            api_key: "sk-test".into(),
+            masked_api_key: "****".into(),
+            model: "qwen-plus".into(),
+            provider: ProviderConfig::DashScope,
+            workdir: PathBuf::from(".pi-rust"),
+            cwd: PathBuf::from("."),
+            mode,
+            skill_paths: vec![],
+            prompt: None,
+            resume: None,
+            list_sessions: false,
+            no_tools: false,
+            no_memory: false,
+            no_rag: false,
+            max_iters: 20,
+            command_timeout_secs: 30,
+            show_events: false,
+            show_json_events: false,
+        }
+    }
+
+    #[test]
+    fn coding_system_prompt_includes_task_tool_workflow() {
+        let prompt = system_prompt(&config(RunMode::Coding), "");
+        for needle in [
+            "TaskCreate",
+            "TaskUpdate(status=completed)",
+            "NEVER mark a task completed",
+            "was NOT executed",
+            "incremental writes",
+            "placeholder file",
+        ] {
+            assert!(prompt.contains(needle), "missing {needle:?} in prompt");
+        }
+    }
+
+    #[test]
+    fn react_system_prompt_includes_recovery_guidance() {
+        let prompt = system_prompt(&config(RunMode::React), "");
+        assert!(
+            prompt.contains("TaskCreate"),
+            "task tools missing in react prompt"
+        );
+        assert!(
+            prompt.contains("was NOT executed"),
+            "recovery missing in react prompt"
+        );
+    }
+
+    #[test]
+    fn coding_mode_mentions_chunked_writes() {
+        let prompt = system_prompt(&config(RunMode::Coding), "");
+        assert!(prompt.contains("append with Edit in chunks"));
+    }
 }

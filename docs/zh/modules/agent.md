@@ -458,27 +458,176 @@ Agent 模块的设计目标是“编排而不耦合”：模型 Provider、工�
 - [记忆与 Session 管理](../getting-started.md#5-十分钟看懂代码) — 通过 `MemoryMiddleware`、`AgentState` 与 session store 扩展 Agent
 
 
-## Planner + ReActAgent 编排
+## 内置任务规划工具
 
-`agent_scope_agent` crate 还提供了增量式 `Planner` 封装，用于在任意 `Agent` 实现（包括 `ReActAgent`）之上执行确定性的多步骤任务。Planner 包含两个协作者：负责输出 JSON plan 的规划 `ChatModel`，以及负责逐步执行的 Agent；每个步骤仍复用现有 reply/tool/middleware 行为。
+`ReActAgent` 默认注册一组内置任务规划工具，供模型在推理-行动循环中自主拆解与跟踪复杂任务。这与 Python AgentScope 的 `TaskCreate` / `TaskList` / `TaskGet` / `TaskUpdate` 工具保持一致——规划能力通过工具系统内置实现，不需要独立的 Planner 组件。
 
-基本用法：
+### 任务模型
+
+任务（Task）作为 Agent 状态（`AgentState.tasks_context`）的一部分随会话持久化，包含：顺序数值标识 `id`、标题 `subject`、描述 `description`、状态 `pending` / `in_progress` / `completed`、负责人 `owner`、双向阻塞引用 `blocks` / `blocked_by`、任意键值元数据 `metadata` 与创建时间 `created_at`。任务不存放于可被压缩的对话上下文中，因此长对话与压缩后仍保持完整。
+
+### 内置工具
+
+| 工具 | 作用 |
+|------|------|
+| `TaskCreate` | 创建任务，自动分配下一个顺序 id，初始状态为 `pending` |
+| `TaskList` | 列出所有任务及状态、负责人与阻塞关系 |
+| `TaskGet` | 按 id 查询单个任务的完整详情 |
+| `TaskUpdate` | 更新标题/描述/负责人/状态/元数据，建立双向依赖（`add_blocks` / `add_blocked_by`），或通过 `deleted` 永久移除任务并清理引用 |
+
+工具的输入 schema、行为语义与输出文本逐字对齐 Python 参考实现，输出可直接用于差分测试。任务工具被视为安全的内部状态操作：权限检查始终放行，不触发用户审批。
+
+### 任务提醒注入
+
+当存在未完成任务（`pending` 或 `in_progress`），且当前对话上下文中既没有任务工具的调用痕迹、也没有先前的任务提醒（例如工具调用痕迹已被上下文压缩移除）时，Agent 会向对话上下文注入一条提示块，说明进行中与待处理任务的数量，并指引模型使用 `TaskList` 查看。该机制保证压缩后 Agent 仍能感知未完成任务并继续推进。
+
+### 配置
+
+默认启用；如需禁用：
 
 ```rust
-use std::sync::Arc;
-use agent_scope_agent::{Planner, PlannerConfig};
-
-let planner = Planner::new(
-    Arc::new(agent),          // 可执行 ReAct 的 Agent
-    Arc::new(planner_model),  // 输出 {"objective":"...","steps":[...]} 的模型
-    PlannerConfig::default(),
-)?;
-let result = planner.run("准备发布摘要").await?;
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .task_tools_enabled(false)   // 禁用任务工具与提醒注入
+    .build()?;
 ```
 
-Planner 会在 `PlanningTrace` 中记录 `PlanningStarted`、`PlanningCompleted`、步骤生命周期、可选 replanning 事件以及最终任务结果。`run_stream` 会把同一生命周期转换成名为 `planner.lifecycle` 的 `AgentEvent::Custom`，因此不需要新增事件变体即可接入现有流式消费者。
+### 兼容性
 
-可恢复的步骤失败会触发显式 replanning，直到达到 `PlannerConfig::max_replans`。失败、跳过或被替换的工作通过 `PlanRevision` 和最终 plan 版本保留。终态结果包括 `Completed`、`PartiallyCompleted`、`Cancelled`、`Failed` 和 `Unsupported`。
+- **兼容等级**：L2（核心行为兼容——工具生命周期、输出文本、提醒注入行为）+ L3（公开 API 语义兼容——`task_tools_enabled` 配置、任务模型与工具类型）。
+- **上游基线**：Python AgentScope commit `9d1026fa`（v2.0.5 基线）；工具命名、输入 schema、输出文本逐字对齐。
+- **破坏性变更**：独立的 `Planner` 组件（Feature 021 产物）已整体移除，规划能力统一由内置任务工具提供。
 
-不支持范围会被显式暴露：Feature 021 不会静默模拟 Python 侧的分布式调度、并行 DAG、持久队列或远程 worker 编排。如果应用需要这些能力，请使用 `unsupported_capability` 或查看兼容性矩阵。
+
+## Agent 状态持久化
+
+`ReActAgent` 内置开箱即用的状态持久化：每次回复结束后自动把 Agent 的完整状态（对话上下文、摘要、任务清单、权限/工具/中间件上下文）保存到本地存储；进程重启后按同一会话标识即可恢复完整历史继续作答。持久化语义对齐 Python AgentScope 参考实现的会话存储（`StorageBase` / `SessionRecord`）。
+
+### 开箱即用：默认 JSON 文件存储
+
+构建 Agent 时**无需任何额外配置**即可获得自动持久化——未显式注入存储后端时，内部使用默认的 `JsonFileSessionStore`，每个会话一个 `{session_id}.json` 文件，存放在工作目录的 `sessions/` 目录下：
+
+```rust
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .build()?;                       // 默认：auto_persist = true，JSON 文件后端
+let agent = ReActAgent::build(config, ReActConfig::default(), ContextConfig::default(), vec![]).await?;
+```
+
+`AgentConfig` 新增的三个可选字段（均向后兼容，不设置时行为与旧版一致）：
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `session_store` | `None` → 默认 `JsonFileSessionStore`（`sessions/`） | 注入存储后端 |
+| `session_id` | `None` → 生成新会话 ID | 指定会话标识以恢复既有状态 |
+| `auto_persist` | `true` | 每次回复结束后自动落盘；`false` 时全程零写入 |
+
+### 按会话标识恢复会话
+
+指定 `session_id` 并使用异步构造器 `ReActAgent::build` 时，构建期会从存储加载既有状态：
+
+- 会话存在 → 以恢复的完整状态构建 Agent，可基于历史继续作答；
+- 会话不存在 → 创建新会话（不报错、不崩溃）；
+- 加载失败（文件损坏 / I/O 错误）→ 返回类型化的 `AgentError`，不静默降级。
+
+```rust
+// 进程重启后，用同一会话标识重建 Agent
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .session_id("my-session-1")      // 从存储恢复该会话
+    .build()?;
+let agent = ReActAgent::build(config, ReActConfig::default(), ContextConfig::default(), vec![]).await?;
+// agent 已携带完整历史，可直接继续对话
+```
+
+> 注意：同步构造器 `ReActAgent::new` 保持向后兼容，不会异步恢复既有会话；需要会话恢复时请使用 `ReActAgent::build`。
+
+### 自动持久化时机与失败处理
+
+- **时机**：每次 `reply()` / `reply_stream()` 正常结束，以及被中断或取消时，自动保存最新状态。
+- **失败处理**：保存失败通过 tracing 上报（`warn`），但**不会破坏**已经完成的回复结果或正在进行的推理循环。
+- **并发安全**：同一 Agent 的保存操作串行化，多次保存不会损坏会话文件；写入采用原子方式（临时文件 + rename），进程崩溃不会留下半写文件。
+- **关闭开关**：`auto_persist(false)` 时即使配置了后端也不写入，Agent 行为与未引入持久化前一致。
+
+### 会话管理
+
+持久化的会话支持轻量管理：`list_ids()` 列出所有会话 ID；`list_meta()` 返回按最后活跃时间降序的元数据（创建时间、最后活跃时间、消息数、状态），**无需反序列化完整状态**；`delete(id)` 幂等（删除不存在的会话不报错）。
+
+```rust
+let store = JsonFileSessionStore::new("./sessions");
+let ids = store.list_ids().await?;
+let metas = store.list_meta().await?;
+store.delete("old-session").await?;   // 幂等
+```
+
+### 实现自定义存储后端
+
+`SessionStore` trait（位于 `agent_scope_state`）是自定义后端（SQLite、MySQL、Redis、对象存储等）的**唯一扩展点**。实现该接口即可让 Agent 状态透明地走自有后端，行为与内置 JSON 文件后端完全一致，**无需修改框架代码**：
+
+```rust
+use agent_scope_state::{Session, SessionError, SessionImpl, SessionMeta, SessionStore};
+
+#[async_trait::async_trait]
+impl SessionStore for MySqliteStore {
+    // save    —— upsert：同一 ID 重复保存即覆盖
+    async fn save(&self, session: &dyn Session) -> Result<(), SessionError> { /* ... */ }
+
+    // load    —— 缺失返回 SessionError::NotFound { session_id }
+    async fn load(&self, id: &str) -> Result<SessionImpl, SessionError> { /* ... */ }
+
+    // delete  —— 幂等：ID 不存在也返回 Ok(())
+    async fn delete(&self, id: &str) -> Result<(), SessionError> { /* ... */ }
+
+    async fn list_ids(&self) -> Result<Vec<String>, SessionError> { /* ... */ }
+    async fn list_meta(&self) -> Result<Vec<SessionMeta>, SessionError> { /* ... */ }
+}
+
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .session_store(Arc::new(MySqliteStore::new("app.db")))
+    .session_id("s-1")
+    .build()?;
+```
+
+**语义契约**（对齐 Python `StorageBase`）：
+
+| 方法 | 语义 |
+|------|------|
+| `save` | upsert——同一 ID 重复保存即覆盖，对应 `upsert_session` / `update_session_state` |
+| `load` | 缺失返回 `SessionError::NotFound`，对应 `get_session` |
+| `delete` | 幂等，对应 `delete_session` |
+| `list_ids` | 列出全部会话 ID |
+| `list_meta` | 轻量元数据，按 `last_active` 降序，不加载完整状态，对应 `list_sessions` |
+
+**错误契约**：所有失败必须返回类型化的 `SessionError`（`NotFound` / `SerializationError` / `StorageError`），禁止依赖字符串内容判断错误类型；实现需满足 `Send + Sync`。
+
+**以 SQLite 为例**的表结构（对齐 JSON 文件的 `SessionRecordFile` 字段）：
+
+```sql
+CREATE TABLE sessions (
+    session_id    TEXT PRIMARY KEY,
+    status        TEXT NOT NULL,
+    message_count INTEGER NOT NULL,
+    created_at    TEXT NOT NULL,
+    last_active   TEXT NOT NULL,
+    state_json    TEXT NOT NULL          -- AgentState 的 serde_json 序列化结果
+);
+```
+
+- `save` → `INSERT ... ON CONFLICT(session_id) DO UPDATE SET ...`（upsert）
+- `load` → `SELECT * FROM sessions WHERE session_id = ?`；无行返回 `NotFound`
+- `list_meta` → `SELECT session_id, status, message_count, created_at, last_active FROM sessions ORDER BY last_active DESC`
+
+MySQL 语义相同，仅 upsert 用 `INSERT ... ON DUPLICATE KEY UPDATE ...`，`state_json` 用 `LONGTEXT` / `JSON` 列。
+
+### 兼容性
+
+- **兼容等级**：L2（核心行为兼容——会话保存/恢复语义对齐 Python `StorageBase`）+ L3（公开 API 语义兼容——`JsonFileSessionStore`、`SessionStore` 扩展点、`AgentConfig` 新增配置）。L1 字节级协议不在范围。
+- **数据协议**：持久化的 `AgentState` 字段与 Python 参考实现逐一对应；`AgentState` 全部字段 `#[serde(default)]` 且忽略未知字段，旧版本数据文件可兼容加载，新增字段不破坏旧数据。
+- **上游基线**：Python AgentScope v2.0.5（commit `6698d98`），`app/storage/_base.py`、`app/storage/_model/_session.py`、`state/_state.py`。
+
 

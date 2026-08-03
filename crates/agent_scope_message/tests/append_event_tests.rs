@@ -641,7 +641,7 @@ fn test_append_event_hint_block_and_tool_result_lifecycle() {
         base: make_base(),
         reply_id: "reply-001".into(),
         block_id: "hint-1".into(),
-        source: Some("planner".into()),
+        source: Some("runtime-state".into()),
         hint: HintContent::Text("use a calculator".into()),
     }))
     .unwrap();
@@ -676,7 +676,7 @@ fn test_append_event_hint_block_and_tool_result_lifecycle() {
     match &msg.content[0] {
         ContentBlock::Hint(block) => {
             assert_eq!(block.id, "hint-1");
-            assert_eq!(block.source.as_deref(), Some("planner"));
+            assert_eq!(block.source.as_deref(), Some("runtime-state"));
         }
         other => panic!("expected hint block, got {other:?}"),
     }

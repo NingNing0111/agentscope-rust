@@ -458,27 +458,176 @@ The Agent module is designed to “orchestrate without coupling”: model provid
 - [Memory and Session Management](../getting-started.md#5-understand-the-code-in-ten-minutes) — extend Agent through `MemoryMiddleware`, `AgentState`, and session stores
 
 
-## Planner + ReActAgent orchestration
+## Built-in task planning tools
 
-The `agent_scope_agent` crate also exposes an additive `Planner` wrapper for deterministic multi-step work on top of any `Agent` implementation, including `ReActAgent`. A planner has two collaborators: a planning `ChatModel` that returns a JSON plan, and an execution agent that handles each step through the existing reply/tool/middleware behavior.
+`ReActAgent` registers a set of built-in task planning tools by default, letting the model break down and track complex work during the reasoning-acting loop. This mirrors the Python AgentScope tools `TaskCreate` / `TaskList` / `TaskGet` / `TaskUpdate` — planning is built into the tool system, with no separate Planner component.
 
-Basic usage:
+### Task model
+
+Tasks live in the agent state (`AgentState.tasks_context`) and persist with the session. Each task has: a sequential numeric `id`, `subject`, `description`, a status (`pending` / `in_progress` / `completed`), an `owner`, bidirectional `blocks` / `blocked_by` references, arbitrary `metadata`, and a `created_at` timestamp. Tasks are not stored in the compressible conversation context, so they survive long conversations and context compression.
+
+### Built-in tools
+
+| Tool | Purpose |
+|------|---------|
+| `TaskCreate` | Create a task, auto-assigning the next sequential id, starting as `pending` |
+| `TaskList` | List all tasks with status, owner and blocking relations |
+| `TaskGet` | Fetch the full details of a single task by id |
+| `TaskUpdate` | Update subject/description/owner/status/metadata, set up bidirectional dependencies (`add_blocks` / `add_blocked_by`), or permanently remove a task via `deleted` (cleaning up references) |
+
+Input schemas, behavior and output text align verbatim with the Python reference, so tool results are directly diff-testable. Task tools are treated as safe internal state operations: permission checks always pass and no user approval is triggered.
+
+### Task reminder injection
+
+When unfinished tasks exist (`pending` or `in_progress`) and the current context shows neither task-tool activity nor a previous reminder (e.g. the tool calls were compressed away), the agent appends a hint block to the conversation context stating the number of in-progress and pending tasks and pointing the model at `TaskList`. This keeps the agent aware of unfinished work after context compression.
+
+### Configuration
+
+Enabled by default; to disable:
 
 ```rust
-use std::sync::Arc;
-use agent_scope_agent::{Planner, PlannerConfig};
-
-let planner = Planner::new(
-    Arc::new(agent),          // ReAct-capable execution agent
-    Arc::new(planner_model),  // model that emits {"objective":"...","steps":[...]}
-    PlannerConfig::default(),
-)?;
-let result = planner.run("prepare a release summary").await?;
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .task_tools_enabled(false)   // disables task tools and the reminder
+    .build()?;
 ```
 
-Planner execution records `PlanningStarted`, `PlanningCompleted`, step lifecycle events, optional replanning events, and a terminal task outcome in `PlanningTrace`. `run_stream` exposes the same lifecycle as `AgentEvent::Custom` events named `planner.lifecycle`, so existing consumers do not need new event variants.
+### Compatibility
 
-Recoverable step failures trigger explicit replanning until `PlannerConfig::max_replans` is reached. Failed/skipped/replaced work is preserved through `PlanRevision` records and the final plan version. Terminal outcomes include `Completed`, `PartiallyCompleted`, `Cancelled`, `Failed`, and `Unsupported`.
+- **Level**: L2 (core-behavior compatible — tool lifecycle, output text, reminder injection) + L3 (public-API semantics — `task_tools_enabled` config, task model and tool types).
+- **Upstream baseline**: Python AgentScope commit `9d1026fa` (v2.0.5); tool names, input schemas and output text align verbatim.
+- **Breaking change**: the standalone `Planner` component (from Feature 021) has been removed entirely; planning is now provided by the built-in task tools.
 
-Unsupported scope is explicit: Feature 021 does not silently emulate Python-only distributed scheduling, parallel DAG execution, durable queues, or remote worker orchestration. Use `unsupported_capability` or inspect the compatibility matrix when an application needs those capabilities.
+
+## Agent State Persistence
+
+`ReActAgent` ships with out-of-the-box state persistence: after every reply, the agent's full state (dialogue context, summary, task list, permission/tool/middleware contexts) is automatically saved to local storage; after a process restart, the full history can be resumed by the same session id. The persistence semantics align with the Python AgentScope reference session storage (`StorageBase` / `SessionRecord`).
+
+### Out of the Box: Default JSON File Storage
+
+No extra configuration is needed to get automatic persistence — when no store is injected, the built-in `JsonFileSessionStore` is used, with one `{session_id}.json` file per session under the `sessions/` directory of the working directory:
+
+```rust
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .build()?;                       // default: auto_persist = true, JSON file backend
+let agent = ReActAgent::build(config, ReActConfig::default(), ContextConfig::default(), vec![]).await?;
+```
+
+Three new optional `AgentConfig` fields (all backward compatible; leaving them unset behaves exactly as before):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `session_store` | `None` → default `JsonFileSessionStore` (`sessions/`) | Injected storage backend |
+| `session_id` | `None` → fresh session id | Session id used to resume existing state |
+| `auto_persist` | `true` | Auto-save after each reply; `false` ⇒ zero writes |
+
+### Resuming a Session by Id
+
+When `session_id` is set and the async constructor `ReActAgent::build` is used, existing state is loaded from storage at construction time:
+
+- Session exists → the agent is built from the restored state and can continue answering on top of the full history;
+- Session missing → a new session is created (no error, no crash);
+- Load failure (corrupted file / I/O) → a typed `AgentError` is returned, never a silent degradation.
+
+```rust
+// After a process restart, rebuild the agent with the same session id
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .session_id("my-session-1")      // resume this session from storage
+    .build()?;
+let agent = ReActAgent::build(config, ReActConfig::default(), ContextConfig::default(), vec![]).await?;
+// agent already carries the full history — continue the conversation directly
+```
+
+> Note: the synchronous `ReActAgent::new` constructor stays backward compatible and does not asynchronously resume an existing session; use `ReActAgent::build` for session resume.
+
+### Auto-Persist Timing and Failure Handling
+
+- **Timing**: after every `reply()` / `reply_stream()` completes normally, and also when interrupted or cancelled, the latest state is saved.
+- **Failure handling**: a failed save is reported via tracing (`warn`) but never breaks the already-produced reply result or an in-flight reasoning loop.
+- **Concurrency safety**: saves on the same agent are serialized; writes are atomic (temp file + rename), so a crash never leaves a half-written file.
+- **Toggle**: with `auto_persist(false)`, no writes occur even when a backend is configured — behavior identical to before persistence was introduced.
+
+### Session Management
+
+Persisted sessions support lightweight management: `list_ids()` lists all session ids; `list_meta()` returns metadata (created-at, last-active, message count, status) sorted by last-active descending, **without deserializing the full state**; `delete(id)` is idempotent (deleting a missing session is not an error).
+
+```rust
+let store = JsonFileSessionStore::new("./sessions");
+let ids = store.list_ids().await?;
+let metas = store.list_meta().await?;
+store.delete("old-session").await?;   // idempotent
+```
+
+### Implementing a Custom Storage Backend
+
+The `SessionStore` trait (in `agent_scope_state`) is the **single extension point** for custom backends (SQLite, MySQL, Redis, object storage, …). Implement it and agent state transparently goes through your backend, with behavior identical to the built-in JSON file backend — **no framework changes required**:
+
+```rust
+use agent_scope_state::{Session, SessionError, SessionImpl, SessionMeta, SessionStore};
+
+#[async_trait::async_trait]
+impl SessionStore for MySqliteStore {
+    // save    —— upsert: saving to the same id overwrites
+    async fn save(&self, session: &dyn Session) -> Result<(), SessionError> { /* ... */ }
+
+    // load    —— missing returns SessionError::NotFound { session_id }
+    async fn load(&self, id: &str) -> Result<SessionImpl, SessionError> { /* ... */ }
+
+    // delete  —— idempotent: Ok(()) even if the id does not exist
+    async fn delete(&self, id: &str) -> Result<(), SessionError> { /* ... */ }
+
+    async fn list_ids(&self) -> Result<Vec<String>, SessionError> { /* ... */ }
+    async fn list_meta(&self) -> Result<Vec<SessionMeta>, SessionError> { /* ... */ }
+}
+
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .session_store(Arc::new(MySqliteStore::new("app.db")))
+    .session_id("s-1")
+    .build()?;
+```
+
+**Semantic contract** (aligned with Python `StorageBase`):
+
+| Method | Semantics |
+|--------|-----------|
+| `save` | upsert — saving to the same id overwrites, mirrors `upsert_session` / `update_session_state` |
+| `load` | missing returns `SessionError::NotFound`, mirrors `get_session` |
+| `delete` | idempotent, mirrors `delete_session` |
+| `list_ids` | list all persisted session ids |
+| `list_meta` | lightweight metadata sorted by `last_active` descending, no full-state load, mirrors `list_sessions` |
+
+**Error contract**: every failure must return a typed `SessionError` (`NotFound` / `SerializationError` / `StorageError`) — never string matching; implementations must be `Send + Sync`.
+
+**SQLite example** table (mirrors the `SessionRecordFile` fields of the JSON format):
+
+```sql
+CREATE TABLE sessions (
+    session_id    TEXT PRIMARY KEY,
+    status        TEXT NOT NULL,
+    message_count INTEGER NOT NULL,
+    created_at    TEXT NOT NULL,
+    last_active   TEXT NOT NULL,
+    state_json    TEXT NOT NULL          -- serde_json-serialized AgentState
+);
+```
+
+- `save` → `INSERT ... ON CONFLICT(session_id) DO UPDATE SET ...` (upsert)
+- `load` → `SELECT * FROM sessions WHERE session_id = ?`; no rows → `NotFound`
+- `list_meta` → `SELECT session_id, status, message_count, created_at, last_active FROM sessions ORDER BY last_active DESC`
+
+MySQL semantics are identical; upsert uses `INSERT ... ON DUPLICATE KEY UPDATE ...` and `state_json` uses `LONGTEXT` / `JSON`.
+
+### Compatibility
+
+- **Level**: L2 (core-behavior compatible — session save/resume semantics aligned with Python `StorageBase`) + L3 (public-API semantics — `JsonFileSessionStore`, `SessionStore` extension point, new `AgentConfig` fields). L1 byte-level protocol is out of scope.
+- **Data protocol**: the persisted `AgentState` fields map one-to-one to the Python reference; all `AgentState` fields are `#[serde(default)]` and unknown fields are ignored, so older data files load compatibly and new fields never break old data.
+- **Upstream baseline**: Python AgentScope v2.0.5 (commit `6698d98`), `app/storage/_base.py`, `app/storage/_model/_session.py`, `state/_state.py`.
+
 

@@ -116,6 +116,61 @@ impl TaskContext {
             .filter(|t| t.owner.as_deref() == Some(owner))
             .collect()
     }
+
+    /// Derive the next sequential task id.
+    ///
+    /// Existing ids that look numeric are considered; any non-numeric ids
+    /// (e.g. legacy UUIDs) are ignored. Returns `"1"` for an empty set.
+    /// Aligns with Python `TaskCreate.call` in `tool/_task/_create_task.py`.
+    pub fn next_sequential_id(&self) -> String {
+        let max_numeric = self
+            .tasks
+            .iter()
+            .filter_map(|t| t.id.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        (max_numeric + 1).to_string()
+    }
+
+    /// Permanently remove a task and clean all dangling references.
+    ///
+    /// Removes the task with the given `id` from the collection, then removes
+    /// that id from every other task's `blocks` and `blocked_by` lists.
+    /// Returns `true` when the task was found and deleted.
+    /// Aligns with Python `TaskUpdate` status `deleted` handling.
+    pub fn delete_task(&mut self, id: &str) -> bool {
+        let Some(index) = self.tasks.iter().position(|t| t.id == id) else {
+            return false;
+        };
+        self.tasks.remove(index);
+        for task in &mut self.tasks {
+            task.blocks.retain(|b| b != id);
+            task.blocked_by.retain(|b| b != id);
+        }
+        true
+    }
+
+    /// Update the block relationship between two tasks bidirectionally.
+    ///
+    /// Adds `blocked_by_id` to `block_id`'s `blocks` and `block_id` to
+    /// `blocked_by_id`'s `blocked_by` (deduplicated). If either id does not
+    /// reference an existing task, the write is skipped entirely (no dangling
+    /// references). Aligns with Python `_TaskToolBase._update_block_relation`.
+    pub fn update_block_relation(&mut self, block_id: &str, blocked_by_id: &str) {
+        let both_exist = self.tasks.iter().any(|t| t.id == block_id)
+            && self.tasks.iter().any(|t| t.id == blocked_by_id);
+        if !both_exist {
+            return;
+        }
+        for task in &mut self.tasks {
+            if task.id == block_id && !task.blocks.iter().any(|b| b == blocked_by_id) {
+                task.blocks.push(blocked_by_id.to_string());
+            }
+            if task.id == blocked_by_id && !task.blocked_by.iter().any(|b| b == block_id) {
+                task.blocked_by.push(block_id.to_string());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -186,5 +241,96 @@ mod tests {
         let restored: Task = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.blocks, vec!["t2"]);
         assert_eq!(restored.blocked_by, vec!["t0"]);
+    }
+
+    #[test]
+    fn test_next_sequential_id_empty() {
+        let ctx = TaskContext::new();
+        assert_eq!(ctx.next_sequential_id(), "1");
+    }
+
+    #[test]
+    fn test_next_sequential_id_numeric_max_plus_one() {
+        let mut ctx = TaskContext::new();
+        for id in ["1", "2", "5"] {
+            let mut task = Task::new(format!("task{id}"), "desc".into(), HashMap::new());
+            task.id = id.to_string();
+            ctx.add_task(task);
+        }
+        assert_eq!(ctx.next_sequential_id(), "6");
+    }
+
+    #[test]
+    fn test_next_sequential_id_ignores_non_numeric() {
+        let mut ctx = TaskContext::new();
+        let mut t1 = Task::new("a".into(), "desc".into(), HashMap::new());
+        t1.id = "abc-uuid-like".to_string();
+        let mut t2 = Task::new("b".into(), "desc".into(), HashMap::new());
+        t2.id = "3".to_string();
+        ctx.add_task(t1);
+        ctx.add_task(t2);
+        assert_eq!(ctx.next_sequential_id(), "4");
+    }
+
+    #[test]
+    fn test_delete_task_cleans_references() {
+        let mut ctx = TaskContext::new();
+        let mut t1 = Task::new("t1".into(), "d".into(), HashMap::new());
+        t1.id = "1".to_string();
+        t1.blocks = vec!["2".to_string()];
+        let mut t2 = Task::new("t2".into(), "d".into(), HashMap::new());
+        t2.id = "2".to_string();
+        t2.blocked_by = vec!["1".to_string()];
+        t2.blocks = vec!["3".to_string()];
+        let mut t3 = Task::new("t3".into(), "d".into(), HashMap::new());
+        t3.id = "3".to_string();
+        t3.blocked_by = vec!["2".to_string()];
+        ctx.add_task(t1);
+        ctx.add_task(t2);
+        ctx.add_task(t3);
+
+        assert!(ctx.delete_task("2"));
+        assert!(ctx.get_task("2").is_none());
+        assert!(ctx.get_task("1").unwrap().blocks.is_empty());
+        assert!(ctx.get_task("3").unwrap().blocked_by.is_empty());
+    }
+
+    #[test]
+    fn test_delete_task_not_found() {
+        let mut ctx = TaskContext::new();
+        assert!(!ctx.delete_task("nonexistent"));
+    }
+
+    #[test]
+    fn test_update_block_relation_bidirectional() {
+        let mut ctx = TaskContext::new();
+        let mut t1 = Task::new("t1".into(), "d".into(), HashMap::new());
+        t1.id = "1".to_string();
+        let mut t2 = Task::new("t2".into(), "d".into(), HashMap::new());
+        t2.id = "2".to_string();
+        ctx.add_task(t1);
+        ctx.add_task(t2);
+
+        ctx.update_block_relation("1", "2");
+        assert_eq!(ctx.get_task("1").unwrap().blocks, vec!["2"]);
+        assert_eq!(ctx.get_task("2").unwrap().blocked_by, vec!["1"]);
+
+        // Deduplicated on repeat
+        ctx.update_block_relation("1", "2");
+        assert_eq!(ctx.get_task("1").unwrap().blocks.len(), 1);
+        assert_eq!(ctx.get_task("2").unwrap().blocked_by.len(), 1);
+    }
+
+    #[test]
+    fn test_update_block_relation_ignores_missing_ids() {
+        let mut ctx = TaskContext::new();
+        let mut t1 = Task::new("t1".into(), "d".into(), HashMap::new());
+        t1.id = "1".to_string();
+        ctx.add_task(t1);
+
+        ctx.update_block_relation("1", "ghost");
+        assert!(ctx.get_task("1").unwrap().blocks.is_empty());
+        ctx.update_block_relation("ghost", "1");
+        assert!(ctx.get_task("1").unwrap().blocked_by.is_empty());
     }
 }

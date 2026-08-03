@@ -14,3 +14,7 @@ release/
 .claude/settings.local.json
 .omc/
 agentscope/
+# Default agent-session persistence directory (Feature 025)
+sessions/
+# pi-rust demo runtime data (sessions + workspace)
+examples/pi-rust/.pi-rust/

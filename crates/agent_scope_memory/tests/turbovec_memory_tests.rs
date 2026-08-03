@@ -473,8 +473,8 @@ async fn test_rebuild_index() {
     .unwrap();
 
     // Clear the index to simulate corruption.
-    idx.delete(&mem.file_memory().root_dir(), "rb-1").await.ok();
-    idx.delete(&mem.file_memory().root_dir(), "rb-2").await.ok();
+    idx.delete(mem.file_memory().root_dir(), "rb-1").await.ok();
+    idx.delete(mem.file_memory().root_dir(), "rb-2").await.ok();
 
     // Rebuild.
     let report = mem.rebuild_index().await.unwrap();

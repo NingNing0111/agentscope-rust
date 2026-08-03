@@ -252,6 +252,15 @@ impl PermissionEngine {
 
     /// Check whether a tool call is permitted.
     pub fn check_decision(&self, tool_name: &str, input: &JsonValue) -> PermissionDecision {
+        // Built-in task planning tools only read/write the agent's own task
+        // state and are always allowed, mirroring Python `_TaskToolBase`.
+        if crate::task_tools::TASK_TOOL_NAMES.contains(&tool_name) {
+            return PermissionDecision::allow(
+                tool_name,
+                format!("{tool_name} is always allowed to be called."),
+            );
+        }
+
         let input_text = input.to_string();
 
         if let Some(rule) = find_matching_rule(&self.context.deny_rules, tool_name, &input_text) {

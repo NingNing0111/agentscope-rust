@@ -26,6 +26,7 @@ use crate::config::{ContextConfig, ReActConfig};
 use crate::context_compression::{compress_context, truncate_context};
 use crate::middleware::Middleware;
 use crate::permission::{PermissionBehavior, PermissionEngine};
+use crate::tool_feedback::tool_error_feedback;
 
 /// Aggregated context for `run_react_loop`, grouping the parameters
 /// that are threaded through every reasoning→acting iteration.
@@ -42,6 +43,9 @@ pub(crate) struct ReactLoopContext<'a> {
     pub middlewares: &'a [Arc<dyn Middleware>],
     pub state: &'a std::sync::RwLock<AgentState>,
     pub interrupted: &'a AtomicBool,
+    /// Whether the built-in task planning tools and their reminder injection
+    /// are enabled for this agent.
+    pub task_tools_enabled: bool,
     /// Cancellation token — checked via `select!` during model calls and stream
     /// consumption to interrupt in-progress LLM API calls.
     pub cancel_token: &'a CancellationToken,
@@ -120,6 +124,12 @@ pub(crate) async fn run_react_loop(
         }
 
         cur_iter += 1;
+
+        // Task reminder injection — evaluated each iteration so a compression
+        // that removed the task-tool traces re-triggers the reminder.
+        if ctx.task_tools_enabled {
+            crate::task_reminder::maybe_inject_task_reminder(ctx.state, ctx.agent_name);
+        }
 
         let messages = {
             let state_read = ctx.state.read().unwrap();
@@ -427,6 +437,17 @@ pub(crate) async fn run_react_loop(
                         })
                     };
 
+                    // Track the consecutive failure streak so error feedback can
+                    // escalate (e.g. suggest chunked writes) instead of blindly
+                    // retrying. Mirrors the streaming path.
+                    let retries = match &exec_result {
+                        Ok(_) => {
+                            ctx.state.write().unwrap().record_tool_success(&tc_mut.name);
+                            0
+                        }
+                        Err(_) => ctx.state.write().unwrap().record_tool_failure(&tc_mut.name),
+                    };
+
                     let _ = event_tx
                         .send(AgentEvent::ToolCallEnd(ToolCallEndEvent {
                             base: base(),
@@ -497,6 +518,9 @@ pub(crate) async fn run_react_loop(
                             }
                         }
                         Err(tool_err) => {
+                            // Emit an actionable feedback delta so the failure is
+                            // visible in the event stream (batch path).
+                            let feedback = tool_error_feedback(&tc_mut.name, &tool_err, retries);
                             let _ = event_tx
                                 .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
                                     base: base(),
@@ -506,13 +530,21 @@ pub(crate) async fn run_react_loop(
                                 }))
                                 .await;
                             let _ = event_tx
+                                .send(AgentEvent::ToolResultTextDelta(ToolResultTextDeltaEvent {
+                                    base: base(),
+                                    reply_id: ctx.reply_id.into(),
+                                    tool_call_id: tc_mut.id.clone(),
+                                    delta: feedback.clone(),
+                                }))
+                                .await;
+                            let _ = event_tx
                                 .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     tool_call_id: tc_mut.id.clone(),
                                     state: ToolResultState::Error,
                                     metadata: std::collections::HashMap::new(),
-                                    output: None,
+                                    output: Some(feedback.clone()),
                                 }))
                                 .await;
 
@@ -521,7 +553,7 @@ pub(crate) async fn run_react_loop(
                                 let trb = ToolResultBlock::new(
                                     tc_mut.id.clone(),
                                     tc_mut.name.clone(),
-                                    ToolOutput::Text(format!("Error: {tool_err}")),
+                                    ToolOutput::Text(feedback),
                                 );
                                 if let Ok(msg) = Msg::new(
                                     ctx.agent_name.into(),

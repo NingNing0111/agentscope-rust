@@ -185,6 +185,10 @@ pub struct AgentState {
     pub tasks_context: TaskContext,
     #[serde(default)]
     pub middle_context: HashMap<String, serde_json::Value>,
+    /// Consecutive failure count per tool name, used by the agent to escalate
+    /// error feedback after repeated failures of the same tool.
+    #[serde(default)]
+    pub tool_failures: HashMap<String, u32>,
 }
 
 impl AgentState {
@@ -200,6 +204,7 @@ impl AgentState {
             tool_context: ToolContext::default(),
             tasks_context: TaskContext::default(),
             middle_context: HashMap::new(),
+            tool_failures: HashMap::new(),
         }
     }
 
@@ -209,6 +214,18 @@ impl AgentState {
             session_id,
             ..Self::new()
         }
+    }
+
+    /// Record a successful tool execution, clearing the failure streak.
+    pub fn record_tool_success(&mut self, name: &str) {
+        self.tool_failures.remove(name);
+    }
+
+    /// Record a failed tool execution, returning the consecutive failure count.
+    pub fn record_tool_failure(&mut self, name: &str) -> u32 {
+        let count = self.tool_failures.entry(name.to_string()).or_insert(0);
+        *count += 1;
+        *count
     }
 
     /// Append content blocks to the context.
@@ -482,6 +499,44 @@ mod tests {
             restored.reply_context.cur_iter,
             state.reply_context.cur_iter
         );
+    }
+
+    #[test]
+    fn test_task_fields_roundtrip_with_agent_state() {
+        let mut state = AgentState::new();
+        let mut t1 = crate::task::Task::new(
+            "Do A".into(),
+            "desc".into(),
+            std::collections::HashMap::new(),
+        );
+        t1.id = "1".to_string();
+        t1.owner = Some("alice".into());
+        t1.blocks = vec!["2".to_string()];
+        t1.metadata.insert("k".into(), serde_json::json!("v"));
+        let mut t2 = crate::task::Task::new(
+            "Do B".into(),
+            "desc2".into(),
+            std::collections::HashMap::new(),
+        );
+        t2.id = "2".to_string();
+        t2.state = crate::task::TaskState::InProgress;
+        t2.blocked_by = vec!["1".to_string()];
+        state.tasks_context.add_task(t1);
+        state.tasks_context.add_task(t2);
+
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: AgentState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.tasks_context.tasks.len(), 2);
+        let r1 = restored.tasks_context.get_task("1").unwrap();
+        assert_eq!(r1.subject, "Do A");
+        assert_eq!(r1.description, "desc");
+        assert_eq!(r1.owner.as_deref(), Some("alice"));
+        assert_eq!(r1.blocks, vec!["2"]);
+        assert_eq!(r1.metadata["k"], "v");
+        let r2 = restored.tasks_context.get_task("2").unwrap();
+        assert_eq!(r2.state, crate::task::TaskState::InProgress);
+        assert_eq!(r2.blocked_by, vec!["1"]);
     }
 
     #[test]

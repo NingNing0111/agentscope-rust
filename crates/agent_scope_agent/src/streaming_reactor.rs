@@ -37,6 +37,7 @@ use crate::agent_error::AgentError;
 use crate::permission::{PermissionBehavior, PermissionEngine};
 use crate::react_agent::AgentInner;
 use crate::stream_handle::StreamHandle;
+use crate::tool_feedback::tool_error_feedback;
 
 pub(crate) async fn run_streaming_loop(
     inner: Arc<AgentInner>,
@@ -98,6 +99,12 @@ pub(crate) async fn run_streaming_loop(
             return;
         }
         cur_iter += 1;
+
+        // Task reminder injection — evaluated each iteration so a compression
+        // that removed the task-tool traces re-triggers the reminder.
+        if inner.config.task_tools_enabled {
+            crate::task_reminder::maybe_inject_task_reminder(&inner.state, &inner.config.name);
+        }
 
         // Prep messages + hooks
         let messages = { inner.state.read().unwrap().context.clone() };
@@ -930,6 +937,24 @@ async fn execute_tool_calls(
             })
         };
 
+        // Track the consecutive failure streak so error feedback can escalate
+        // (e.g. suggest chunked writes) instead of blindly retrying.
+        let retries = match &exec_result {
+            Ok(_) => {
+                inner
+                    .state
+                    .write()
+                    .unwrap()
+                    .record_tool_success(&tc_mut.name);
+                0
+            }
+            Err(_) => inner
+                .state
+                .write()
+                .unwrap()
+                .record_tool_failure(&tc_mut.name),
+        };
+
         // Call post_acting for Complete results (P2-11 fix).
         // Extract chunk before .await to avoid holding a borrow on exec_result
         // (ToolExecOutput::Stream is not Sync, making the future !Send).
@@ -950,6 +975,7 @@ async fn execute_tool_calls(
             reply_id,
             &tc_mut,
             exec_result,
+            retries,
             stream_handle,
             _base,
         )
@@ -1099,6 +1125,16 @@ async fn invoke_post_reply(inner: &Arc<AgentInner>, result: &Result<Msg, AgentEr
             );
         }
     }
+
+    // Auto-persist the latest state at every reply end — normal, interrupted,
+    // max-iters, and tool-error paths all flow through here (spec FR-006).
+    //
+    // The save runs on a short-lived background task rather than awaiting here:
+    // blocking on disk I/O would delay the reactor's exit and keep
+    // `is_streaming` set, breaking the "agent is immediately reusable after
+    // the stream ends" guarantee. The save is serialized via `persist_lock`, so
+    // it can never race a following reply's save on the same session file.
+    crate::react_agent::spawn_persist_after_reply(inner);
 }
 
 // ---------------------------------------------------------------------------
@@ -1333,6 +1369,7 @@ async fn emit_tool_result_and_collect(
     rid: &str,
     tc: &ToolCallBlock,
     result: Result<ToolExecOutput, ToolError>,
+    retries: u32,
     stream_handle: &StreamHandle,
     _base: fn() -> EventBase,
 ) -> String {
@@ -1454,6 +1491,9 @@ async fn emit_tool_result_and_collect(
             collected
         }
         Err(e) => {
+            // Emit an actionable feedback delta so the failure is visible both
+            // in the event stream and in the model's context.
+            let feedback = tool_error_feedback(&tc.name, &e, retries);
             let _ = tx
                 .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
                     base: b(),
@@ -1463,16 +1503,24 @@ async fn emit_tool_result_and_collect(
                 }))
                 .await;
             let _ = tx
+                .send(AgentEvent::ToolResultTextDelta(ToolResultTextDeltaEvent {
+                    base: b(),
+                    reply_id: rid.into(),
+                    tool_call_id: tc.id.clone(),
+                    delta: feedback.clone(),
+                }))
+                .await;
+            let _ = tx
                 .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
                     base: b(),
                     reply_id: rid.into(),
                     tool_call_id: tc.id.clone(),
                     state: ToolResultState::Error,
                     metadata: std::collections::HashMap::new(),
-                    output: None,
+                    output: Some(feedback.clone()),
                 }))
                 .await;
-            format!("Error: {e}")
+            feedback
         }
     }
 }

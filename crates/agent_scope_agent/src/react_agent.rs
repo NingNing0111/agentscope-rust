@@ -6,8 +6,11 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use agent_scope_event::AgentEvent;
 use agent_scope_message::Msg;
-use agent_scope_state::AgentState;
+use agent_scope_state::{
+    AgentState, JsonFileSessionStore, Session, SessionError, SessionImpl, SessionStore,
+};
 use futures::Stream;
+use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 
 use crate::agent_error::AgentError;
 use crate::agent_trait::Agent;
@@ -17,7 +20,7 @@ use crate::middleware::Middleware;
 use crate::react_loop;
 use crate::stream_handle::StreamHandle;
 use crate::streaming_reactor;
-use tokio::sync::{mpsc, oneshot};
+use crate::task_tools::{TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool};
 use tokio_util::sync::CancellationToken;
 
 /// Shared inner state that can be cloned for spawned tasks.
@@ -25,11 +28,18 @@ pub(crate) struct AgentInner {
     pub(crate) config: AgentConfig,
     pub(crate) react_config: ReActConfig,
     pub(crate) context_config: ContextConfig,
-    pub(crate) state: RwLock<AgentState>,
+    pub(crate) state: Arc<RwLock<AgentState>>,
     pub(crate) middlewares: Vec<Arc<dyn Middleware>>,
     pub(crate) event_emitter: EventEmitter,
     pub(crate) interrupted: Arc<AtomicBool>,
     pub(crate) is_streaming: Arc<AtomicBool>,
+    /// Session storage backend for agent-state persistence (Feature 025).
+    /// `None` when persistence is fully disabled.
+    pub(crate) session_store: Option<Arc<dyn SessionStore>>,
+    /// Serializes persistence writes so concurrent saves (e.g. a cancelled
+    /// streaming reply followed by a batch reply) cannot race on the same
+    /// session file.
+    pub(crate) persist_lock: AsyncMutex<()>,
     /// Cancellation token for interrupting in-progress model calls / stream consumption.
     /// Wrapped in Mutex so it can be replaced with a fresh token after cancellation
     /// (CancellationToken::cancel() is irreversible).
@@ -43,28 +53,117 @@ pub struct ReActAgent {
 
 impl ReActAgent {
     /// Create a new ReActAgent with validated configuration.
+    ///
+    /// Persistence fields in [`AgentConfig`] are honored: a session store is
+    /// resolved (the default `JsonFileSessionStore` rooted at `sessions/` when
+    /// none is injected) so replies auto-persist, and `auto_persist(false)`
+    /// disables all storage writes. This synchronous constructor does **not**
+    /// resume an existing session from a `session_id` — use the asynchronous
+    /// [`ReActAgent::build`] for session resume.
     pub fn new(
         config: AgentConfig,
         react_config: ReActConfig,
         context_config: ContextConfig,
         middlewares: Vec<Arc<dyn Middleware>>,
     ) -> Result<Self, AgentError> {
+        let agent_state = match &config.session_id {
+            Some(id) => AgentState::with_session_id(id.clone()),
+            None => AgentState::new(),
+        };
+        Self::construct(
+            config,
+            react_config,
+            context_config,
+            middlewares,
+            agent_state,
+        )
+    }
+
+    /// Build a ReActAgent asynchronously, resuming any persisted session state.
+    ///
+    /// When `config.session_id` is set, the resolved session store is queried:
+    /// an existing session is resumed with its full state, a missing one is
+    /// created fresh, and any other store error (corruption, I/O) fails
+    /// construction with a typed [`AgentError`] rather than silently degrading
+    /// (spec FR-005 / contracts/agent-config.md).
+    pub async fn build(
+        config: AgentConfig,
+        react_config: ReActConfig,
+        context_config: ContextConfig,
+        middlewares: Vec<Arc<dyn Middleware>>,
+    ) -> Result<Self, AgentError> {
+        let mut config = config;
+
+        // Resolve the store first so it can be queried for resume and then
+        // retained on the agent for auto-persist after replies.
+        let session_store: Arc<dyn SessionStore> = config
+            .session_store
+            .clone()
+            .unwrap_or_else(|| Arc::new(JsonFileSessionStore::with_default_dir()));
+
+        let agent_state = match &config.session_id {
+            Some(id) => match session_store.load(id).await {
+                Ok(session) => {
+                    let mut state = session.state().clone();
+                    state.session_id = id.clone();
+                    state
+                }
+                // Missing session id = create a new session, not an error.
+                Err(SessionError::NotFound { .. }) => AgentState::with_session_id(id.clone()),
+                Err(e) => return Err(e.into()),
+            },
+            None => AgentState::new(),
+        };
+
+        config.session_store = Some(session_store);
+        Self::construct(
+            config,
+            react_config,
+            context_config,
+            middlewares,
+            agent_state,
+        )
+    }
+
+    /// Shared construction core.
+    fn construct(
+        mut config: AgentConfig,
+        react_config: ReActConfig,
+        context_config: ContextConfig,
+        middlewares: Vec<Arc<dyn Middleware>>,
+        agent_state: AgentState,
+    ) -> Result<Self, AgentError> {
         react_config.validate()?;
         context_config.validate()?;
 
-        let agent_state = AgentState::new();
+        let session_store = resolve_store(&config);
+        let state = Arc::new(RwLock::new(agent_state));
         let stream_channel_capacity = config.stream_channel_capacity;
+
+        // Register the built-in task planning tools at construction time so
+        // they share the agent's state handle (default enabled, see
+        // `AgentConfig::task_tools_enabled`).
+        if config.task_tools_enabled {
+            let mut toolkit = config.toolkit.take().unwrap_or_default();
+            toolkit.register(TaskCreateTool::new(Arc::clone(&state)));
+            toolkit.register(TaskListTool::new(Arc::clone(&state)));
+            toolkit.register(TaskGetTool::new(Arc::clone(&state)));
+            toolkit.register(TaskUpdateTool::new(Arc::clone(&state)));
+            config.toolkit = Some(toolkit);
+        }
 
         Ok(Self {
             inner: Arc::new(AgentInner {
                 config,
                 react_config,
                 context_config,
-                state: RwLock::new(agent_state),
+                state,
                 middlewares,
                 event_emitter: EventEmitter::new(stream_channel_capacity),
                 interrupted: Arc::new(AtomicBool::new(false)),
                 is_streaming: Arc::new(AtomicBool::new(false)),
+                session_store,
+                persist_lock: AsyncMutex::new(()),
                 cancel_token: Mutex::new(CancellationToken::new()),
             }),
         })
@@ -200,11 +299,85 @@ fn fresh_cancel_token(inner: &Arc<AgentInner>) -> CancellationToken {
     guard.clone()
 }
 
+/// Resolve the session store for an agent config.
+///
+/// An explicitly injected store wins; otherwise the built-in
+/// `JsonFileSessionStore` rooted at `sessions/` is used (Feature 025).
+fn resolve_store(config: &AgentConfig) -> Option<Arc<dyn SessionStore>> {
+    Some(config.session_store.clone().unwrap_or_else(|| {
+        Arc::new(JsonFileSessionStore::with_default_dir()) as Arc<dyn SessionStore>
+    }))
+}
+
+/// Persist the agent's latest state after a reply finishes.
+///
+/// Honors `auto_persist` — no writes occur when it is disabled (spec FR-007 /
+/// SC-007). A failed save is reported through tracing but does not break the
+/// reply result already produced (spec FR-006). Saves are serialized via the
+/// agent's `persist_lock` so concurrent saves never race on the same file.
+pub(crate) async fn persist_after_reply(inner: &Arc<AgentInner>) {
+    if !inner.config.auto_persist {
+        return;
+    }
+    let store = match &inner.session_store {
+        Some(store) => Arc::clone(store),
+        None => return,
+    };
+
+    // Snapshot the state before acquiring the lock so holding the lock (and
+    // the I/O) does not block writers to the shared state.
+    let state = inner.state.read().unwrap().clone();
+    let session = SessionImpl::new(state);
+
+    let _guard = inner.persist_lock.lock().await;
+    if let Err(e) = store.save(&session).await {
+        tracing::warn!(
+            session_id = %session.id(),
+            error = %e,
+            "automatic session persistence failed after reply"
+        );
+    }
+}
+
+/// Persist the agent's latest state on a short-lived background task.
+///
+/// Used by the streaming path: the reactor must exit promptly so `is_streaming`
+/// clears and the agent is immediately reusable after the event stream ends.
+/// The save is serialized via `persist_lock`, so it cannot race a following
+/// reply's save on the same session file.
+pub(crate) fn spawn_persist_after_reply(inner: &Arc<AgentInner>) {
+    if !inner.config.auto_persist {
+        return;
+    }
+    let store = match &inner.session_store {
+        Some(store) => Arc::clone(store),
+        None => return,
+    };
+
+    let state = inner.state.read().unwrap().clone();
+    let session = SessionImpl::new(state);
+    let inner = Arc::clone(inner);
+
+    tokio::spawn(async move {
+        let _guard = inner.persist_lock.lock().await;
+        if let Err(e) = store.save(&session).await {
+            tracing::warn!(
+                session_id = %session.id(),
+                error = %e,
+                "background session persistence failed after streaming reply"
+            );
+        }
+    });
+}
+
 /// Batch reply: uses react_loop with mpsc channel.
 async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg, AgentError> {
     let cancel_token = fresh_cancel_token(&inner);
 
     if inner.interrupted.swap(false, Ordering::SeqCst) {
+        // Checkpoint the pre-reply state so an interrupted agent still
+        // persists the latest state (spec FR-006).
+        persist_after_reply(&inner).await;
         return Ok(build_interruption_msg_inline(
             &inner.react_config.interruption_message,
         ));
@@ -272,6 +445,7 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
         state: &inner.state,
         interrupted: &inner.interrupted,
         cancel_token: &cancel_token,
+        task_tools_enabled: inner.config.task_tools_enabled,
     };
 
     let result = react_loop::run_react_loop(ctx, &event_tx).await;
@@ -279,6 +453,10 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
     drop(event_tx);
     // Drainer exits when the sender is dropped (channel closed).
     let _ = drain_handle.await;
+
+    // Auto-persist the latest state after the reply ends (normal or
+    // interrupted). Save failures are reported but never break the result.
+    persist_after_reply(&inner).await;
 
     for mw in inner.middlewares.iter() {
         let dummy: Result<Msg, AgentError> = match &result {
@@ -301,6 +479,9 @@ async fn do_reply_stream(
     let cancel_token = fresh_cancel_token(&inner);
 
     if inner.interrupted.swap(false, Ordering::SeqCst) {
+        // Checkpoint the pre-reply state so an interrupted agent still
+        // persists the latest state (spec FR-006).
+        spawn_persist_after_reply(&inner);
         return Err(AgentError::CancellationError {
             reply_id: "pre-reply-interrupted".into(),
         });

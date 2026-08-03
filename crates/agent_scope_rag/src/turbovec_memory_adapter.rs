@@ -32,7 +32,10 @@ use crate::vector_store::{VectorRecord, VectorSearchResult, VectorStore};
 /// # }
 /// ```
 pub struct TurbovecIndexAdapter {
-    store: Arc<TurbovecVectorStore>,
+    /// The underlying store. A `RwLock<Arc<...>>` so `load` can atomically
+    /// swap in a store freshly loaded from disk (previously `load` read the
+    /// file and then silently discarded it, making restarts lose the index).
+    store: RwLock<Arc<TurbovecVectorStore>>,
     /// Track save/load state.
     saved_path: RwLock<Option<String>>,
 }
@@ -44,7 +47,7 @@ impl TurbovecIndexAdapter {
     pub fn new(bit_width: usize) -> Result<Self, String> {
         let store = Arc::new(TurbovecVectorStore::new(bit_width).map_err(|e| e.to_string())?);
         Ok(Self {
-            store,
+            store: RwLock::new(store),
             saved_path: RwLock::new(None),
         })
     }
@@ -52,14 +55,14 @@ impl TurbovecIndexAdapter {
     /// Create an adapter from an existing [`TurbovecVectorStore`].
     pub fn from_store(store: Arc<TurbovecVectorStore>) -> Self {
         Self {
-            store,
+            store: RwLock::new(store),
             saved_path: RwLock::new(None),
         }
     }
 
-    /// Get a reference to the underlying store.
-    pub fn store(&self) -> &Arc<TurbovecVectorStore> {
-        &self.store
+    /// Get a clone of the underlying store.
+    pub async fn store(&self) -> Arc<TurbovecVectorStore> {
+        self.store.read().await.clone()
     }
 }
 
@@ -67,6 +70,8 @@ impl TurbovecIndexAdapter {
 impl MemoryVectorIndex for TurbovecIndexAdapter {
     async fn has_collection(&self, name: &str) -> Result<bool, String> {
         self.store
+            .read()
+            .await
             .has_collection(name)
             .await
             .map_err(|e| e.to_string())
@@ -74,6 +79,8 @@ impl MemoryVectorIndex for TurbovecIndexAdapter {
 
     async fn create_collection(&self, name: &str, dimensions: u32) -> Result<(), String> {
         self.store
+            .read()
+            .await
             .create_collection(name, dimensions)
             .await
             .map_err(|e| e.to_string())
@@ -88,6 +95,8 @@ impl MemoryVectorIndex for TurbovecIndexAdapter {
     ) -> Result<Vec<MemoryVectorHit>, String> {
         let results: Vec<VectorSearchResult> = self
             .store
+            .read()
+            .await
             .search(collection, query_vector, top_k, metadata_filter)
             .await
             .map_err(|e| e.to_string())?;
@@ -135,6 +144,8 @@ impl MemoryVectorIndex for TurbovecIndexAdapter {
             .collect();
 
         self.store
+            .read()
+            .await
             .insert(collection, vr)
             .await
             .map_err(|e| e.to_string())
@@ -142,13 +153,20 @@ impl MemoryVectorIndex for TurbovecIndexAdapter {
 
     async fn delete(&self, collection: &str, document_id: &str) -> Result<(), String> {
         self.store
+            .read()
+            .await
             .delete(collection, document_id)
             .await
             .map_err(|e| e.to_string())
     }
 
     async fn save(&self, path: &str) -> Result<(), String> {
-        self.store.save(path).await.map_err(|e| e.to_string())?;
+        self.store
+            .read()
+            .await
+            .save(path)
+            .await
+            .map_err(|e| e.to_string())?;
         *self.saved_path.write().await = Some(path.to_string());
         Ok(())
     }
@@ -157,11 +175,10 @@ impl MemoryVectorIndex for TurbovecIndexAdapter {
         let loaded = TurbovecVectorStore::load(path)
             .await
             .map_err(|e| e.to_string())?;
-        // Note: Arc<Self> can't replace internal Arc. We use a different pattern:
-        // load returns a new adapter. For the trait's load method, we handle this
-        // by expecting the caller to create a fresh adapter from the loaded store.
-        // The trait method on Arc<dyn MemoryVectorIndex> is inherently limited.
-        let _ = loaded;
+        // Swap the freshly-loaded store into place so subsequent operations
+        // (has_collection, search, insert) see the persisted index instead of
+        // silently discarding it and rebuilding an empty one.
+        *self.store.write().await = Arc::new(loaded);
         *self.saved_path.write().await = Some(path.to_string());
         Ok(())
     }

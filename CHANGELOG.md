@@ -47,6 +47,9 @@ Compatibility baseline: AgentScope Python v2.0.5 (commit `27b6a0d2a2afedf53462c9
 #### Agent Extensions
 - **Planner + ReActAgent** (Feature 021): `Planner`, `Plan`, `PlanStep`, `PlanningTrace`, plan-based agent orchestration with streaming plan events
 - **SubAgent** (Feature 020): `SubAgent`, delegation patterns, subagent lifecycle management
+- **Agent Task Planning** (Feature 024): built-in task planning tools (`TaskCreate`/`TaskList`/`TaskGet`/`TaskUpdate`) + unfinished-task reminder injection, replacing the standalone Planner
+- **Agent State Persistence** (Feature 025): session store (`JsonFileSessionStore`), agent-state save/load round-trip, auto-persist after reply
+- **Runtime State Injection** (Feature 026): unified `_inject_runtime_state` pipeline — time / unfinished-task / context-length dimensions in a single `HintBlock`, `InjectionConfig` full configuration (timezone, time format, template, source, task tool names, extra fields, hint event emission), `HintBlockEvent` emission, IANA timezone support via `chrono-tz`
 
 #### Documentation & Examples
 - **Usage Docs** (Feature 018): Chinese and English module documentation, getting-started guide

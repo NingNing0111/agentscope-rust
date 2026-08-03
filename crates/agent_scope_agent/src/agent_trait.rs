@@ -44,6 +44,11 @@ pub trait Agent: Send + Sync {
     /// The agent's configured name.
     fn name(&self) -> &str;
 
-    /// Immutable reference to the agent's runtime state.
-    fn state(&self) -> &AgentState;
+    /// Read lock over the agent's runtime state.
+    ///
+    /// Returns a guard instead of a `&AgentState` so the contract
+    /// "`state()` never panics" can be honored by agents whose state lives
+    /// behind a lock (e.g. `ReActAgent`). Callers must not hold the guard
+    /// across an `.await`.
+    fn state(&self) -> std::sync::RwLockReadGuard<'_, AgentState>;
 }

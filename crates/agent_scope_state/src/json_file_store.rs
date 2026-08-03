@@ -18,6 +18,7 @@
 //!   older or newer versions load compatibly.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -83,7 +84,15 @@ fn validate_session_id(id: &str) -> Result<(), SessionError> {
 /// partially-written one (spec FR-004).
 async fn atomic_write(dir: &Path, id: &str, contents: &[u8]) -> Result<(), SessionError> {
     let final_path = dir.join(format!("{id}.json"));
-    let tmp_path = dir.join(format!("{id}.json.tmp"));
+    // Unique temp name so concurrent saves of the same session don't clobber
+    // each other's temp file mid-write (a fixed `{id}.json.tmp` let one writer
+    // truncate the other's temp file, causing lost updates or spurious errors).
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = dir.join(format!(
+        "{id}.{}.{unique}.json.tmp",
+        std::process::id()
+    ));
 
     fs::write(&tmp_path, contents)
         .await
@@ -225,7 +234,10 @@ impl SessionStore for JsonFileSessionStore {
         // The file name is authoritative for the session id.
         let mut state = record.state;
         state.session_id = id.to_string();
-        Ok(SessionImpl::new(state))
+        Ok(SessionImpl::new(state).with_persisted_timestamps(
+            record.created_at,
+            record.last_active,
+        ))
     }
 
     async fn delete(&self, id: &str) -> Result<(), SessionError> {

@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use agent_scope_agent::{Agent, AgentError};
@@ -17,7 +17,7 @@ use tokio::time::sleep;
 pub struct ScriptedTestAgent {
     name: String,
     response: String,
-    state: &'static AgentState,
+    state: Arc<RwLock<AgentState>>,
     received: Arc<Mutex<Vec<Vec<Msg>>>>,
     delay: Option<Duration>,
     fail: Option<String>,
@@ -26,7 +26,7 @@ pub struct ScriptedTestAgent {
 impl ScriptedTestAgent {
     pub fn new(name: impl Into<String>, response: impl Into<String>) -> Self {
         let name = name.into();
-        let state = Box::leak(Box::new(AgentState::new()));
+        let state = Arc::new(RwLock::new(AgentState::new()));
         Self {
             name,
             response: response.into(),
@@ -102,8 +102,8 @@ impl Agent for ScriptedTestAgent {
         &self.name
     }
 
-    fn state(&self) -> &AgentState {
-        self.state
+    fn state(&self) -> std::sync::RwLockReadGuard<'_, AgentState> {
+        self.state.read().unwrap()
     }
 }
 

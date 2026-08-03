@@ -177,6 +177,19 @@ impl SessionImpl {
         }
     }
 
+    /// Restore persisted timestamps (used by the session store's `load`, so a
+    /// reloaded session keeps its original creation/last-active times instead
+    /// of resetting them to the load instant, which would corrupt ordering).
+    pub fn with_persisted_timestamps(
+        mut self,
+        created_at: DateTime<Utc>,
+        last_active: DateTime<Utc>,
+    ) -> Self {
+        self.created_at = created_at;
+        self.last_active = last_active;
+        self
+    }
+
     /// Create a new session with a custom session_id.
     ///
     /// A fresh [`AgentState`] is created internally with the given id.

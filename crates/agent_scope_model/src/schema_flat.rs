@@ -10,22 +10,30 @@ pub fn flatten_json_schema_with_defs(schema: &JsonValue) -> JsonValue {
         .and_then(|d| d.as_object())
         .cloned()
         .unwrap_or_default();
-    let mut visited = HashSet::new();
-    flatten_with_defs(schema, &defs, &mut visited)
+    // `visiting` tracks the definitions currently on the resolution path, so
+    // only genuine cycles are cut. Re-using an already-*resolved* definition
+    // (e.g. two properties referencing the same `$defs` entry) is allowed.
+    let mut visiting = HashSet::new();
+    flatten_with_defs(schema, &defs, &mut visiting)
 }
 
 fn flatten_with_defs(
     node: &JsonValue,
     defs: &serde_json::Map<String, JsonValue>,
-    visited: &mut HashSet<String>,
+    visiting: &mut HashSet<String>,
 ) -> JsonValue {
     if let Some(ref_str) = node.get("$ref").and_then(|v| v.as_str())
         && let Some(type_name) = ref_str.strip_prefix("#/$defs/")
     {
-        if visited.insert(type_name.to_string())
+        // A definition that is already on the current resolution path is a
+        // genuine cycle; everything else (resolved earlier) is expanded again.
+        if !visiting.contains(type_name)
             && let Some(def) = defs.get(type_name)
         {
-            return flatten_with_defs(def, defs, visited);
+            visiting.insert(type_name.to_string());
+            let result = flatten_with_defs(def, defs, visiting);
+            visiting.remove(type_name);
+            return result;
         }
         return JsonValue::String(format!("__CIRCULAR_OR_MISSING_{type_name}"));
     }
@@ -36,7 +44,7 @@ fn flatten_with_defs(
             if key == "$defs" {
                 continue;
             }
-            result.insert(key.clone(), flatten_with_defs(val, defs, visited));
+            result.insert(key.clone(), flatten_with_defs(val, defs, visiting));
         }
         return JsonValue::Object(result);
     }
@@ -44,7 +52,7 @@ fn flatten_with_defs(
     if let Some(arr) = node.as_array() {
         return JsonValue::Array(
             arr.iter()
-                .map(|v| flatten_with_defs(v, defs, visited))
+                .map(|v| flatten_with_defs(v, defs, visiting))
                 .collect(),
         );
     }

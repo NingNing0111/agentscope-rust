@@ -3,6 +3,7 @@
 //! Includes [`AgentConfig`] (construction parameters), [`ReActConfig`] (loop behavior),
 //! and [`ContextConfig`] (context window management).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use agent_scope_model::ChatModel;
@@ -47,6 +48,9 @@ pub struct AgentConfig {
     /// reply ends (including interruption/cancellation). Default: `true`.
     /// When `false`, no storage writes occur at all.
     pub auto_persist: bool,
+    /// Runtime-state injection configuration (Feature 026). Defaults to
+    /// [`InjectionConfig::default()`] (injection enabled).
+    pub injection_config: InjectionConfig,
 }
 
 impl AgentConfig {
@@ -68,6 +72,7 @@ pub struct AgentConfigBuilder {
     session_store: Option<Arc<dyn SessionStore>>,
     session_id: Option<String>,
     auto_persist: bool,
+    injection_config: InjectionConfig,
 }
 
 impl Default for AgentConfigBuilder {
@@ -83,6 +88,7 @@ impl Default for AgentConfigBuilder {
             session_store: None,
             session_id: None,
             auto_persist: true,
+            injection_config: InjectionConfig::default(),
         }
     }
 }
@@ -155,6 +161,15 @@ impl AgentConfigBuilder {
         self
     }
 
+    /// Set the runtime-state injection configuration (Feature 026).
+    ///
+    /// When not set, an `InjectionConfig::default()` is used (injection
+    /// enabled). Validated at build time.
+    pub fn injection_config(mut self, config: InjectionConfig) -> Self {
+        self.injection_config = config;
+        self
+    }
+
     /// Set the streaming channel capacity.
     ///
     /// - `None` = unbounded channel (default, per FR-019)
@@ -188,6 +203,8 @@ impl AgentConfigBuilder {
             message: "model is required".into(),
         })?;
 
+        self.injection_config.validate()?;
+
         Ok(AgentConfig {
             name,
             system_prompt: self.system_prompt,
@@ -199,8 +216,160 @@ impl AgentConfigBuilder {
             session_store: self.session_store,
             session_id: self.session_id,
             auto_persist: self.auto_persist,
+            injection_config: self.injection_config,
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// InjectionConfig
+// ---------------------------------------------------------------------------
+
+/// Default template wrapping injected runtime-state fields.
+///
+/// Aligns with Python `InjectionConfig.template`. The `{runtime_state}`
+/// placeholder is replaced with the joined `<...>` fields.
+pub const DEFAULT_INJECTION_TEMPLATE: &str = "<system-reminder>Treat the following as the ground truth at this point of the conversation. Anything stated earlier is outdated, and a later reminder, if any, supersedes this one:\n{runtime_state}\n</system-reminder>";
+
+/// Default source identifier marking the agent's own runtime-state injections.
+///
+/// Aligns with Python `InjectionConfig.injection_source`. Used to detect
+/// existing injections when scanning the context.
+pub const DEFAULT_INJECTION_SOURCE: &str = r#"{"label": "System", "sublabel": "Runtime State"}"#;
+
+/// Default names of the task-related tools whose presence in the context
+/// suppresses the tasks injection. Aligns with Python
+/// `InjectionConfig.task_tool_names`.
+pub const DEFAULT_TASK_TOOL_NAMES: [&str; 4] = ["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"];
+
+/// Runtime-state injection configuration (Feature 026).
+///
+/// Controls how the agent injects time, unfinished-task and context-length
+/// information into the conversation context each iteration. Fields, defaults
+/// and semantics align with Python `InjectionConfig` (upstream `9d1026fa`).
+#[derive(Debug, Clone)]
+pub struct InjectionConfig {
+    /// Master switch. When `false`, no dimension is evaluated or injected and
+    /// no hint event is emitted (FR-011).
+    pub inject_runtime_state: bool,
+    /// IANA timezone name used to compute and format the injected time.
+    /// Defaults to `"UTC"`. Unresolvable names fall back to UTC at runtime.
+    pub timezone: String,
+    /// strftime-style format for injected/parsed times. Must round-trip a full
+    /// timestamp (carry the date part). Defaults to `%Y-%m-%dT%H:%M:%S`.
+    pub time_format: String,
+    /// Minimum elapsed time (hours) since the last recorded injection before a
+    /// new time injection is triggered.
+    pub time_interval: f64,
+    /// Buffer ahead of the compression threshold that activates the
+    /// context-length injection, in `[0, 1]` and smaller than
+    /// `ContextConfig.trigger_ratio`.
+    pub context_buffer_ratio: f64,
+    /// Wrapping template containing the `{runtime_state}` placeholder.
+    pub template: String,
+    /// Fixed source used to identify the agent's own injections in the context.
+    pub injection_source: String,
+    /// Names of task-related tools whose tool calls mark the agent as aware of
+    /// the tasks, suppressing the tasks injection.
+    pub task_tool_names: Vec<String>,
+    /// User-defined fields attached to every triggered injection; they never
+    /// trigger an injection by themselves.
+    pub extra_fields: HashMap<String, String>,
+    /// Whether a `HintBlockEvent` is emitted when an injection happens.
+    pub emit_hint_event: bool,
+}
+
+impl Default for InjectionConfig {
+    fn default() -> Self {
+        Self {
+            inject_runtime_state: true,
+            timezone: "UTC".into(),
+            time_format: "%Y-%m-%dT%H:%M:%S".into(),
+            time_interval: 0.5,
+            context_buffer_ratio: 0.2,
+            template: DEFAULT_INJECTION_TEMPLATE.into(),
+            injection_source: DEFAULT_INJECTION_SOURCE.into(),
+            task_tool_names: DEFAULT_TASK_TOOL_NAMES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            extra_fields: HashMap::new(),
+            emit_hint_event: true,
+        }
+    }
+}
+
+impl InjectionConfig {
+    /// Validate the configuration (FR-007 / FR-014).
+    ///
+    /// Rejects: a template missing the `{runtime_state}` placeholder; a
+    /// `time_format` that cannot round-trip a full timestamp; a negative
+    /// `time_interval`; a `context_buffer_ratio` outside `[0, 1]`.
+    /// An unresolvable `timezone` is **not** rejected — it falls back to UTC
+    /// at runtime (aligned with Python `_resolve_timezone`).
+    ///
+    /// The `context_buffer_ratio < trigger_ratio` cross-field check is done by
+    /// [`Self::validate_with_trigger`], which has access to the real context
+    /// compression trigger ratio.
+    pub fn validate(&self) -> Result<(), AgentError> {
+        if !self.template.contains("{runtime_state}") {
+            return Err(AgentError::InvalidConfig {
+                field: "injection_config.template".into(),
+                message: "the injection template must contain the '{runtime_state}' placeholder"
+                    .into(),
+            });
+        }
+        if !time_format_round_trips(&self.time_format) {
+            return Err(AgentError::InvalidConfig {
+                field: "injection_config.time_format".into(),
+                message: "time_format must round-trip a full timestamp (carry the date part)"
+                    .into(),
+            });
+        }
+        if self.time_interval < 0.0 {
+            return Err(AgentError::InvalidConfig {
+                field: "injection_config.time_interval".into(),
+                message: "time_interval must be >= 0".into(),
+            });
+        }
+        if !(0.0..=1.0).contains(&self.context_buffer_ratio) {
+            return Err(AgentError::InvalidConfig {
+                field: "injection_config.context_buffer_ratio".into(),
+                message: "context_buffer_ratio must be in [0, 1]".into(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate against the real context compression trigger ratio.
+    ///
+    /// Called by [`ReActAgent::new`](crate::ReActAgent) once the
+    /// `ContextConfig` is available, in addition to [`Self::validate`].
+    pub fn validate_with_trigger(&self, context_trigger_ratio: f64) -> Result<(), AgentError> {
+        self.validate()?;
+        if self.context_buffer_ratio >= context_trigger_ratio {
+            return Err(AgentError::InvalidConfig {
+                field: "injection_config.context_buffer_ratio".into(),
+                message: "context_buffer_ratio must be smaller than the context compression trigger_ratio".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Whether `time_format` can round-trip a full timestamp (format → parse back
+/// to a time carrying the date part). A time-only format such as `%H:%M:%S`
+/// fails because the parsed time falls back to year 1900.
+fn time_format_round_trips(time_format: &str) -> bool {
+    use chrono::{NaiveDate, NaiveDateTime};
+    // Pick a fixed instant that exercises date + time fields.
+    let instant = NaiveDate::from_ymd_opt(2026, 7, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let formatted = instant.format(time_format).to_string();
+    // Parse back; NaiveDateTime requires the format to carry a date part.
+    NaiveDateTime::parse_from_str(&formatted, time_format).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -473,5 +642,123 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    /// T026: InjectionConfig default values align with Python.
+    #[test]
+    fn test_injection_config_defaults() {
+        let config = InjectionConfig::default();
+        assert!(config.inject_runtime_state);
+        assert_eq!(config.timezone, "UTC");
+        assert_eq!(config.time_format, "%Y-%m-%dT%H:%M:%S");
+        assert_eq!(config.time_interval, 0.5);
+        assert_eq!(config.context_buffer_ratio, 0.2);
+        assert!(config.template.contains("{runtime_state}"));
+        assert_eq!(
+            config.injection_source,
+            r#"{"label": "System", "sublabel": "Runtime State"}"#
+        );
+        assert_eq!(config.task_tool_names.len(), 4);
+        assert!(config.task_tool_names.contains(&"TaskCreate".to_string()));
+        assert!(config.task_tool_names.contains(&"TaskUpdate".to_string()));
+        assert!(config.extra_fields.is_empty());
+        assert!(config.emit_hint_event);
+    }
+
+    /// T026: Template missing placeholder rejected.
+    #[test]
+    fn test_injection_config_template_missing_placeholder_rejected() {
+        let config = InjectionConfig {
+            template: "<system-reminder></system-reminder>".into(),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+        if let Err(AgentError::InvalidConfig { field, .. }) = config.validate() {
+            assert_eq!(field, "injection_config.template");
+        } else {
+            panic!("expected InvalidConfig");
+        }
+    }
+
+    /// T026: Time-only format (no date part) rejected.
+    #[test]
+    fn test_injection_config_time_only_format_rejected() {
+        let config = InjectionConfig {
+            time_format: "%H:%M:%S".into(),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    /// T026: Negative time_interval rejected.
+    #[test]
+    fn test_injection_config_negative_interval_rejected() {
+        let config = InjectionConfig {
+            time_interval: -0.5,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    /// T026: context_buffer_ratio out of [0,1] rejected.
+    #[test]
+    fn test_injection_config_buffer_ratio_out_of_range_rejected() {
+        for bad in [1.5, -0.1] {
+            let config = InjectionConfig {
+                context_buffer_ratio: bad,
+                ..Default::default()
+            };
+            assert!(config.validate().is_err(), "ratio {bad} should be rejected");
+        }
+    }
+
+    /// T026: context_buffer_ratio >= trigger_ratio rejected via
+    /// validate_with_trigger.
+    #[test]
+    fn test_injection_config_buffer_ratio_ge_trigger_rejected() {
+        let config = InjectionConfig {
+            context_buffer_ratio: 0.8,
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok()); // standalone validation passes
+        assert!(config.validate_with_trigger(0.8).is_err());
+    }
+
+    /// T026: Invalid timezone NOT rejected (falls back to UTC at runtime).
+    #[test]
+    fn test_injection_config_invalid_timezone_not_rejected() {
+        let config = InjectionConfig {
+            timezone: "Mars/Olympus_Mons".into(),
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    /// T026: InjectionConfig attached via builder and validated at build time.
+    #[test]
+    fn test_agent_config_injection_config_builder() {
+        let model = || {
+            Arc::new(DummyModel {
+                name: "dummy".into(),
+            }) as Arc<dyn ChatModel>
+        };
+        let config = AgentConfig::builder()
+            .name("a")
+            .model(model())
+            .injection_config(InjectionConfig::default())
+            .build()
+            .unwrap();
+        assert!(config.injection_config.inject_runtime_state);
+
+        // A config with an invalid template fails at build.
+        let result = AgentConfig::builder()
+            .name("a")
+            .model(model())
+            .injection_config(InjectionConfig {
+                template: "<system-reminder></system-reminder>".into(),
+                ..Default::default()
+            })
+            .build();
+        assert!(result.is_err());
     }
 }

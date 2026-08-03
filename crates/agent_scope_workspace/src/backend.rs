@@ -107,14 +107,14 @@ impl WorkspaceBackend for LocalBackend {
         &self,
         cmd: &[&str],
         cwd: &str,
-        _timeout_secs: Option<f64>,
+        timeout_secs: Option<f64>,
     ) -> Result<ExecOutput, WorkspaceError> {
         if cmd.is_empty() {
             return Err(WorkspaceError::BackendError {
                 message: "exec_shell: cmd must not be empty".into(),
             });
         }
-        let child = tokio::process::Command::new(cmd[0])
+        let mut child = tokio::process::Command::new(cmd[0])
             .args(&cmd[1..])
             .current_dir(cwd)
             .stdout(std::process::Stdio::piped())
@@ -124,17 +124,78 @@ impl WorkspaceBackend for LocalBackend {
                 message: format!("failed to spawn command '{}': {e}", cmd[0]),
             })?;
 
-        let output = child
-            .wait_with_output()
+        // Read stdout/stderr from dedicated tasks so we can wait on the child
+        // with a timeout and still collect the pipes afterwards.
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+        let stdout_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            if let Some(mut s) = stdout_pipe {
+                use tokio::io::AsyncReadExt;
+                s.read_to_end(&mut bytes).await?;
+            }
+            Ok::<Vec<u8>, std::io::Error>(bytes)
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            if let Some(mut s) = stderr_pipe {
+                use tokio::io::AsyncReadExt;
+                s.read_to_end(&mut bytes).await?;
+            }
+            Ok::<Vec<u8>, std::io::Error>(bytes)
+        });
+
+        let wait_fut = child.wait();
+        let exit_code = match timeout_secs {
+            Some(secs) if secs > 0.0 => {
+                match tokio::time::timeout(std::time::Duration::from_secs_f64(secs), wait_fut)
+                    .await
+                {
+                    Ok(res) => res
+                        .map_err(|e| WorkspaceError::BackendError {
+                            message: format!("failed to wait on command '{}': {e}", cmd[0]),
+                        })?
+                        .code()
+                        .unwrap_or(-1),
+                    Err(_) => {
+                        // Honor the timeout like the sandbox backend does:
+                        // kill the child and report a timeout exit code.
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+                        124 // matches the `timeout` command
+                    }
+                }
+            }
+            _ => wait_fut
+                .await
+                .map_err(|e| WorkspaceError::BackendError {
+                    message: format!("failed to wait on command '{}': {e}", cmd[0]),
+                })?
+                .code()
+                .unwrap_or(-1),
+        };
+
+        let stdout = stdout_task
             .await
             .map_err(|e| WorkspaceError::BackendError {
-                message: format!("failed to wait on command '{}': {e}", cmd[0]),
+                message: format!("stdout task join failed: {e}"),
+            })?
+            .map_err(|e| WorkspaceError::BackendError {
+                message: format!("stdout read failed: {e}"),
+            })?;
+        let stderr = stderr_task
+            .await
+            .map_err(|e| WorkspaceError::BackendError {
+                message: format!("stderr task join failed: {e}"),
+            })?
+            .map_err(|e| WorkspaceError::BackendError {
+                message: format!("stderr read failed: {e}"),
             })?;
 
         Ok(ExecOutput {
-            stdout: output.stdout,
-            stderr: output.stderr,
-            exit_code: output.status.code().unwrap_or(-1),
+            stdout,
+            stderr,
+            exit_code,
         })
     }
 

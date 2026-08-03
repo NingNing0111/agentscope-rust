@@ -28,12 +28,13 @@ pub fn parse_frontmatter_fields(content: &str) -> HashMap<String, String> {
         .filter_map(|line| {
             let captures = field_re.captures(line.trim())?;
             let key = captures.get(1)?.as_str().to_string();
-            let value = captures
-                .get(2)?
-                .as_str()
-                .trim()
-                .trim_matches('"')
-                .to_string();
+            let raw_value = captures.get(2)?.as_str().trim();
+            let value = if raw_value.starts_with('"') && raw_value.ends_with('"') {
+                yaml_unescape(&raw_value[1..raw_value.len() - 1])
+            } else {
+                // Legacy unquoted value (simple scalar written by older code).
+                raw_value.trim_matches('"').to_string()
+            };
             Some((key, value))
         })
         .collect()
@@ -44,18 +45,61 @@ pub fn serialize_frontmatter(entry: &MemoryEntry) -> String {
     let mut lines = vec![
         "---".to_string(),
         format!("name: {}", entry.name),
-        format!("description: {}", entry.description),
+        // description/tags are user-supplied and may contain newlines, quotes
+        // or backslashes; quote them so they round-trip losslessly.
+        format!("description: {}", yaml_quote(&entry.description)),
         format!("type: {}", entry.metadata.mem_type.as_str()),
         format!("created_at: {}", entry.metadata.created_at),
         format!("updated_at: {}", entry.metadata.updated_at),
     ];
     if let Some(tags) = tags {
-        lines.push(format!("tags: {tags}"));
+        lines.push(format!("tags: {}", yaml_quote(&tags)));
     }
     lines.push("---".to_string());
     lines.push(String::new());
     lines.push(entry.content.clone());
     lines.join("\n")
+}
+
+/// Quote a string as a single-line YAML double-quoted scalar.
+fn yaml_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Unescape a double-quoted YAML scalar (inverse of [`yaml_quote`]).
+fn yaml_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 pub(crate) fn body_after_frontmatter(content: &str) -> Option<String> {

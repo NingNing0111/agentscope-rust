@@ -7,7 +7,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 use uuid::Uuid;
@@ -47,6 +47,18 @@ impl LocalSandboxSession {
         if session_id.is_empty() {
             return Err(SandboxError::ValidationError {
                 message: "session_id must not be empty".into(),
+            });
+        }
+        // Defense against path traversal: `session_id` is concatenated into the
+        // temp root path (`agentscope-sandbox-{session_id}`) and later removed
+        // with `remove_dir_all`. Reject anything that could escape the temp
+        // directory or resolve elsewhere (slashes, `..`, control chars, ...).
+        if !session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(SandboxError::ValidationError {
+                message: "session_id must only contain [A-Za-z0-9_-]".into(),
             });
         }
         if let Some((feature, reason)) = config
@@ -286,6 +298,14 @@ impl SandboxSession for LocalSandboxSession {
         let started_at = Utc::now();
         let started = Instant::now();
         let mut cmd = Command::new(&request.argv[0]);
+        // Do not leak the host environment into the sandboxed child process:
+        // clear it and re-inject a minimal base set plus the explicitly
+        // requested env. Sandboxed code must not be able to read secrets such
+        // as API keys from the parent's environment.
+        cmd.env_clear();
+        cmd.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+        cmd.env("HOME", cwd.as_os_str());
+        cmd.env("TMPDIR", std::env::temp_dir());
         cmd.args(&request.argv[1..])
             .current_dir(&cwd)
             .stdout(Stdio::piped())
@@ -316,17 +336,30 @@ impl SandboxSession for LocalSandboxSession {
 
         let mut stdout_pipe = child.stdout.take();
         let mut stderr_pipe = child.stderr.take();
+        // Cap the amount of output read into memory and written to
+        // `.sandbox-output`: reading unbounded output (e.g. `yes`) would
+        // otherwise be an in-memory / disk DoS even though `max_output_bytes`
+        // only trimmed the inline copy afterwards.
+        let max_output_bytes = self.policy.max_output_bytes;
         let stdout_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
-            if let Some(mut stdout) = stdout_pipe.take() {
-                stdout.read_to_end(&mut bytes).await?;
+            if let Some(stdout) = stdout_pipe.take() {
+                use tokio::io::AsyncReadExt;
+                stdout
+                    .take((max_output_bytes + 1) as u64)
+                    .read_to_end(&mut bytes)
+                    .await?;
             }
             Ok::<Vec<u8>, std::io::Error>(bytes)
         });
         let stderr_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
-            if let Some(mut stderr) = stderr_pipe.take() {
-                stderr.read_to_end(&mut bytes).await?;
+            if let Some(stderr) = stderr_pipe.take() {
+                use tokio::io::AsyncReadExt;
+                stderr
+                    .take((max_output_bytes + 1) as u64)
+                    .read_to_end(&mut bytes)
+                    .await?;
             }
             Ok::<Vec<u8>, std::io::Error>(bytes)
         });

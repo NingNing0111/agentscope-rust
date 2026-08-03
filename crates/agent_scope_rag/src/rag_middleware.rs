@@ -241,18 +241,30 @@ impl Middleware for RAGMiddleware {
 // ---------------------------------------------------------------------------
 
 /// A Tool wrapper around KnowledgeBase search for agentic mode.
+/// A Tool wrapper around KnowledgeBase search for agentic mode.
 struct RAGSearchTool {
     kb: Arc<KnowledgeBase>,
     top_k: usize,
     score_threshold: Option<f32>,
+    /// Stable tool name, computed once at construction.
+    name: String,
+    /// Stable tool description, computed once at construction.
+    description: String,
 }
 
 impl RAGSearchTool {
     fn new(kb: Arc<KnowledgeBase>, top_k: usize, score_threshold: Option<f32>) -> Self {
+        // Compute name/description once: the `Tool` trait exposes `&str`, so
+        // caching them avoids a `Box::leak` allocation on every call (which
+        // would leak memory for the lifetime of the process).
+        let name = format!("search_{}", sanitize_kb_name(&kb.name));
+        let description = format!("Search the '{}' knowledge base.", kb.name);
         Self {
             kb,
             top_k,
             score_threshold,
+            name,
+            description,
         }
     }
 }
@@ -260,13 +272,11 @@ impl RAGSearchTool {
 #[async_trait::async_trait]
 impl Tool for RAGSearchTool {
     fn name(&self) -> &str {
-        // Return a static string — we'll use leaked Box<str> for simplicity
-        // This is safe because Tool names are stable for the lifetime
-        &*Box::leak(format!("search_{}", sanitize_kb_name(&self.kb.name)).into_boxed_str())
+        &self.name
     }
 
     fn description(&self) -> &str {
-        &*Box::leak(format!("Search the '{}' knowledge base.", self.kb.name).into_boxed_str())
+        &self.description
     }
 
     fn input_schema(&self) -> JsonValue {

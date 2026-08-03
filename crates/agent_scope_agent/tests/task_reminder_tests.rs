@@ -180,11 +180,21 @@ async fn test_disabled_flag_via_loop_does_not_inject() {
         .await
         .unwrap();
 
-    // Nothing in the context is a reminder hint with our source.
+    // Feature 026 semantics: `task_tools_enabled = false` suppresses the task
+    // dimension of the runtime-state injection (no `<tasks>` field), while the
+    // time dimension remains independently controlled by `inject_runtime_state`
+    // (default true). So no HintBlock in the context carries a `<tasks>` field.
     let ctx = agent.try_state().context.clone();
     assert!(!ctx.iter().any(|m| {
-        m.content
-            .iter()
-            .any(|b| matches!(b, ContentBlock::Hint(h) if h.source.as_deref() == Some(SOURCE)))
+        m.content.iter().any(|b| {
+            if let ContentBlock::Hint(h) = b {
+                match &h.hint {
+                    agent_scope_message::HintContent::Text(t) => t.contains("<tasks>"),
+                    agent_scope_message::HintContent::Blocks(_) => false,
+                }
+            } else {
+                false
+            }
+        })
     }));
 }

@@ -227,7 +227,10 @@ impl AccBlock {
 
 #[derive(Debug, Clone, Default)]
 pub struct StreamAccumulator {
-    blocks: HashMap<String, AccBlock>,
+    /// Content blocks in first-seen order. A `Vec` (rather than a `HashMap`)
+    /// preserves the order in which blocks arrived, so the rebuilt response
+    /// keeps the streaming chunk order (thinking → text → tool_call, ...).
+    blocks: Vec<(String, AccBlock)>,
     id: Option<String>,
     usage: Option<ChatUsage>,
     finished_reason: FinishedReason,
@@ -273,8 +276,8 @@ impl StreamAccumulator {
             };
 
             if let Some(acc) = new_acc {
-                match self.blocks.get_mut(&bid) {
-                    Some(existing) => {
+                match self.blocks.iter_mut().find(|(bid2, _)| *bid2 == bid) {
+                    Some((_, existing)) => {
                         if existing.type_name() != acc.type_name() {
                             eprintln!(
                                 "WARNING: Block type changed for id '{}' from '{}' to '{}'. Dropping old accumulator.",
@@ -282,7 +285,13 @@ impl StreamAccumulator {
                                 existing.type_name(),
                                 acc.type_name()
                             );
-                            self.blocks.insert(bid, acc);
+                            if let Some(slot) = self
+                                .blocks
+                                .iter_mut()
+                                .find(|(bid2, _)| *bid2 == bid)
+                            {
+                                slot.1 = acc;
+                            }
                         } else {
                             match (existing, block) {
                                 (AccBlock::Text(a), ContentBlock::Text(tb)) => a.append(tb),
@@ -294,7 +303,7 @@ impl StreamAccumulator {
                         }
                     }
                     None => {
-                        self.blocks.insert(bid, acc);
+                        self.blocks.push((bid, acc));
                     }
                 }
             }
@@ -304,8 +313,8 @@ impl StreamAccumulator {
     pub fn build(self) -> ChatResponse {
         let content: Vec<ContentBlock> = self
             .blocks
-            .into_values()
-            .map(|acc| match acc {
+            .into_iter()
+            .map(|(_, acc)| match acc {
                 AccBlock::Text(a) => ContentBlock::Text(a.build()),
                 AccBlock::Thinking(a) => ContentBlock::Thinking(a.build()),
                 AccBlock::ToolCall(a) => ContentBlock::ToolCall(a.build()),

@@ -73,7 +73,11 @@ impl DashScopeChatModel {
             retry_delay: 1.0,
             context_size: 131072,
             formatter: Box::new(DashScopeFormatter::default()),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(600))
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("failed to build reqwest client"),
             extra_body: HashMap::new(),
         }
     }

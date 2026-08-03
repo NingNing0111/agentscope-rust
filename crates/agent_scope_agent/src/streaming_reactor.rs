@@ -57,7 +57,11 @@ pub(crate) async fn run_streaming_loop(
     emit_start(&event_tx, &session_id, &reply_id, &inner.config.name, base).await;
 
     loop {
-        if stream_handle.is_cancelled() || inner.interrupted.load(Ordering::SeqCst) {
+        // Consume the interrupted flag so it only affects the current reply:
+        // the next `reply_stream()` runs normally with a fresh token (matches
+        // `interrupt()`'s documented contract).
+        let was_interrupted = inner.interrupted.swap(false, Ordering::SeqCst);
+        if stream_handle.is_cancelled() || was_interrupted {
             emit_interrupted(&event_tx, &reply_id, &session_id, base).await;
             let result = Ok(Msg::new(
                 inner.config.name.clone(),
@@ -100,12 +104,6 @@ pub(crate) async fn run_streaming_loop(
         }
         cur_iter += 1;
 
-        // Task reminder injection — evaluated each iteration so a compression
-        // that removed the task-tool traces re-triggers the reminder.
-        if inner.config.task_tools_enabled {
-            crate::task_reminder::maybe_inject_task_reminder(&inner.state, &inner.config.name);
-        }
-
         // Prep messages + hooks
         let messages = { inner.state.read().unwrap().context.clone() };
         let mut hook_messages = messages.clone();
@@ -139,14 +137,17 @@ pub(crate) async fn run_streaming_loop(
             .as_ref()
             .map(|tk| tk.get_tool_schemas());
 
+        // Token count computed once, shared between compression and the
+        // first-iteration runtime-state injection context-length dimension.
+        let token_count = inner
+            .config
+            .model
+            .count_tokens(&hook_messages, tool_schemas.as_deref());
+        let context_size = inner.config.model.context_size();
+
         // Compression
         if inner.context_config.enable {
-            let token_count = inner
-                .config
-                .model
-                .count_tokens(&hook_messages, tool_schemas.as_deref());
-            let trigger = (inner.config.model.context_size() as f64
-                * inner.context_config.trigger_ratio) as usize;
+            let trigger = (context_size as f64 * inner.context_config.trigger_ratio) as usize;
             if token_count > trigger
                 && let Err(e) = crate::context_compression::compress_context(
                     &inner.config.model,
@@ -165,6 +166,26 @@ pub(crate) async fn run_streaming_loop(
             }
         }
 
+        // Runtime-state injection (Feature 026) — evaluated each iteration so a
+        // compression that removed the task-tool / time traces re-triggers the
+        // relevant dimensions. Aligns with Python `_inject_runtime_state`.
+        let injection_event = crate::runtime_injection::maybe_inject_runtime_state(
+            &inner.state,
+            &inner.config.name,
+            &inner.config.injection_config,
+            chrono::Utc::now().fixed_offset(),
+            cur_iter,
+            // The context-length dimension is only evaluated on the first
+            // iteration, where the token count is meaningful.
+            (cur_iter == 1).then_some(token_count),
+            context_size,
+            inner.context_config.trigger_ratio,
+            inner.config.task_tools_enabled,
+        );
+        if let Some(evt) = injection_event {
+            let _ = event_tx.send(AgentEvent::HintBlock(evt)).await;
+        }
+
         // ModelCallStart
         let _ = event_tx
             .send(AgentEvent::ModelCallStart(ModelCallStartEvent {
@@ -181,6 +202,9 @@ pub(crate) async fn run_streaming_loop(
         let result = tokio::select! {
             r = call_future => r,
             _ = cancel_token.cancelled() => {
+                // Consume the flag so the interruption only affects the current
+                // reply (see the top-of-loop swap above).
+                inner.interrupted.store(false, Ordering::SeqCst);
                 emit_interrupted(&event_tx, &reply_id, &session_id, base).await;
                 let result = Ok(Msg::new(
                     inner.config.name.clone(),
@@ -315,6 +339,9 @@ pub(crate) async fn run_streaming_loop(
                         return;
                     }
                     StreamOutcome::Cancelled => {
+                        // Consume the flag so an interruption only affects the
+                        // current reply (see the top-of-loop swap above).
+                        inner.interrupted.store(false, Ordering::SeqCst);
                         let result: Result<Msg, AgentError> = Err(AgentError::CancellationError {
                             reply_id: reply_id.clone(),
                         });

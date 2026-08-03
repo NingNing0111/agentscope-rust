@@ -26,8 +26,12 @@ async fn sandbox_output_limit_writes_full_ref() {
     assert_eq!(result.stdout.inline, b"abcd");
     assert!(result.stdout.truncated);
     let output_ref = result.stdout.full_ref.as_ref().unwrap();
-    assert!(output_ref.bytes >= 8);
+    // Output is capped at `max_output_bytes + 1` when read (defense against
+    // unbounded-output DoS), so the on-disk reference matches the capped read
+    // rather than the full command output.
+    assert!(output_ref.bytes >= 4);
     let full = tokio::fs::read(&output_ref.path).await.unwrap();
+    assert_eq!(full.len(), output_ref.bytes as usize);
     let expected_sha = format!("{:x}", Sha256::digest(&full));
     assert_eq!(output_ref.sha256, expected_sha);
     assert!(

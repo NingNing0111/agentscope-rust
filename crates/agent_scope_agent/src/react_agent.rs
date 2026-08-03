@@ -136,6 +136,12 @@ impl ReActAgent {
         react_config.validate()?;
         context_config.validate()?;
 
+        // Validate the runtime-state injection config against the real context
+        // compression trigger ratio (Feature 026, FR-014).
+        config
+            .injection_config
+            .validate_with_trigger(context_config.trigger_ratio)?;
+
         let session_store = resolve_store(&config);
         let state = Arc::new(RwLock::new(agent_state));
         let stream_channel_capacity = config.stream_channel_capacity;
@@ -273,8 +279,8 @@ impl Agent for ReActAgent {
         &self.inner.config.name
     }
 
-    fn state(&self) -> &AgentState {
-        panic!("state() not directly accessible on ReActAgent; use try_state()")
+    fn state(&self) -> std::sync::RwLockReadGuard<'_, AgentState> {
+        self.inner.state.read().unwrap()
     }
 }
 
@@ -446,6 +452,7 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
         interrupted: &inner.interrupted,
         cancel_token: &cancel_token,
         task_tools_enabled: inner.config.task_tools_enabled,
+        injection_config: &inner.config.injection_config,
     };
 
     let result = react_loop::run_react_loop(ctx, &event_tx).await;

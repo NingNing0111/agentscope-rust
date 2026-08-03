@@ -91,7 +91,11 @@ impl DashScopeEmbeddingModel {
     /// * `model_card` — Model metadata (name, dimensions, supports_multimodal)
     pub fn new(api_key: String, model_card: EmbeddingModelCard) -> Self {
         Self {
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("failed to build reqwest client"),
             api_key,
             base_url: "https://dashscope.aliyuncs.com".to_string(),
             model_card,

@@ -45,6 +45,7 @@ pub mod middleware;
 pub mod permission;
 pub mod react_agent;
 pub(crate) mod react_loop;
+pub mod runtime_injection;
 pub(crate) mod stream_handle;
 pub(crate) mod streaming_reactor;
 pub mod subagent;
@@ -57,7 +58,7 @@ pub(crate) mod tool_feedback;
 // Re-exports
 pub use agent_error::AgentError;
 pub use agent_trait::Agent;
-pub use config::{AgentConfig, AgentConfigBuilder, ContextConfig, ReActConfig};
+pub use config::{AgentConfig, AgentConfigBuilder, ContextConfig, InjectionConfig, ReActConfig};
 pub use context_policy::{
     CapabilityScope, ContextSharingPolicy, MessageContextPolicy, ModelAccessPolicy,
     ResourceSharingPolicy, SharedContext, SideEffectPolicy,

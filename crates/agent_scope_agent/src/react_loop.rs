@@ -46,6 +46,9 @@ pub(crate) struct ReactLoopContext<'a> {
     /// Whether the built-in task planning tools and their reminder injection
     /// are enabled for this agent.
     pub task_tools_enabled: bool,
+    /// Runtime-state injection configuration (Feature 026). Controls the time,
+    /// task and context-length dimensions.
+    pub injection_config: &'a crate::config::InjectionConfig,
     /// Cancellation token — checked via `select!` during model calls and stream
     /// consumption to interrupt in-progress LLM API calls.
     pub cancel_token: &'a CancellationToken,
@@ -54,7 +57,13 @@ pub(crate) struct ReactLoopContext<'a> {
 #[derive(Debug)]
 enum LoopOutcome {
     Text(Vec<Msg>),
-    ToolCalls(Vec<agent_scope_message::ToolCallBlock>),
+    ToolCalls {
+        tool_calls: Vec<agent_scope_message::ToolCallBlock>,
+        /// Text blocks that accompanied the tool calls — emitted, appended to
+        /// the context and accumulated so they are not silently dropped (the
+        /// streaming path already keeps them).
+        text_msgs: Vec<Msg>,
+    },
     Empty,
 }
 
@@ -82,7 +91,10 @@ pub(crate) async fn run_react_loop(
     let mut cur_iter: u32 = 0;
 
     loop {
-        if ctx.interrupted.load(Ordering::SeqCst) {
+        if ctx.interrupted.swap(false, Ordering::SeqCst) {
+            // Consume the flag so an interruption only affects the current
+            // reply: the next `reply()` call runs normally with a fresh token
+            // (matches `interrupt()`'s documented contract).
             let _ = event_tx
                 .send(AgentEvent::UserInterrupt(UserInterruptEvent {
                     base: base(),
@@ -125,12 +137,6 @@ pub(crate) async fn run_react_loop(
 
         cur_iter += 1;
 
-        // Task reminder injection — evaluated each iteration so a compression
-        // that removed the task-tool traces re-triggers the reminder.
-        if ctx.task_tools_enabled {
-            crate::task_reminder::maybe_inject_task_reminder(ctx.state, ctx.agent_name);
-        }
-
         let messages = {
             let state_read = ctx.state.read().unwrap();
             state_read.context.clone()
@@ -151,7 +157,9 @@ pub(crate) async fn run_react_loop(
 
         let tool_schemas = ctx.toolkit.as_ref().map(|tk| tk.get_tool_schemas());
 
-        // Context compression check — mirrors Python `_compress_memory_if_needed()`
+        // Context compression check — mirrors Python `_compress_memory_if_needed()`.
+        // The token count is computed once and shared with the runtime-state
+        // injection (first-iteration context-length dimension).
         let token_count = ctx
             .model
             .count_tokens(&hook_messages, tool_schemas.as_deref());
@@ -171,6 +179,26 @@ pub(crate) async fn run_react_loop(
             }
         }
 
+        // Runtime-state injection (Feature 026) — evaluated each iteration so a
+        // compression that removed the task-tool / time traces re-triggers the
+        // relevant dimensions. Aligns with Python `_inject_runtime_state`.
+        let injection_event = crate::runtime_injection::maybe_inject_runtime_state(
+            ctx.state,
+            ctx.agent_name,
+            ctx.injection_config,
+            chrono::Utc::now().fixed_offset(),
+            cur_iter,
+            // The context-length dimension is only evaluated on the first
+            // iteration, where the token count is meaningful.
+            (cur_iter == 1).then_some(token_count),
+            context_size,
+            ctx.context_config.trigger_ratio,
+            ctx.task_tools_enabled,
+        );
+        if let Some(evt) = injection_event {
+            let _ = event_tx.send(AgentEvent::HintBlock(evt)).await;
+        }
+
         let _ = event_tx
             .send(AgentEvent::ModelCallStart(ModelCallStartEvent {
                 base: base(),
@@ -186,6 +214,9 @@ pub(crate) async fn run_react_loop(
         let result = tokio::select! {
             r = call_future => r?,
             _ = ctx.cancel_token.cancelled() => {
+                // Consume the flag so the interruption only affects the current
+                // reply (see the top-of-loop check above).
+                ctx.interrupted.store(false, Ordering::SeqCst);
                 let _ = event_tx
                     .send(AgentEvent::UserInterrupt(UserInterruptEvent {
                         base: base(),
@@ -356,13 +387,55 @@ pub(crate) async fn run_react_loop(
                 return Ok(build_final_msg(&accumulated_texts));
             }
 
-            LoopOutcome::ToolCalls(tool_calls) => {
+            LoopOutcome::ToolCalls {
+                tool_calls,
+                text_msgs,
+            } => {
+                // Emit and persist any text that accompanied the tool calls so
+                // it isn't silently dropped (mirrors the streaming path, which
+                // appends text blocks via add_text_to_context).
+                for msg in &text_msgs {
+                    for block in &msg.content {
+                        if let ContentBlock::Text(tb) = block {
+                            let block_id = uuid::Uuid::new_v4().as_simple().to_string();
+                            let _ = event_tx
+                                .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
+                                    base: base(),
+                                    reply_id: ctx.reply_id.into(),
+                                    block_id: block_id.clone(),
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
+                                    base: base(),
+                                    reply_id: ctx.reply_id.into(),
+                                    block_id: block_id.clone(),
+                                    delta: tb.text.clone(),
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::TextBlockEnd(TextBlockEndEvent {
+                                    base: base(),
+                                    reply_id: ctx.reply_id.into(),
+                                    block_id,
+                                    text: Some(tb.text.clone()),
+                                }))
+                                .await;
+                            accumulated_texts.push(tb.text.clone());
+                        }
+                    }
+                }
                 // Store the assistant message with tool calls to context FIRST.
                 // OpenAI-compatible APIs require: assistant(tool_calls) → tool(result).
                 // Without the assistant message, the model doesn't know which
                 // tool call the result corresponds to.
                 {
                     let mut state_write = ctx.state.write().unwrap();
+                    // Persist the accompanying text as its own assistant message
+                    // so it survives compression / is visible to later turns.
+                    for msg in &text_msgs {
+                        state_write.context.push(msg.clone());
+                    }
                     let tc_blocks: Vec<ContentBlock> = tool_calls
                         .iter()
                         .map(|tc| ContentBlock::ToolCall(tc.clone()))
@@ -673,7 +746,10 @@ fn classify_response(response: &ChatResponse) -> LoopOutcome {
     }
 
     if !tool_calls.is_empty() {
-        LoopOutcome::ToolCalls(tool_calls)
+        LoopOutcome::ToolCalls {
+            tool_calls,
+            text_msgs,
+        }
     } else if !text_msgs.is_empty() {
         LoopOutcome::Text(text_msgs)
     } else {

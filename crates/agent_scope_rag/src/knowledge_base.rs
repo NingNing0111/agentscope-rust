@@ -2,7 +2,7 @@
 //!
 //! Provides search/insert/delete/list operations with lazy collection initialization.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use agent_scope_embedding::{EmbeddingInput, EmbeddingModel, EmbeddingModelCard};
@@ -135,21 +135,24 @@ impl KnowledgeBase {
             }));
         }
 
-        let mut all_results: Vec<VectorSearchResult> = Vec::new();
-        let mut seen: HashSet<(String, usize)> = HashSet::new();
-
+        // Deduplicate by (document_id, chunk_index), keeping the highest score
+        // for each chunk. Multiple queries may return the same chunk with
+        // different scores, so "first seen wins" would silently drop a better
+        // match.
+        let mut best: std::collections::HashMap<(String, usize), VectorSearchResult> =
+            std::collections::HashMap::new();
         for handle in futures {
             match handle.await {
                 Ok(Ok(results)) => {
                     for r in results {
                         let key = (r.document_id.clone(), r.chunk.chunk_index);
-                        if seen.contains(&key) {
-                            // Keep the one with higher score — since we process serially
-                            // and results come pre-sorted, first wins
-                            continue;
+                        let replace = match best.get(&key) {
+                            Some(existing) => r.score > existing.score,
+                            None => true,
+                        };
+                        if replace {
+                            best.insert(key, r);
                         }
-                        seen.insert(key);
-                        all_results.push(r);
                     }
                 }
                 Ok(Err(e)) => {
@@ -162,6 +165,7 @@ impl KnowledgeBase {
                 }
             }
         }
+        let mut all_results: Vec<VectorSearchResult> = best.into_values().collect();
 
         // Sort by score descending
         all_results.sort_by(|a, b| {

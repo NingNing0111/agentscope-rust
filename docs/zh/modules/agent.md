@@ -77,6 +77,8 @@ cargo run --example agent_demo -- --model qwen-plus --show-events
 | `toolkit(...)` | 可选工具注册表 |
 | `permission_context(...)` / `permission_mode(...)` | 工具执行权限上下文 |
 | `with_stream_channel_capacity(...)` | 流式事件通道容量；`None` 表示无界，`Some(n)` 必须 `n > 0` |
+| `task_tools_enabled(...)` | 是否注册内置任务工具并启用任务提醒注入，默认 `true` |
+| `injection_config(...)` | 运行时状态注入配置（时间 / 未完成任务 / 上下文用量），默认 `InjectionConfig::default()`（启用注入） |
 
 最小构造需要 `name` 和 `model`。如果缺少任一必填项，`build()` 会返回 `AgentError::InvalidConfig`。
 
@@ -105,7 +107,51 @@ cargo run --example agent_demo -- --model qwen-plus --show-events
 
 启用后，Agent 每轮模型调用前会估算当前上下文 token 数；超过阈值时调用压缩逻辑修剪上下文。
 
-### 2.6 `Middleware`
+### 2.6 `InjectionConfig`（运行时状态注入）
+
+控制 Agent 将「当前时间 / 未完成任务 / 上下文用量」注入对话上下文的行为，对齐 Python `InjectionConfig`。注入以 `HintBlock` 追加到持久上下文，不修改系统提示词（提示缓存友好）。默认启用（`injection_config(...)` 未设置时使用 `InjectionConfig::default()`）。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `inject_runtime_state` | `true` | 总开关；关闭后三维均不评估、不注入、不发事件 |
+| `timezone` | `"UTC"` | IANA 时区名（如 `Asia/Shanghai`）；解析失败回退 UTC |
+| `time_format` | `"%Y-%m-%dT%H:%M:%S"` | 时间注入/解析格式，须可往返完整时间戳 |
+| `time_interval` | `0.5` | 距上次注入的最小间隔（小时） |
+| `context_buffer_ratio` | `0.2` | 上下文用量注入的缓冲比例，须小于 `ContextConfig.trigger_ratio` |
+| `template` | `<system-reminder>…{runtime_state}…</system-reminder>` | 注入包装模板，必须含 `{runtime_state}` 占位符 |
+| `injection_source` | `{"label": "System", "sublabel": "Runtime State"}` | 注入来源标识，用于感知检测 |
+| `task_tool_names` | `["TaskCreate","TaskGet","TaskList","TaskUpdate"]` | 视为「已感知任务」的工具名列表 |
+| `extra_fields` | `{}` | 附加字段，附着于每次注入但不触发注入 |
+| `emit_hint_event` | `true` | 注入时是否发射 `HintBlockEvent` |
+
+**三个维度**：
+
+- **时间**：首次回复、压缩后、距上次记录超过 `time_interval`、或时钟回拨时注入 `<current-time>` 与 `<timezone>`。
+- **未完成任务**：存在 `pending`/`in_progress` 任务且上下文无任务工具痕迹与先前任务提醒时，注入 `<tasks>` 字段（与 Feature 024 逐字一致）。
+- **上下文用量**：仅回复首轮，当输入 token 落入「压缩阈值 − 缓冲比例」窗口内时，注入 `<context-length>` 字段。
+
+**配置示例**：
+
+```rust
+use agent_scope_agent::{InjectionConfig, AgentConfig};
+
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .injection_config(InjectionConfig {
+        timezone: "Asia/Shanghai".into(),
+        extra_fields: std::collections::HashMap::from([
+            ("workspace".to_string(), "/home/user".to_string()),
+        ]),
+        ..Default::default()
+    })
+    .build()
+    .unwrap();
+```
+
+非法配置（模板缺占位符、时间格式不可往返、间隔为负、缓冲比例越界等）在 `build()` 时返回 `AgentError::InvalidConfig`。
+
+### 2.7 `Middleware`
 
 `Middleware` 是 Agent 扩展点，所有 hook 默认 no-op，按注册顺序 FIFO 调用：
 
@@ -123,7 +169,7 @@ cargo run --example agent_demo -- --model qwen-plus --show-events
 
 内置的 `MemoryMiddleware` 会在 `on_system_prompt` 中追加 `MEMORY.md` 索引，并可在 `pre_reply` / `pre_reasoning` 中异步检索相关记忆，将结果以 `HintBlock` 注入用户消息。
 
-### 2.7 权限系统
+### 2.8 权限系统
 
 工具执行前，Agent 会使用 `PermissionEngine` 根据 `PermissionContext` 做检查。当前权限模式包括：
 
@@ -137,7 +183,7 @@ cargo run --example agent_demo -- --model qwen-plus --show-events
 
 规则优先级是：`deny` → `ask` → `allow` → 模式默认值。规则支持精确匹配、`*` 全匹配，以及 `prefix*` 前缀匹配；可用 `rule_content` 对序列化后的工具输入做子串匹配。
 
-### 2.8 SubAgent 协作
+### 2.9 SubAgent 协作
 
 `agent_scope_agent` 提供进程内 SubAgent 协作层，用于父 Agent 将有边界的子任务委派给协作者。父 Agent 创建 `SubAgentRegistry`，注册具名 `SubAgent` 或验证可复用的 `SubAgentTemplate` 蓝图，然后用显式 `DelegationRequest` 调用 `delegate_once()` 或 `delegate_many()`。
 

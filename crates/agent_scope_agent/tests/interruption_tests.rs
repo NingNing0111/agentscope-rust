@@ -7,7 +7,7 @@ use agent_scope_message::Role;
 use agent_scope_message::factory::user_msg;
 
 mod mocks;
-use mocks::MockModel;
+use mocks::{CallGate, MockModel};
 
 /// T061: Interrupt during reasoning returns interruption message.
 #[tokio::test]
@@ -105,4 +105,57 @@ async fn test_interrupt_before_reply_starts() {
     );
     let reply = result.unwrap();
     assert!(reply.get_text_content("").unwrap().contains("interrupted"));
+}
+
+/// Regression: interrupting a reply *mid-flight* (while the model call is
+/// in-progress) must not leak the flag into the next reply. Previously the
+/// flag stayed set after the interrupt was handled, so the next `reply()`
+/// returned the interruption message without calling the model.
+#[tokio::test]
+async fn test_mid_reply_interrupt_does_not_leak_into_next_reply() {
+    let gate = CallGate::new();
+    let model = Arc::new(MockModel::new("mock", "NORMAL RESPONSE").with_gate(gate.clone()));
+    let config = AgentConfig::builder()
+        .name("agent")
+        .model(model)
+        .build()
+        .unwrap();
+
+    let agent = Arc::new(
+        ReActAgent::new(
+            config,
+            ReActConfig::default(),
+            ContextConfig::default(),
+            vec![],
+        )
+        .unwrap(),
+    );
+
+    // Reply 1 runs in the background and blocks inside the model call.
+    let input1 = user_msg("user", "first").unwrap();
+    let handle = tokio::spawn({
+        let agent = agent.clone();
+        async move { agent.reply(Some(vec![input1])).await }
+    });
+
+    // Wait until the model call is in-flight, then interrupt mid-reply.
+    gate.started.notified().await;
+    agent.interrupt();
+
+    // Reply 1 terminates with an interruption message.
+    let reply1 = handle.await.unwrap().unwrap();
+    assert!(
+        reply1.get_text_content("").unwrap().contains("interrupted"),
+        "reply 1 should be interrupted"
+    );
+    gate.release();
+
+    // Reply 2 must run normally and reach the model — no leaked flag.
+    let input2 = user_msg("user", "second").unwrap();
+    let reply2 = agent.reply(Some(vec![input2])).await.unwrap();
+    assert_eq!(
+        reply2.get_text_content(""),
+        Some("NORMAL RESPONSE".to_string()),
+        "reply 2 should call the model normally"
+    );
 }

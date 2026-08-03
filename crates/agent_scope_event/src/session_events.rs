@@ -10,6 +10,7 @@ use crate::base::EventBase;
 /// Emitted when a new session is created.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCreatedEvent {
+    #[serde(flatten)]
     pub base: EventBase,
     pub session_id: String,
 }
@@ -17,6 +18,7 @@ pub struct SessionCreatedEvent {
 /// Emitted when a session is explicitly closed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionClosedEvent {
+    #[serde(flatten)]
     pub base: EventBase,
     pub session_id: String,
     /// Reason: "explicit_close" | "drop" | "error"
@@ -26,6 +28,7 @@ pub struct SessionClosedEvent {
 /// Emitted when a session is persisted to a store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSavedEvent {
+    #[serde(flatten)]
     pub base: EventBase,
     pub session_id: String,
     pub message_count: usize,
@@ -34,6 +37,7 @@ pub struct SessionSavedEvent {
 /// Emitted when a session is loaded from a store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionLoadedEvent {
+    #[serde(flatten)]
     pub base: EventBase,
     pub session_id: String,
     pub message_count: usize,
@@ -42,6 +46,7 @@ pub struct SessionLoadedEvent {
 /// Emitted after context trimming is performed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTrimmedEvent {
+    #[serde(flatten)]
     pub base: EventBase,
     pub session_id: String,
     pub messages_before: usize,

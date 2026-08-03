@@ -13,6 +13,9 @@ use tokio::sync::oneshot;
 pub(crate) struct StreamHandle {
     cancel_rx: Mutex<oneshot::Receiver<()>>,
     is_streaming: Arc<AtomicBool>,
+    /// Kept alive in the dummy handle so the receiver never sees a closed
+    /// channel — a dummy must never report as cancelled.
+    _cancel_keep_alive: Option<oneshot::Sender<()>>,
 }
 
 impl StreamHandle {
@@ -27,6 +30,7 @@ impl StreamHandle {
             Self {
                 cancel_rx: Mutex::new(rx),
                 is_streaming,
+                _cancel_keep_alive: None,
             },
             tx,
         )
@@ -35,11 +39,17 @@ impl StreamHandle {
     /// Create a dummy StreamHandle that is never cancelled.
     /// Used in the Complete (non-streaming) response path where no
     /// EventStream exists to provide a real cancellation signal.
+    ///
+    /// The dummy holds its own sender so the channel stays open and
+    /// `is_cancelled()` always returns `false` (previously the sender was
+    /// dropped immediately, making the dummy report as cancelled and silently
+    /// truncating streaming tool outputs in the non-streaming path).
     pub(crate) fn new_dummy() -> Self {
-        let (_, rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         Self {
             cancel_rx: Mutex::new(rx),
             is_streaming: Arc::new(AtomicBool::new(false)),
+            _cancel_keep_alive: Some(tx),
         }
     }
 

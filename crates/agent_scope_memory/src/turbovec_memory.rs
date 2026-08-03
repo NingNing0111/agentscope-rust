@@ -541,7 +541,7 @@ impl Memory for TurbovecMemory {
         info!(memory.name = %entry.name, "writing memory entry");
         let name = entry.name.clone();
         let mem_type = entry.metadata.mem_type.clone();
-        let _description = entry.description.clone();
+        let description = entry.description.clone();
         let updated_at = entry.metadata.updated_at.clone();
         let content = entry.content.clone();
 
@@ -578,6 +578,7 @@ impl Memory for TurbovecMemory {
         let mut metadata = HashMap::new();
         metadata.insert("memory_name".to_string(), name.clone());
         metadata.insert("memory_type".to_string(), mem_type.as_str().to_string());
+        metadata.insert("description".to_string(), description);
         metadata.insert("source".to_string(), format!("{name}.md"));
         metadata.insert("updated_at".to_string(), updated_at);
 
@@ -775,7 +776,7 @@ impl TurbovecMemory {
                 .entry(name.clone())
                 .or_insert_with(|| MemorySearchResult {
                     memory_name: name,
-                    description: hit.metadata.get("memory_type").cloned().unwrap_or_default(),
+                    description: hit.metadata.get("description").cloned().unwrap_or_default(),
                     memory_type: hit
                         .metadata
                         .get("memory_type")
@@ -790,7 +791,7 @@ impl TurbovecMemory {
                 entry.score = hit.score;
                 entry.content =
                     truncate_str(&hit.content, self.config.retrieval_max_tokens_per_file);
-                entry.description = hit.metadata.get("memory_type").cloned().unwrap_or_default();
+                entry.description = hit.metadata.get("description").cloned().unwrap_or_default();
                 if let Some(mt) = hit.metadata.get("memory_type") {
                     entry.memory_type = MemoryType::from(mt.as_str());
                 }
@@ -873,6 +874,7 @@ impl TurbovecMemory {
                                 "memory_type".to_string(),
                                 entry.metadata.mem_type.as_str().to_string(),
                             );
+                            metadata.insert("description".to_string(), entry.description.clone());
                             metadata.insert("source".to_string(), format!("{name}.md"));
                             metadata.insert(
                                 "updated_at".to_string(),

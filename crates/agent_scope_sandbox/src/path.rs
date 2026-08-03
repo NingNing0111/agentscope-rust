@@ -110,7 +110,22 @@ impl SandboxPathResolver {
                 .ok_or_else(|| SandboxError::ValidationError {
                     message: "path has no leaf".into(),
                 })?;
-            Ok(safe_parent.join(file_name))
+            let candidate = safe_parent.join(file_name);
+            // If the leaf already exists as a symlink, resolve and re-check
+            // containment so a pre-planted symlink (e.g. `ln -s /etc/passwd
+            // workdir/evil.txt` then write) cannot escape the sandbox root.
+            match std::fs::symlink_metadata(&candidate) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    let canon = candidate.canonicalize().map_err(|e| {
+                        SandboxError::IoError {
+                            operation: operation.into(),
+                            message: e.to_string(),
+                        }
+                    })?;
+                    self.ensure_contained(canon, operation)
+                }
+                _ => Ok(candidate),
+            }
         }
     }
 

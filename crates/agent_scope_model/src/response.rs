@@ -118,6 +118,12 @@ impl ChatResponse {
                 && tc.id == block_id
             {
                 tc.input.push_str(input);
+                // Mirror StreamAccumulator::AccToolCallBlock::append: adopt the
+                // name/id when they arrive in a later chunk (DashScope streams
+                // may send the first chunk without them).
+                if !name.is_empty() && tc.name.is_empty() {
+                    tc.name = name.to_string();
+                }
             }
         }
         // Store extras in response metadata for later use

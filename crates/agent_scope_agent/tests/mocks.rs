@@ -11,7 +11,7 @@
 #![allow(unused_imports)]
 
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use agent_scope_message::{
     ContentBlock, Msg, TextBlock, ToolCallBlock, ToolOutput, ToolResultBlock, ToolResultState,
@@ -22,6 +22,50 @@ use agent_scope_model::{
 use agent_scope_tool::{Tool, ToolError, ToolExecOutput};
 use futures::{Stream, stream};
 use serde_json::Value as JsonValue;
+use tokio::sync::Notify;
+
+// ---------------------------------------------------------------------------
+// CallGate
+// ---------------------------------------------------------------------------
+
+/// A gate that lets a test hold a model call in-flight until released.
+///
+/// When attached to a [`MockModel`], `call_api` notifies `started` on entry and
+/// then awaits `release` before returning. This enables deterministic
+/// mid-reply interruption tests.
+#[derive(Clone, Default)]
+pub struct CallGate {
+    /// Notified once `call_api` enters the gate.
+    pub started: Arc<Notify>,
+    /// `call_api` awaits this before producing a response.
+    pub release: Arc<Notify>,
+}
+
+impl CallGate {
+    /// Create a fresh, closed gate.
+    pub fn new() -> Self {
+        Self {
+            started: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+        }
+    }
+
+    /// Signal that `call_api` has entered the gate.
+    ///
+    /// Uses `notify_one` (which stores a permit) rather than `notify_waiters`
+    /// so the test's `started.notified().await` never misses the signal even
+    /// when the model reaches the gate before the test polls the future.
+    pub fn signal_started(&self) {
+        self.started.notify_one();
+    }
+
+    /// Release the blocked model call.
+    ///
+    /// Uses `notify_one` so a later call also passes immediately.
+    pub fn release(&self) {
+        self.release.notify_one();
+    }
+}
 
 // ---------------------------------------------------------------------------
 // MockModel
@@ -39,6 +83,13 @@ pub struct MockModel {
     pub stream_mode: bool,
     /// Number of chunks to split the response into when stream_mode is true.
     pub stream_chunks: usize,
+    /// Fixed context window size (overrides the trait default 32768).
+    pub context_size: i64,
+    /// Optional fixed token count returned by `count_tokens` (overrides the
+    /// byte/4 heuristic), enabling deterministic context-length injection tests.
+    pub fixed_tokens: Option<usize>,
+    /// When set, `call_api` blocks until the gate is released.
+    pub gate: Option<CallGate>,
 }
 
 impl MockModel {
@@ -50,6 +101,9 @@ impl MockModel {
             block_id: uuid::Uuid::new_v4().as_simple().to_string(),
             stream_mode: false,
             stream_chunks: 1,
+            context_size: 32768,
+            fixed_tokens: None,
+            gate: None,
         }
     }
 
@@ -59,6 +113,27 @@ impl MockModel {
     pub fn with_stream(mut self, chunks: usize) -> Self {
         self.stream_mode = true;
         self.stream_chunks = chunks.max(1);
+        self
+    }
+
+    /// Set the fixed context window size.
+    #[allow(dead_code)]
+    pub fn with_context_size(mut self, size: i64) -> Self {
+        self.context_size = size;
+        self
+    }
+
+    /// Set a fixed token count returned by `count_tokens`.
+    #[allow(dead_code)]
+    pub fn with_fixed_tokens(mut self, tokens: usize) -> Self {
+        self.fixed_tokens = Some(tokens);
+        self
+    }
+
+    /// Attach a gate that holds `call_api` in-flight until released.
+    #[allow(dead_code)]
+    pub fn with_gate(mut self, gate: CallGate) -> Self {
+        self.gate = Some(gate);
         self
     }
 }
@@ -73,6 +148,49 @@ impl ChatModel for MockModel {
         self.stream_mode
     }
 
+    fn context_size(&self) -> i64 {
+        self.context_size
+    }
+
+    fn count_tokens(&self, messages: &[Msg], tools: Option<&[JsonValue]>) -> usize {
+        if let Some(tokens) = self.fixed_tokens {
+            return tokens;
+        }
+        // Inline the trait default's byte/4 heuristic. Calling
+        // `ChatModel::count_tokens(self, ...)` here would dispatch back to
+        // `MockModel::count_tokens` and infinitely recurse.
+        let mut total_bytes = 0usize;
+        for msg in messages {
+            for block in &msg.content {
+                match block {
+                    agent_scope_message::ContentBlock::Text(tb) => total_bytes += tb.text.len(),
+                    agent_scope_message::ContentBlock::Thinking(tb) => {
+                        total_bytes += tb.thinking.len();
+                    }
+                    agent_scope_message::ContentBlock::Hint(hb) => match &hb.hint {
+                        agent_scope_message::HintContent::Text(t) => total_bytes += t.len(),
+                        agent_scope_message::HintContent::Blocks(_) => total_bytes += 500,
+                    },
+                    agent_scope_message::ContentBlock::ToolCall(tc) => {
+                        total_bytes += tc.input.len() + tc.name.len();
+                    }
+                    agent_scope_message::ContentBlock::ToolResult(tr) => match &tr.output {
+                        agent_scope_message::ToolOutput::Text(t) => total_bytes += t.len(),
+                        agent_scope_message::ToolOutput::Blocks(_) => total_bytes += 2000,
+                    },
+                    agent_scope_message::ContentBlock::Data(_) => total_bytes += 2000 * 4,
+                    agent_scope_message::ContentBlock::Unknown => {}
+                }
+            }
+        }
+        if let Some(tools) = tools
+            && let Ok(json_str) = serde_json::to_string(tools)
+        {
+            total_bytes += json_str.len();
+        }
+        (total_bytes as f64 / 4.0).ceil() as usize
+    }
+
     async fn call_api(
         &self,
         _model: &str,
@@ -80,6 +198,10 @@ impl ChatModel for MockModel {
         _tools: Option<&[JsonValue]>,
         _tool_choice: Option<&ToolChoice>,
     ) -> Result<ModelCallResult, ModelError> {
+        if let Some(gate) = &self.gate {
+            gate.started.notify_one();
+            gate.release.notified().await;
+        }
         if self.stream_mode {
             let text = self.response_text.clone();
             let total_chars = text.len();

@@ -275,7 +275,10 @@ pub(crate) fn parse_skill_md(content: &str) -> Result<(String, String, String), 
     let rest = &trimmed[3..];
     let end = rest.find("---").unwrap_or(rest.len());
     let frontmatter = &rest[..end];
-    let body = rest[end + 3..].trim().to_string();
+    // An unclosed frontmatter (no trailing `---`) leaves `rest[end + 3..]`
+    // out of range; `get` returns None instead of panicking, yielding an empty
+    // body (matching the tool crate's `skill_loader.rs` handling).
+    let body = rest.get(end + 3..).unwrap_or("").trim().to_string();
 
     let mut name = String::new();
     let mut description = String::new();

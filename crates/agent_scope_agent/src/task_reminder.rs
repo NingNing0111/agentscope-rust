@@ -7,6 +7,13 @@
 //! is appended to the persistent context reminding the agent of the remaining
 //! task counts. Awareness detection re-uses a fixed source identifier so the
 //! reminder is only injected once until a compression removes it.
+//!
+//! Feature 026 introduced the unified [`runtime_injection`](crate::runtime_injection)
+//! pipeline that adds time and context-length dimensions. This module keeps the
+//! Feature 024 task-only behavior byte-for-byte identical so existing tests and
+//! call sites don't regress; the unified pipeline is used by the loop call
+//! sites (react_loop / streaming_reactor) for the full three-dimensional
+//! injection.
 
 use std::sync::RwLock;
 

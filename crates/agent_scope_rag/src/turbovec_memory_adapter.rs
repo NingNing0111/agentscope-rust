@@ -160,6 +160,21 @@ impl MemoryVectorIndex for TurbovecIndexAdapter {
             .map_err(|e| e.to_string())
     }
 
+    async fn list_documents(&self, collection: &str) -> Result<Vec<String>, String> {
+        self.store
+            .read()
+            .await
+            .list_documents(collection, None)
+            .await
+            .map(|summaries| {
+                summaries
+                    .into_iter()
+                    .map(|s| s.document_id)
+                    .collect::<Vec<_>>()
+            })
+            .map_err(|e| e.to_string())
+    }
+
     async fn save(&self, path: &str) -> Result<(), String> {
         self.store
             .read()

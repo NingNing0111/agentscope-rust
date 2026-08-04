@@ -91,7 +91,7 @@ pub struct ToolResultEndEvent {
     pub reply_id: String,
     pub tool_call_id: String,
     pub state: ToolResultState,
-    #[serde(default)]
+    #[serde(default, rename = "result_metadata")]
     pub metadata: HashMap<String, serde_json::Value>,
     /// Complete observable output accumulated from all ToolResultTextDelta events.
     /// `Some("")` means known empty; `None` means unknown/unavailable.

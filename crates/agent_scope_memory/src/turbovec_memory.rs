@@ -187,6 +187,9 @@ pub trait MemoryVectorIndex: Send + Sync {
     /// Idempotent — if the document doesn't exist, still returns `Ok(())`.
     async fn delete(&self, collection: &str, document_id: &str) -> Result<(), String>;
 
+    /// List the distinct document ids currently present in a collection.
+    async fn list_documents(&self, collection: &str) -> Result<Vec<String>, String>;
+
     /// Persist the entire index to `path`.
     async fn save(&self, path: &str) -> Result<(), String>;
 
@@ -361,8 +364,10 @@ pub struct TurbovecMemory {
     vector_index: Arc<dyn MemoryVectorIndex>,
     embedding_model: Arc<dyn EmbeddingModel>,
     config: TurbovecMemoryConfig,
-    /// Whether the index has been initialized (collection created).
-    index_ready: bool,
+    /// Whether the index has been initialized (collection created). `AtomicBool`
+    /// so `ensure_index_ready(&self)` (an immutable method called from
+    /// `write`/`semantic_search`) can set it once the collection exists.
+    index_ready: std::sync::atomic::AtomicBool,
 }
 
 impl TurbovecMemory {
@@ -398,7 +403,7 @@ impl TurbovecMemory {
             vector_index,
             embedding_model,
             config,
-            index_ready: false,
+            index_ready: std::sync::atomic::AtomicBool::new(false),
         };
 
         // Attempt to load or initialize the index.
@@ -466,7 +471,8 @@ impl TurbovecMemory {
         if has_coll {
             let _emb_dim = self.embedding_model.model_card().dimensions;
             // Dimension check happens on next operation — we trust the loaded index.
-            self.index_ready = true;
+            self.index_ready
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
 
         info!("loaded existing vector index from {}", index_path);
@@ -475,7 +481,7 @@ impl TurbovecMemory {
 
     /// Ensure the vector collection exists and create it if needed.
     async fn ensure_index_ready(&self) -> Result<(), MemoryError> {
-        if self.index_ready {
+        if self.index_ready.load(std::sync::atomic::Ordering::SeqCst) {
             return Ok(());
         }
         let emb_dim = self.embedding_model.model_card().dimensions;
@@ -485,11 +491,29 @@ impl TurbovecMemory {
             .await
             .map_err(|e| MemoryError::SemanticIndexError { reason: e })?;
         if !has {
-            self.vector_index
+            let result = self
+                .vector_index
                 .create_collection(&self.config.collection_name, emb_dim)
-                .await
-                .map_err(|e| MemoryError::SemanticIndexError { reason: e })?;
+                .await;
+            // A concurrent writer may have created the collection between our
+            // `has_collection` check and this call; treat that as success rather
+            // than failing the write (audit M2).
+            if let Err(e) = result {
+                let already_exists = e
+                    .to_string()
+                    .to_lowercase()
+                    .contains("already exists");
+                if !already_exists {
+                    return Err(MemoryError::SemanticIndexError { reason: e });
+                }
+            }
         }
+        // Mark ready so we don't re-check (and re-create) on every write. The
+        // previous code never set this flag after a fresh create, so a newly
+        // constructed TurbovecMemory would re-run the has/create race on every
+        // `write`/`semantic_search`.
+        self.index_ready
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
@@ -840,7 +864,12 @@ impl TurbovecMemory {
         let start = Instant::now();
         info!("rebuilding vector index from Markdown files");
 
-        let headers = self.file_memory.list().await?;
+        // Use the *untruncated* enumeration. `file_memory.list()` caps at
+        // `retrieval_max_files` (default 200), and treating that as the full set
+        // would make the orphan sweep below delete every indexed document beyond
+        // the cap — a memory that still exists on disk would silently lose its
+        // vectors (audit M1).
+        let headers = self.file_memory.list_all_headers().await?;
         let total_scanned = headers.len();
         let mut indexed = 0usize;
         let mut skipped = 0usize;
@@ -926,12 +955,41 @@ impl TurbovecMemory {
             .unwrap_or(false);
 
         if has {
-            // For a clean rebuild, we delete old records per document first.
-            for header in &headers {
-                let name = header.filename.trim_end_matches(".md");
+            // For a clean rebuild, delete old records per document first. The
+            // collection may also contain documents whose .md file was deleted
+            // on disk since the last index write; those never appear in
+            // `headers`, so enumerate the indexed documents and remove any that
+            // no longer exist (audit M1).
+            let current_names: Vec<String> = headers
+                .iter()
+                .map(|h| h.filename.trim_end_matches(".md").to_string())
+                .collect();
+            match self
+                .vector_index
+                .list_documents(&self.config.collection_name)
+                .await
+            {
+                Ok(indexed) => {
+                    for doc in indexed {
+                        if !current_names.contains(&doc) {
+                            let _ = self
+                                .vector_index
+                                .delete(&self.config.collection_name, &doc)
+                                .await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to enumerate indexed documents during rebuild"
+                    );
+                }
+            }
+            for name in current_names {
                 let _ = self
                     .vector_index
-                    .delete(&self.config.collection_name, name)
+                    .delete(&self.config.collection_name, &name)
                     .await;
             }
         } else {

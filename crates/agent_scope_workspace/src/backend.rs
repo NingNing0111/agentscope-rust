@@ -4,6 +4,11 @@ use std::path::{Path, PathBuf};
 
 use crate::error::WorkspaceError;
 
+/// Upper bound on the bytes read from a shell command's stdout/stderr, so an
+/// unbounded producer (e.g. `yes`) cannot exhaust memory. Reading past this
+/// limit truncates the captured output.
+const MAX_SHELL_OUTPUT_BYTES: usize = 1_048_576; // 1 MiB
+
 // ---------------------------------------------------------------------------
 // ExecOutput
 // ---------------------------------------------------------------------------
@@ -117,36 +122,53 @@ impl WorkspaceBackend for LocalBackend {
         let mut child = tokio::process::Command::new(cmd[0])
             .args(&cmd[1..])
             .current_dir(cwd)
+            // Do not leak the host environment (API keys etc.) into commands the
+            // agent can run, like the sandbox backend. Inherit PATH so commands
+            // that need host tooling (/usr/local/bin, brew, node) still resolve
+            // — clearing it outright breaks legitimate agent workflows.
+            .env_clear()
+            .env(
+                "PATH",
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".into()),
+            )
+            .env("HOME", cwd)
+            .env("TMPDIR", std::env::temp_dir())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| WorkspaceError::BackendError {
                 message: format!("failed to spawn command '{}': {e}", cmd[0]),
             })?;
 
         // Read stdout/stderr from dedicated tasks so we can wait on the child
-        // with a timeout and still collect the pipes afterwards.
+        // with a timeout and still collect the pipes afterwards. Reads are
+        // bounded so an unbounded producer cannot exhaust memory.
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
-        let stdout_task = tokio::spawn(async move {
+        let mut stdout_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
-            if let Some(mut s) = stdout_pipe {
+            if let Some(s) = stdout_pipe {
                 use tokio::io::AsyncReadExt;
-                s.read_to_end(&mut bytes).await?;
+                s.take((MAX_SHELL_OUTPUT_BYTES + 1) as u64)
+                    .read_to_end(&mut bytes)
+                    .await?;
             }
             Ok::<Vec<u8>, std::io::Error>(bytes)
         });
-        let stderr_task = tokio::spawn(async move {
+        let mut stderr_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
-            if let Some(mut s) = stderr_pipe {
+            if let Some(s) = stderr_pipe {
                 use tokio::io::AsyncReadExt;
-                s.read_to_end(&mut bytes).await?;
+                s.take((MAX_SHELL_OUTPUT_BYTES + 1) as u64)
+                    .read_to_end(&mut bytes)
+                    .await?;
             }
             Ok::<Vec<u8>, std::io::Error>(bytes)
         });
 
         let wait_fut = child.wait();
-        let exit_code = match timeout_secs {
+        let mut exit_code = match timeout_secs {
             Some(secs) if secs > 0.0 => {
                 match tokio::time::timeout(std::time::Duration::from_secs_f64(secs), wait_fut)
                     .await
@@ -175,22 +197,48 @@ impl WorkspaceBackend for LocalBackend {
                 .unwrap_or(-1),
         };
 
-        let stdout = stdout_task
-            .await
-            .map_err(|e| WorkspaceError::BackendError {
-                message: format!("stdout task join failed: {e}"),
-            })?
-            .map_err(|e| WorkspaceError::BackendError {
-                message: format!("stdout read failed: {e}"),
-            })?;
-        let stderr = stderr_task
-            .await
-            .map_err(|e| WorkspaceError::BackendError {
-                message: format!("stderr task join failed: {e}"),
-            })?
-            .map_err(|e| WorkspaceError::BackendError {
-                message: format!("stderr read failed: {e}"),
-            })?;
+        // A grandchild that inherited the pipe keeps it open, so the read task
+        // would never reach EOF. Bound the joins with the same deadline so a
+        // command like `sh -c 'sleep 1000 &'` cannot hang the caller. When no
+        // timeout was requested, use a generous backstop (5 minutes) instead of
+        // an arbitrary 30s that would kill legitimate long-running reads.
+        let read_timeout = timeout_secs
+            .filter(|s| *s > 0.0)
+            .map(std::time::Duration::from_secs_f64)
+            .unwrap_or(std::time::Duration::from_secs(300));
+        // `tokio::select!` with a `&mut` handle (rather than `timeout`) keeps the
+        // JoinHandle alive so the timeout branch can abort the detached read
+        // task instead of letting it hold the pipe forever (audit S3).
+        let stdout = tokio::select! {
+            joined = &mut stdout_task => joined
+                .map_err(|e| WorkspaceError::BackendError {
+                    message: format!("stdout task join failed: {e}"),
+                })?
+                .map_err(|e| WorkspaceError::BackendError {
+                    message: format!("stdout read failed: {e}"),
+                })?,
+            _ = tokio::time::sleep(read_timeout) => {
+                let _ = child.kill().await;
+                exit_code = 124;
+                stdout_task.abort();
+                Vec::new()
+            }
+        };
+        let stderr = tokio::select! {
+            joined = &mut stderr_task => joined
+                .map_err(|e| WorkspaceError::BackendError {
+                    message: format!("stderr task join failed: {e}"),
+                })?
+                .map_err(|e| WorkspaceError::BackendError {
+                    message: format!("stderr read failed: {e}"),
+                })?,
+            _ = tokio::time::sleep(read_timeout) => {
+                let _ = child.kill().await;
+                exit_code = 124;
+                stderr_task.abort();
+                Vec::new()
+            }
+        };
 
         Ok(ExecOutput {
             stdout,
@@ -296,12 +344,18 @@ impl WorkspaceBackend for LocalBackend {
     }
 
     async fn stat_mtime(&self, path: &str) -> Result<Option<f64>, WorkspaceError> {
-        let metadata =
-            tokio::fs::metadata(path)
-                .await
-                .map_err(|e| WorkspaceError::BackendError {
+        // A missing path is `None`, not an error — otherwise `list_skills`
+        // fails outright when the skills directory has been deleted/reset
+        // (audit S12).
+        let metadata = match tokio::fs::metadata(path).await {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                return Err(WorkspaceError::BackendError {
                     message: format!("stat_mtime '{path}': {e}"),
-                })?;
+                });
+            }
+        };
         let modified = metadata
             .modified()
             .map_err(|e| WorkspaceError::BackendError {

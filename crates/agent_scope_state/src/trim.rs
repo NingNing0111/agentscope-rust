@@ -70,6 +70,14 @@ fn extract_text(block: &agent_scope_message::ContentBlock) -> Option<String> {
     }
 }
 
+/// Approximate character length of a content block, used to bound the summary
+/// size across both `SummaryContent` variants.
+fn text_len(block: &agent_scope_message::ContentBlock) -> usize {
+    extract_text(block)
+        .map(|t| t.len())
+        .unwrap_or(0)
+}
+
 /// Check if a message contains a ToolCall block.
 fn has_tool_call(msg: &agent_scope_message::Msg) -> bool {
     msg.content
@@ -198,7 +206,52 @@ pub fn trim_context(
         .collect();
 
     if !trimmed_texts.is_empty() {
-        state.summary = SummaryContent::Text(trimmed_texts.join("\n"));
+        let new_text = trimmed_texts.join("\n");
+        // Append to any existing summary instead of overwriting it, so the
+        // history of prior compressions is preserved (audit M8). Cap the
+        // accumulated size so a very long session cannot turn the summary
+        // itself into a context-budget problem.
+        const MAX_SUMMARY_CHARS: usize = 4096;
+        state.summary = match &state.summary {
+            SummaryContent::Text(existing) if !existing.is_empty() => {
+                // Roll the window rather than replacing wholesale: when the
+                // combined text exceeds the cap, keep the *tail* of the old
+                // summary (plus the new text) instead of dropping the entire
+                // prior history.
+                let combined = format!("{existing}\n{new_text}");
+                if combined.len() <= MAX_SUMMARY_CHARS {
+                    SummaryContent::Text(combined)
+                } else {
+                    let room = MAX_SUMMARY_CHARS.saturating_sub(new_text.len() + 1);
+                    let keep = if room >= existing.len() {
+                        existing.clone()
+                    } else {
+                        // Keep the end of the old summary so the most recent
+                        // compression context survives.
+                        let start = existing.len() - room;
+                        let truncated = &existing[start..];
+                        format!("…{truncated}")
+                    };
+                    SummaryContent::Text(format!("{keep}\n{new_text}"))
+                }
+            }
+            SummaryContent::Blocks(blocks) => {
+                // Mirror the char cap for block summaries: drop the oldest
+                // blocks while the total stays above the budget.
+                let mut blocks = blocks.clone();
+                blocks.push(agent_scope_message::ContentBlock::Text(
+                    agent_scope_message::TextBlock::new(new_text),
+                ));
+                let mut total: usize = blocks.iter().map(text_len).sum();
+                while total > MAX_SUMMARY_CHARS && blocks.len() > 1 {
+                    let removed = text_len(&blocks[0]);
+                    blocks.remove(0);
+                    total = total.saturating_sub(removed);
+                }
+                SummaryContent::Blocks(blocks)
+            }
+            _ => SummaryContent::Text(new_text),
+        };
     }
 
     // Remove trimmed messages (working backwards to keep indices valid)

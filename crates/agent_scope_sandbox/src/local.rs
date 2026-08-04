@@ -314,7 +314,10 @@ impl SandboxSession for LocalSandboxSession {
                 Stdio::piped()
             } else {
                 Stdio::null()
-            });
+            })
+            // If `execute` aborts early (timeout, stdin hang) the child is
+            // dropped; make sure that kills the process instead of leaking it.
+            .kill_on_drop(true);
         for (k, v) in &request.env {
             cmd.env(k, v);
         }
@@ -325,13 +328,11 @@ impl SandboxSession for LocalSandboxSession {
         if let Some(stdin) = request.stdin.clone()
             && let Some(mut child_stdin) = child.stdin.take()
         {
-            child_stdin
-                .write_all(&stdin)
-                .await
-                .map_err(|e| SandboxError::IoError {
-                    operation: "stdin".into(),
-                    message: e.to_string(),
-                })?;
+            // A child that never reads stdin fills the pipe buffer and blocks
+            // this write forever. Bound it with the execute deadline; on
+            // timeout the future (and `child_stdin`) is dropped, which closes
+            // the pipe so the child sees EOF and the wait below can proceed.
+            let _ = tokio::time::timeout(timeout_duration, child_stdin.write_all(&stdin)).await;
         }
 
         let mut stdout_pipe = child.stdout.take();
@@ -341,7 +342,7 @@ impl SandboxSession for LocalSandboxSession {
         // otherwise be an in-memory / disk DoS even though `max_output_bytes`
         // only trimmed the inline copy afterwards.
         let max_output_bytes = self.policy.max_output_bytes;
-        let stdout_task = tokio::spawn(async move {
+        let mut stdout_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
             if let Some(stdout) = stdout_pipe.take() {
                 use tokio::io::AsyncReadExt;
@@ -352,7 +353,7 @@ impl SandboxSession for LocalSandboxSession {
             }
             Ok::<Vec<u8>, std::io::Error>(bytes)
         });
-        let stderr_task = tokio::spawn(async move {
+        let mut stderr_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
             if let Some(stderr) = stderr_pipe.take() {
                 use tokio::io::AsyncReadExt;
@@ -365,7 +366,7 @@ impl SandboxSession for LocalSandboxSession {
         });
 
         let wait_result = timeout(timeout_duration, child.wait()).await;
-        let (status, exit_code, mut hits) = match wait_result {
+        let (mut status, mut exit_code, mut hits) = match wait_result {
             Ok(Ok(status)) => {
                 let code = status.code().unwrap_or(-1);
                 (ExecutionStatus::Exited { code }, Some(code), Vec::new())
@@ -392,26 +393,55 @@ impl SandboxSession for LocalSandboxSession {
                 )
             }
         };
-        let stdout = stdout_task
-            .await
-            .map_err(|e| SandboxError::IoError {
-                operation: "stdout_join".into(),
-                message: e.to_string(),
-            })?
-            .map_err(|e| SandboxError::IoError {
-                operation: "stdout_read".into(),
-                message: e.to_string(),
-            })?;
-        let stderr = stderr_task
-            .await
-            .map_err(|e| SandboxError::IoError {
-                operation: "stderr_join".into(),
-                message: e.to_string(),
-            })?
-            .map_err(|e| SandboxError::IoError {
-                operation: "stderr_read".into(),
-                message: e.to_string(),
-            })?;
+        // A grandchild that inherited the stdout/stderr pipe keeps its write
+        // end open, so `read_to_end` would never reach EOF and would block
+        // forever (the previous timeout only wrapped `child.wait`). Bound the
+        // read joins with the same deadline; on expiry, report the result as
+        // timed out. The direct child was already killed on the wait timeout,
+        // and `kill_on_drop` covers the abort paths.
+        // `tokio::select!` with a `&mut` handle (rather than `timeout`) keeps the
+        // JoinHandle alive so the timeout branch can abort the detached read
+        // task; a grandchild holding the pipe's write end would otherwise keep
+        // `read_to_end` blocked on EOF forever, leaking the task and the pipe
+        // (audit S3).
+        let stdout = tokio::select! {
+            joined = &mut stdout_task => joined
+                .map_err(|e| SandboxError::IoError {
+                    operation: "stdout_join".into(),
+                    message: e.to_string(),
+                })?
+                .map_err(|e| SandboxError::IoError {
+                    operation: "stdout_read".into(),
+                    message: e.to_string(),
+                })?,
+            _ = tokio::time::sleep(timeout_duration) => {
+                status = ExecutionStatus::TimedOut;
+                exit_code = None;
+                hits.push(ResourceLimitHit::Timeout);
+                let _ = child.kill().await;
+                stdout_task.abort();
+                Vec::new()
+            }
+        };
+        let stderr = tokio::select! {
+            joined = &mut stderr_task => joined
+                .map_err(|e| SandboxError::IoError {
+                    operation: "stderr_join".into(),
+                    message: e.to_string(),
+                })?
+                .map_err(|e| SandboxError::IoError {
+                    operation: "stderr_read".into(),
+                    message: e.to_string(),
+                })?,
+            _ = tokio::time::sleep(timeout_duration) => {
+                status = ExecutionStatus::TimedOut;
+                exit_code = None;
+                hits.push(ResourceLimitHit::Timeout);
+                let _ = child.kill().await;
+                stderr_task.abort();
+                Vec::new()
+            }
+        };
         let stdout_summary = self.output_summary(&execution_id, "stdout", stdout).await?;
         let stderr_summary = self.output_summary(&execution_id, "stderr", stderr).await?;
         if stdout_summary.truncated || stderr_summary.truncated {
@@ -465,6 +495,16 @@ impl SandboxSession for LocalSandboxSession {
             Err(e) => return Err(e),
         };
         self.check_write_access(&p, "delete_path")?;
+        // Refuse to delete the sandbox root or its workdir — a request like
+        // `delete_path("/")` resolves to the root and would recursively wipe
+        // the whole sandbox (audit S9).
+        let root = resolver.root_dir();
+        if p == root || p == resolver.workdir() {
+            return Err(SandboxError::PermissionDenied {
+                path: Some(p.display().to_string()),
+                operation: "delete_path".into(),
+            });
+        }
         if p.is_dir() {
             tokio::fs::remove_dir_all(&p)
                 .await

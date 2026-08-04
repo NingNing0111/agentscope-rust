@@ -16,6 +16,9 @@ use crate::config::RuntimeConfig;
 
 const DEFAULT_READ_LIMIT: usize = 400;
 const MAX_TOOL_OUTPUT_CHARS: usize = 16_000;
+/// Upper bound on a single file read, so a multi-GB file cannot be loaded into
+/// memory wholesale and stall/OOM the host.
+const MAX_READ_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 
 #[derive(Debug, Clone)]
 pub struct ToolState {
@@ -264,6 +267,50 @@ pub fn resolve_workspace_path(cwd: &Path, input: &str) -> Result<PathBuf, ToolRe
             false,
         ));
     }
+
+    // Symlink containment check: a workspace that contains `link -> /etc` (planted
+    // by a previous command) would pass the lexical `starts_with` check but
+    // resolve outside the workspace, letting Read/Write/Edit touch host files
+    // (audit S5). Resolve the real path and re-check containment.
+    let existing_ancestor = {
+        let mut p = normalized.as_path();
+        let mut deepest: Option<PathBuf> = None;
+        loop {
+            if p.exists() {
+                deepest = Some(p.to_path_buf());
+                break;
+            }
+            let Some(parent) = p.parent() else { break };
+            if parent == p {
+                break;
+            }
+            p = parent;
+        }
+        deepest
+    };
+    if let Some(existing) = existing_ancestor {
+        let canon = existing
+            .canonicalize()
+            .map_err(|e| {
+                ToolResultShape::err(
+                    "path_resolution",
+                    "io",
+                    format!("failed to resolve path: {e}"),
+                    false,
+                )
+            })?;
+        // The resolved ancestor must still live inside the real workspace root.
+        let real_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+        if !canon.starts_with(&real_cwd) {
+            return Err(ToolResultShape::err(
+                "path_outside_workspace",
+                "permission",
+                "path resolves through a symlink outside the workspace",
+                false,
+            ));
+        }
+    }
+
     Ok(normalized)
 }
 
@@ -294,6 +341,18 @@ pub fn read_tool(state: &ToolState, input: ReadInput) -> ToolResultShape {
             "unsupported_file_type",
             "validation",
             "target is a directory",
+            false,
+        );
+    }
+    // Guard against reading an arbitrarily large file (e.g. a multi-GB log or
+    // `dd` output) into memory, which would stall or OOM the agent host.
+    if let Ok(meta) = fs::metadata(&path)
+        && meta.len() > MAX_READ_BYTES
+    {
+        return ToolResultShape::err(
+            "file_too_large",
+            "validation",
+            format!("file exceeds {MAX_READ_BYTES} byte read limit"),
             false,
         );
     }
@@ -389,6 +448,17 @@ pub fn edit_tool(state: &ToolState, input: EditInput) -> ToolResultShape {
     };
     if !path.exists() {
         return ToolResultShape::err("file_not_found", "io", "target file does not exist", false);
+    }
+    // Same size guard as read_tool (audit: oversized file reads).
+    if let Ok(meta) = fs::metadata(&path)
+        && meta.len() > MAX_READ_BYTES
+    {
+        return ToolResultShape::err(
+            "file_too_large",
+            "validation",
+            format!("file exceeds {MAX_READ_BYTES} byte read limit"),
+            false,
+        );
     }
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,
@@ -494,6 +564,10 @@ async fn run_shell_command(state: &ToolState, command: &str, timeout: Duration) 
         .current_dir(&state.cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // If the timeout fires, `wait_with_output` is dropped; make sure the
+        // child is killed rather than leaked (a `sh -c 'sleep 1000 &'` would
+        // otherwise keep running in the background forever).
+        .kill_on_drop(true)
         .spawn();
     let child = match child {
         Ok(child) => child,

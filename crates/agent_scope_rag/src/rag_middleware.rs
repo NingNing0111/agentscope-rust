@@ -132,12 +132,14 @@ impl Middleware for RAGMiddleware {
             return Ok(());
         };
 
-        // Extract the latest user message text
+        // Extract the latest user message text only. The previous code joined
+        // *all* user messages, so the query grew with the conversation and the
+        // retrieval was diluted (audit M7).
         let user_text: String = msgs
             .iter()
             .rev()
-            .filter(|m| m.role == Role::User)
-            .flat_map(|m| {
+            .find(|m| m.role == Role::User)
+            .map(|m| {
                 m.content
                     .iter()
                     .filter_map(|b| {
@@ -148,9 +150,9 @@ impl Middleware for RAGMiddleware {
                         }
                     })
                     .collect::<Vec<_>>()
+                    .join("\n")
             })
-            .collect::<Vec<_>>()
-            .join("\n");
+            .unwrap_or_default();
 
         if user_text.trim().is_empty() || self.knowledge_bases.is_empty() {
             return Ok(());

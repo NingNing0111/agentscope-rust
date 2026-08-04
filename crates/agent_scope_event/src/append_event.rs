@@ -100,7 +100,6 @@ impl AppendEvent for Msg {
 
     fn append_event(&mut self, event: &AgentEvent) -> Result<(), AppendEventError> {
         use agent_scope_message::Base64Source;
-        use base64::Engine;
 
         if let Some(reply_id) = event_reply_id(event)
             && reply_id != self.id
@@ -136,6 +135,10 @@ impl AppendEvent for Msg {
             AgentEvent::TextBlockStart(e) => {
                 let mut block = TextBlock::new(String::new());
                 block.id = e.block_id.clone();
+                // Use the event timestamp so a persisted/replayed stream keeps
+                // the original timeline (created_at must not post-date the
+                // finished_at recorded from the event).
+                block.created_at = e.base.created_at.clone();
                 self.content.push(ContentBlock::Text(block));
             }
 
@@ -163,6 +166,7 @@ impl AppendEvent for Msg {
                 });
                 let mut db = DataBlock::new(source);
                 db.id = e.block_id.clone();
+                db.created_at = e.base.created_at.clone();
                 self.content.push(ContentBlock::Data(db));
             }
 
@@ -171,14 +175,14 @@ impl AppendEvent for Msg {
                 if let ContentBlock::Data(ref mut db) = self.content[idx]
                     && let DataSource::Base64(ref mut bs) = db.source
                 {
-                    let mut bytes = base64::engine::general_purpose::STANDARD
-                        .decode(&bs.data)
-                        .unwrap_or_default();
-                    let new_bytes = base64::engine::general_purpose::STANDARD
-                        .decode(&e.data)
-                        .unwrap_or_default();
-                    bytes.extend(new_bytes);
-                    bs.data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    // Streaming audio/image deltas are fragments of a single
+                    // base64 stream and may arrive unaligned to the 4-byte
+                    // boundary, so decoding each fragment independently fails.
+                    // The previous `unwrap_or_default()` silently dropped those
+                    // bytes, corrupting the binary payload. Concatenate the
+                    // fragments instead; the block is fully encoded once
+                    // `DataBlockEnd` arrives.
+                    bs.data.push_str(&e.data);
                 }
             }
 
@@ -192,6 +196,7 @@ impl AppendEvent for Msg {
             AgentEvent::ThinkingBlockStart(e) => {
                 let mut tb = ThinkingBlock::new(String::new());
                 tb.id = e.block_id.clone();
+                tb.created_at = e.base.created_at.clone();
                 self.content.push(ContentBlock::Thinking(tb));
             }
 
@@ -216,15 +221,17 @@ impl AppendEvent for Msg {
                 let mut hb = HintBlock::new(e.hint.clone());
                 hb.id = e.block_id.clone();
                 hb.source = e.source.clone();
+                hb.created_at = e.base.created_at.clone();
                 self.content.push(ContentBlock::Hint(hb));
             }
 
             AgentEvent::ToolCallStart(e) => {
-                let tc = ToolCallBlock::new(
+                let mut tc = ToolCallBlock::new(
                     e.tool_call_id.clone(),
                     e.tool_call_name.clone(),
                     String::new(),
                 );
+                tc.created_at = e.base.created_at.clone();
                 self.content.push(ContentBlock::ToolCall(tc));
             }
 
@@ -467,5 +474,61 @@ mod tests {
             msg.finished_reason,
             Some(ReplyFinishedReason::Completed)
         ));
+    }
+
+    #[test]
+    fn test_append_data_block_delta_concatenates_base64_fragments() {
+        // E2: streaming base64 fragments may arrive unaligned to the 4-byte
+        // boundary; they must be concatenated, not per-fragment-decoded.
+        use crate::{DataBlockDeltaEvent, DataBlockStartEvent};
+        use agent_scope_message::DataSource;
+
+        let mut msg = Msg::new("agent".into(), vec![], Role::Assistant).unwrap();
+        msg.id = "reply-001".into();
+        let base = make_base();
+
+        msg.append_event(&AgentEvent::DataBlockStart(DataBlockStartEvent {
+            base: base.clone(),
+            reply_id: "reply-001".into(),
+            block_id: "d-1".into(),
+            media_type: "image/png".into(),
+        }))
+        .unwrap();
+
+        // base64 of "AB" split at an unaligned boundary: "QU" (2 chars, not
+        // 4-aligned) followed by "I=" (decodes only together as "QUI=").
+        let delta1 = "QU";
+        let delta2 = "I=";
+        msg.append_event(&AgentEvent::DataBlockDelta(DataBlockDeltaEvent {
+            base: base.clone(),
+            reply_id: "reply-001".into(),
+            block_id: "d-1".into(),
+            data: delta1.into(),
+            media_type: "image/png".into(),
+        }))
+        .unwrap();
+        msg.append_event(&AgentEvent::DataBlockDelta(DataBlockDeltaEvent {
+            base: base.clone(),
+            reply_id: "reply-001".into(),
+            block_id: "d-1".into(),
+            data: delta2.into(),
+            media_type: "image/png".into(),
+        }))
+        .unwrap();
+
+        let ContentBlock::Data(db) = &msg.content[0] else {
+            panic!("expected a Data block");
+        };
+        let DataSource::Base64(bs) = &db.source else {
+            panic!("expected base64 source");
+        };
+        // The fragments must be preserved verbatim (concatenated).
+        assert_eq!(bs.data, "QUI=");
+        // And the concatenated base64 decodes to the original bytes.
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&bs.data)
+            .unwrap();
+        assert_eq!(decoded, b"AB");
     }
 }

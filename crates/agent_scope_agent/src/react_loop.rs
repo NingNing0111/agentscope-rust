@@ -128,7 +128,7 @@ pub(crate) async fn run_react_loop(
                     base: base(),
                     session_id: ctx.session_id.into(),
                     reply_id: ctx.reply_id.into(),
-                    finished_reason: ReplyFinishedReason::Completed,
+                    finished_reason: ReplyFinishedReason::ExceedMaxIters,
                     error: None,
                 }))
                 .await;
@@ -137,43 +137,47 @@ pub(crate) async fn run_react_loop(
 
         cur_iter += 1;
 
-        let messages = {
-            let state_read = ctx.state.read().unwrap();
+        // Snapshot the current context purely for the token count used by the
+        // compression trigger and the first-iteration context-length dimension.
+        // Computed here (before compression/injection mutate the state) so the
+        // count reflects the pre-compression context, matching Python.
+        let count_messages = {
+            let state_read = ctx.state.read().unwrap_or_else(|e| e.into_inner());
             state_read.context.clone()
         };
-
-        let mut hook_messages = messages.clone();
+        let mut count_msgs = count_messages;
         if !ctx.system_prompt.is_empty()
             && let Ok(system_msg) =
                 agent_scope_message::factory::system_msg("system", ctx.system_prompt)
         {
-            hook_messages.insert(0, system_msg);
+            count_msgs.insert(0, system_msg);
         }
-        let mut hook_tools = ctx.toolkit.as_ref().map(|tk| tk.get_tool_schemas());
-        for mw in ctx.middlewares.iter() {
-            mw.pre_reasoning(ctx.agent_name, &mut hook_messages, &mut hook_tools)
-                .await?;
-        }
-
         let tool_schemas = ctx.toolkit.as_ref().map(|tk| tk.get_tool_schemas());
-
-        // Context compression check — mirrors Python `_compress_memory_if_needed()`.
-        // The token count is computed once and shared with the runtime-state
-        // injection (first-iteration context-length dimension).
         let token_count = ctx
             .model
-            .count_tokens(&hook_messages, tool_schemas.as_deref());
+            .count_tokens(&count_msgs, tool_schemas.as_deref());
         let context_size = ctx.model.context_size();
         let trigger = (context_size as f64 * ctx.context_config.trigger_ratio) as usize;
+
+        // Context compression check — mirrors Python `_compress_memory_if_needed()`.
+        // Mutates `ctx.state.context` (drains the oldest messages). The token
+        // count was computed above (with system prompt + tool schemas) and is
+        // passed through so the trigger decision matches this call's budget.
         if ctx.context_config.enable && token_count > trigger {
-            let result =
-                compress_context(ctx.model, ctx.state, ctx.context_config, ctx.session_id).await;
+            let result = compress_context(
+                ctx.model,
+                ctx.state,
+                ctx.context_config,
+                ctx.session_id,
+                token_count,
+            )
+            .await;
             if let Err(e) = result {
                 tracing::warn!(
                     error = %e,
                     "Context compression failed, falling back to truncation"
                 );
-                let mut state_write = ctx.state.write().unwrap();
+                let mut state_write = ctx.state.write().unwrap_or_else(|e| e.into_inner());
                 let max_messages = (state_write.context.len() / 2).max(10);
                 truncate_context(&mut state_write, ctx.context_config, max_messages);
             }
@@ -199,6 +203,28 @@ pub(crate) async fn run_react_loop(
             let _ = event_tx.send(AgentEvent::HintBlock(evt)).await;
         }
 
+        // Build the actual call messages from the NOW-updated state. Building
+        // after compression + injection means the current model call sees the
+        // compressed context and the injected runtime hint — previously the
+        // pre-compression clone was sent, so on the triggering iteration the
+        // injection never reached the model.
+        let messages = {
+            let state_read = ctx.state.read().unwrap_or_else(|e| e.into_inner());
+            state_read.context.clone()
+        };
+        let mut hook_messages = messages;
+        if !ctx.system_prompt.is_empty()
+            && let Ok(system_msg) =
+                agent_scope_message::factory::system_msg("system", ctx.system_prompt)
+        {
+            hook_messages.insert(0, system_msg);
+        }
+        let mut hook_tools = ctx.toolkit.as_ref().map(|tk| tk.get_tool_schemas());
+        for mw in ctx.middlewares.iter() {
+            mw.pre_reasoning(ctx.agent_name, &mut hook_messages, &mut hook_tools)
+                .await?;
+        }
+
         let _ = event_tx
             .send(AgentEvent::ModelCallStart(ModelCallStartEvent {
                 base: base(),
@@ -210,9 +236,9 @@ pub(crate) async fn run_react_loop(
         // Use select! to allow cancellation during the model call.
         let call_future = ctx
             .model
-            .call(&hook_messages, tool_schemas.as_deref(), None);
+            .call(&hook_messages, hook_tools.as_deref(), None);
         let result = tokio::select! {
-            r = call_future => r?,
+            r = call_future => r,
             _ = ctx.cancel_token.cancelled() => {
                 // Consume the flag so the interruption only affects the current
                 // reply (see the top-of-loop check above).
@@ -237,6 +263,34 @@ pub(crate) async fn run_react_loop(
                 ));
             }
         };
+
+        // `interrupt()` may have landed between the `select!` resolution and
+        // this point (select is unbiased, so when both are ready it may pick
+        // the call branch even though the token was cancelled). Re-check the
+        // flag and treat it as an interruption rather than a completed reply,
+        // so the flag never leaks into the next reply (audit A9).
+        if ctx.interrupted.load(std::sync::atomic::Ordering::SeqCst) {
+            ctx.interrupted.store(false, Ordering::SeqCst);
+            let _ = event_tx
+                .send(AgentEvent::UserInterrupt(UserInterruptEvent {
+                    base: base(),
+                    reply_id: ctx.reply_id.into(),
+                }))
+                .await;
+            let _ = event_tx
+                .send(AgentEvent::ReplyEnd(ReplyEndEvent {
+                    base: base(),
+                    session_id: ctx.session_id.into(),
+                    reply_id: ctx.reply_id.into(),
+                    finished_reason: ReplyFinishedReason::Interrupted,
+                    error: None,
+                }))
+                .await;
+            return Ok(build_interruption_msg(
+                &ctx.react_config.interruption_message,
+            ));
+        }
+        let result = result?;
 
         // Accumulate stream chunks into a complete response via StreamAccumulator,
         // so DashScope (default stream=true) works with ReActAgent without change.
@@ -448,6 +502,12 @@ pub(crate) async fn run_react_loop(
                 }
 
                 for tc in &tool_calls {
+                    // Honor cancellation: if the reply was interrupted or the
+                    // stream dropped, stop executing side-effectful tools (audit
+                    // A4).
+                    if ctx.cancel_token.is_cancelled() {
+                        break;
+                    }
                     let mut tc_mut = tc.clone();
                     for mw in ctx.middlewares.iter() {
                         mw.pre_acting(ctx.agent_name, &mut tc_mut).await?;
@@ -531,6 +591,86 @@ pub(crate) async fn run_react_loop(
                         .await;
 
                     match exec_result {
+                        Ok(ToolExecOutput::Stream(mut stream)) => {
+                            // A tool that streams its output (e.g. progressive
+                            // task progress). Previously this branch was dropped
+                            // entirely, which left the tool_call unpaired in the
+                            // context (audit A7). Consume the stream, collect the
+                            // text, and write a single ToolResult back — the
+                            // batch path cannot emit progress deltas in real time,
+                            // but it must not lose the output.
+                            let mut collected = String::new();
+                            let mut final_state = ToolResultState::Success;
+                            let mut is_done = false;
+                            while !is_done {
+                                match stream.next().await {
+                                    Some(Ok(chunk)) => {
+                                        let txt = match &chunk.output {
+                                            ToolOutput::Text(t) => t.clone(),
+                                            _ => "[blocks]".into(),
+                                        };
+                                        collected.push_str(&txt);
+                                        if chunk.is_last {
+                                            is_done = true;
+                                        }
+                                    }
+                                    Some(Err(_)) => {
+                                        final_state = ToolResultState::Error;
+                                        is_done = true;
+                                    }
+                                    None => {
+                                        // Stream ended without is_last — treat as success
+                                        is_done = true;
+                                    }
+                                }
+                            }
+
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
+                                    base: base(),
+                                    reply_id: ctx.reply_id.into(),
+                                    tool_call_id: tc_mut.id.clone(),
+                                    tool_call_name: tc_mut.name.clone(),
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResultTextDelta(ToolResultTextDeltaEvent {
+                                    base: base(),
+                                    reply_id: ctx.reply_id.into(),
+                                    tool_call_id: tc_mut.id.clone(),
+                                    delta: collected.clone(),
+                                }))
+                                .await;
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+                                    base: base(),
+                                    reply_id: ctx.reply_id.into(),
+                                    tool_call_id: tc_mut.id.clone(),
+                                    state: final_state,
+                                    metadata: std::collections::HashMap::new(),
+                                    output: Some(collected.clone()),
+                                }))
+                                .await;
+
+                            // (post_acting is only invoked for `Complete`
+                            // results, matching the streaming path.)
+
+                            {
+                                let mut state_write = ctx.state.write().unwrap();
+                                let trb = ToolResultBlock::new(
+                                    tc_mut.id.clone(),
+                                    tc_mut.name.clone(),
+                                    ToolOutput::Text(collected),
+                                );
+                                if let Ok(msg) = Msg::new(
+                                    ctx.agent_name.into(),
+                                    vec![ContentBlock::ToolResult(trb)],
+                                    Role::Assistant,
+                                ) {
+                                    state_write.context.push(msg);
+                                }
+                            }
+                        }
                         Ok(ToolExecOutput::Complete(chunk)) => {
                             let result_state = chunk.state.clone();
                             let output_text = match &chunk.output {
@@ -637,7 +777,6 @@ pub(crate) async fn run_react_loop(
                                 }
                             }
                         }
-                        _ => {}
                     }
                 }
             }

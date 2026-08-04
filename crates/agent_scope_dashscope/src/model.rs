@@ -14,7 +14,7 @@ use serde_json::Value as JsonValue;
 use agent_scope_model::formatter::Formatter;
 use agent_scope_model::model_error::{ModelError, ModelErrorKind};
 use agent_scope_model::model_trait::{ChatModel, ModelCallResult};
-use agent_scope_model::response::ChatResponse;
+use agent_scope_model::response::{ChatResponse, FinishedReason};
 use agent_scope_model::schema_flat::flatten_json_schema_with_defs;
 use agent_scope_model::tool_choice::ToolChoice;
 use agent_scope_model::usage::ChatUsage;
@@ -246,6 +246,15 @@ impl DashScopeChatModel {
         if let Some(choice) = choices.and_then(|c| c.first()) {
             let message = choice.get("message");
 
+            // Mirror the streaming path: a `length`/`content_filter`/`max_tokens`
+            // termination means the output was cut short and must not be treated
+            // as a complete answer (audit D7).
+            if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str())
+                && matches!(fr, "length" | "content_filter" | "max_tokens")
+            {
+                resp.finished_reason = FinishedReason::Interrupted;
+            }
+
             // Text content
             if let Some(content) = message
                 .and_then(|m| m.get("content"))
@@ -320,6 +329,11 @@ impl DashScopeChatModel {
     }
 
     /// Parse streaming SSE bytes into a Stream of ChatResponse chunks.
+    ///
+    /// Bytes are accumulated across chunk boundaries so a `data:` event split
+    /// by the transport (or a multi-byte UTF-8 character cut mid-sequence) is
+    /// reconstructed before parsing. Each complete line is decoded strictly;
+    /// partial trailing bytes stay buffered for the next chunk.
     pub fn parse_stream_response(
         stream: reqwest::Response,
     ) -> Pin<Box<dyn Stream<Item = Result<ChatResponse, ModelError>> + Send>> {
@@ -328,186 +342,311 @@ impl DashScopeChatModel {
 
         let byte_stream = stream.bytes_stream();
 
-        let s = byte_stream
-            .map(|result| {
-                result.map_err(|e| ModelError::ApiError {
-                    status: 0,
-                    message: e.to_string(),
-                    provider: "dashscope".to_string(),
-                })
+        // Accumulate across chunk boundaries (via `ingest_sse_bytes`) and, when
+        // the source stream ends, flush any trailing bytes that were not
+        // terminated by a newline. A transport that closes cleanly right after
+        // the last `data:` line must not lose that final event (audit D6). An
+        // `unfold` gives us the terminator hook that `scan` lacks.
+        let byte_stream = byte_stream.map(|result| {
+            result.map_err(|e| ModelError::ApiError {
+                status: 0,
+                message: e.to_string(),
+                provider: "dashscope".to_string(),
             })
-            .flat_map(move |result| {
-                let bytes = match result {
-                    Ok(b) => b,
-                    Err(e) => return stream::iter(vec![Err(e)]),
-                };
-                let text = String::from_utf8_lossy(&bytes).to_string();
+        });
 
-                // Unify line endings and trim
-                let text = text.replace("\r\n", "\n");
-
-                let chunks: Vec<Result<ChatResponse, ModelError>> = text
-                    .lines()
-                    .filter(|line| line.starts_with("data: "))
-                    .filter_map(|line| {
-                        let data = line.strip_prefix("data: ").unwrap();
-                        if data.trim() == "[DONE]" {
-                            return None; // End of stream signal
-                        }
-                        match serde_json::from_str::<JsonValue>(data) {
-                            Ok(json) => {
-                                let mut resp = ChatResponse::default();
-
-                                if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
-                                    resp.id = id.to_string();
-                                }
-
-                                let choices = json.get("choices").and_then(|v| v.as_array());
-
-                                if let Some(choices_arr) = choices {
-                                    if choices_arr.is_empty() {
-                                        // Empty choices: usage-only chunk
-                                        if let Some(usage) = json.get("usage") {
-                                            resp.usage = Some(ChatUsage {
-                                                input_tokens: usage
-                                                    .get("prompt_tokens")
-                                                    .or_else(|| usage.get("input_tokens"))
-                                                    .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0),
-                                                output_tokens: usage
-                                                    .get("completion_tokens")
-                                                    .or_else(|| usage.get("output_tokens"))
-                                                    .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0),
-                                                time: 0.0,
-                                                ..Default::default()
-                                            });
-                                        }
-                                    } else if let Some(choice) = choices_arr.first() {
-                                        let delta = choice.get("delta");
-
-                                        // Text delta — skip empty text to avoid triggering
-                                        // empty TextBlock creation which causes
-                                        // premature ToolCallEnd in streaming (P1-12 fix)
-                                        if let Some(content) = delta
-                                            .and_then(|d| d.get("content"))
-                                            .and_then(|v| v.as_str())
-                                            && !content.is_empty()
-                                        {
-                                            resp.append_text(content, Some("text_0"));
-                                        }
-
-                                        // Reasoning/thinking delta
-                                        if let Some(reasoning) = delta
-                                            .and_then(|d| d.get("reasoning_content"))
-                                            .and_then(|v| v.as_str())
-                                        {
-                                            resp.append_thinking(
-                                                reasoning,
-                                                Some("thinking_0"),
-                                                HashMap::new(),
-                                            );
-                                        }
-
-                                        // Tool call delta
-                                        if let Some(tool_calls) = delta
-                                            .and_then(|d| d.get("tool_calls"))
-                                            .and_then(|v| v.as_array())
-                                        {
-                                            for tc in tool_calls {
-                                                let idx = tc
-                                                    .get("index")
-                                                    .and_then(|v| v.as_u64())
-                                                    .unwrap_or(0);
-                                                // Use index-only block_id for stable streaming
-                                                // accumulation. The tool_call `id` field may
-                                                // arrive in a later SSE chunk, which would
-                                                // cause StreamAccumulator to treat them as
-                                                // separate tool calls if we included it here.
-                                                let block_id = format!("tc_{idx}");
-
-                                                let func = tc.get("function");
-                                                let name = func
-                                                    .and_then(|f| f.get("name"))
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("");
-                                                let args = func
-                                                    .and_then(|f| f.get("arguments"))
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("");
-
-                                                resp.append_tool_call(
-                                                    &block_id,
-                                                    name,
-                                                    args,
-                                                    HashMap::new(),
-                                                );
-                                            }
-                                        }
-
-                                        // Audio delta
-                                        if let Some(audio) = delta.and_then(|d| d.get("audio")) {
-                                            if let Some(data) =
-                                                audio.get("data").and_then(|v| v.as_str())
-                                            {
-                                                let raw = base64::engine::general_purpose::STANDARD
-                                                    .decode(data)
-                                                    .unwrap_or_default();
-                                                resp.append_data_block(
-                                                    "audio_0",
-                                                    &raw,
-                                                    "audio/pcm16",
-                                                    None,
-                                                );
-                                            }
-                                            if let Some(transcript) =
-                                                audio.get("transcript").and_then(|v| v.as_str())
-                                            {
-                                                resp.append_text(transcript, Some("transcript_0"));
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Top-level usage in streaming chunk
-                                if let Some(usage) = json.get("usage") {
-                                    resp.usage = Some(ChatUsage {
-                                        input_tokens: usage
-                                            .get("prompt_tokens")
-                                            .or_else(|| usage.get("input_tokens"))
-                                            .and_then(|v| v.as_i64())
-                                            .unwrap_or(0),
-                                        output_tokens: usage
-                                            .get("completion_tokens")
-                                            .or_else(|| usage.get("output_tokens"))
-                                            .and_then(|v| v.as_i64())
-                                            .unwrap_or(0),
-                                        time: 0.0,
-                                        ..Default::default()
-                                    });
-                                }
-
-                                // Skip empty carrier chunks
-                                if resp.content.is_empty()
-                                    && resp.usage.is_none()
-                                    && resp.id.is_empty()
-                                {
-                                    return None;
-                                }
-
-                                Some(Ok(resp))
+        let s = futures::stream::unfold(
+            (byte_stream, Vec::<u8>::new()),
+            |(mut byte_stream, mut buf)| async move {
+                loop {
+                    match byte_stream.next().await {
+                        Some(Ok(bytes)) => {
+                            let out = Self::ingest_sse_bytes(&mut buf, &bytes);
+                            if !out.is_empty() {
+                                return Some((stream::iter(out), (byte_stream, buf)));
                             }
-                            Err(e) => Some(Err(ModelError::SerializationError {
-                                context: "dashscope SSE parse".to_string(),
-                                source: e,
-                            })),
+                            // Continue draining; a chunk may contain only a
+                            // partial line that completes in the next chunk.
                         }
-                    })
-                    .collect();
-                stream::iter(chunks)
-            });
+                        Some(Err(e)) => {
+                            return Some((stream::iter(vec![Err(e)]), (byte_stream, buf)));
+                        }
+                        None => {
+                            // Source ended. Flush the buffered tail.
+                            let tail = std::mem::take(&mut buf);
+                            if tail.is_empty() {
+                                return None;
+                            }
+                            let line = String::from_utf8_lossy(&tail).to_string();
+                            let out = if line.trim().is_empty() {
+                                Vec::new()
+                            } else {
+                                match Self::parse_sse_line(&line) {
+                                    Some(item) => vec![item],
+                                    None => Vec::new(),
+                                }
+                            };
+                            return Some((stream::iter(out), (byte_stream, buf)));
+                        }
+                    }
+                }
+            },
+        )
+        .flatten();
 
         Box::pin(s)
+    }
+
+    /// Append raw SSE bytes to the cross-chunk buffer and emit one result per
+    /// complete line. Partial trailing bytes (a line split across chunks, or a
+    /// multi-byte UTF-8 character cut mid-sequence) stay in `buf` for the next
+    /// call. Kept separate so the chunk-boundary behaviour is unit-testable.
+    fn ingest_sse_bytes(
+        buf: &mut Vec<u8>,
+        bytes: &[u8],
+    ) -> Vec<Result<ChatResponse, ModelError>> {
+        let mut out: Vec<Result<ChatResponse, ModelError>> = Vec::new();
+        buf.extend_from_slice(bytes);
+        // Consume every complete '\n'-terminated line; the tail stays buffered.
+        let mut consumed = 0usize;
+        for (i, &b) in buf.iter().enumerate() {
+            if b != b'\n' {
+                continue;
+            }
+            let line = &buf[consumed..i];
+            consumed = i + 1;
+            // Strip a single trailing '\r' for CRLF endings.
+            let line = if line.last() == Some(&b'\r') {
+                &line[..line.len() - 1]
+            } else {
+                line
+            };
+            match std::str::from_utf8(line) {
+                Ok(text) => {
+                    if let Some(item) = Self::parse_sse_line(text) {
+                        out.push(item);
+                    }
+                }
+                Err(err) => {
+                    out.push(Err(ModelError::SerializationError {
+                        context: "dashscope SSE line is not valid UTF-8".to_string(),
+                        source: serde_json::Error::io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            err,
+                        )),
+                    }));
+                }
+            }
+        }
+        if consumed > 0 {
+            buf.drain(..consumed);
+        }
+        out
+    }
+
+    /// Parse a single SSE `data:` line into a `ChatResponse`.
+    ///
+    /// Returns `None` for non-`data` lines and the terminal `[DONE]` sentinel;
+    /// `Some(Ok(..))` for a parsed event; `Some(Err(..))` for a malformed
+    /// payload. Carrier chunks that carry no content, usage or non-default
+    /// finish reason (heartbeats, `{"choices":[]}` without usage) are dropped
+    /// rather than emitted with a fabricated id.
+    fn parse_sse_line(line: &str) -> Option<Result<ChatResponse, ModelError>> {
+        // Accept both `data: {...}` and `data:{...}` (SSE spec allows no space).
+        let data = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
+        if data.trim() == "[DONE]" {
+            return None; // End of stream signal
+        }
+        if data.trim().is_empty() {
+            // Empty `data:` line — a valid SSE heartbeat. Skip it rather than
+            // failing the whole stream on a JSON parse of "" (audit D3).
+            return None;
+        }
+        match serde_json::from_str::<JsonValue>(data) {
+            Ok(json) => {
+                // A stream-level error event (OpenAI-compatible: `data:
+                // {"error":{"message":...}}`) must propagate, not be silently
+                // dropped as a carrier (audit D4).
+                if let Some(err) = json.get("error") {
+                    let message = err
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("SSE stream error");
+                    return Some(Err(ModelError::ApiError {
+                        status: 0,
+                        message: message.to_string(),
+                        provider: "dashscope".to_string(),
+                    }));
+                }
+
+                let mut resp = ChatResponse::default();
+
+                if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
+                    resp.id = id.to_string();
+                } else {
+                    // `ChatResponse::default()` fabricates a random uuid id. If
+                    // this chunk carries no id (e.g. a usage-only tail chunk),
+                    // that fabricated id would overwrite the real response id in
+                    // the StreamAccumulator (audit D5). Clear it so the
+                    // accumulator keeps the id from the content chunks.
+                    resp.id.clear();
+                }
+
+                let choices = json.get("choices").and_then(|v| v.as_array());
+
+                if let Some(choices_arr) = choices {
+                    if choices_arr.is_empty() {
+                        // Empty choices: usage-only chunk
+                        if let Some(usage) = json.get("usage") {
+                            resp.usage = Some(ChatUsage {
+                                input_tokens: usage
+                                    .get("prompt_tokens")
+                                    .or_else(|| usage.get("input_tokens"))
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0),
+                                output_tokens: usage
+                                    .get("completion_tokens")
+                                    .or_else(|| usage.get("output_tokens"))
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0),
+                                time: 0.0,
+                                ..Default::default()
+                            });
+                        }
+                    } else if let Some(choice) = choices_arr.first() {
+                        // Map the provider finish reason. A `length` /
+                        // `content_filter` termination means the model output
+                        // was cut short and must not be treated as a complete
+                        // answer (the StreamAccumulator propagates this).
+                        if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str())
+                            && matches!(fr, "length" | "content_filter" | "max_tokens")
+                        {
+                            resp.finished_reason = FinishedReason::Interrupted;
+                        }
+
+                        let delta = choice.get("delta");
+
+                        // Text delta — skip empty text to avoid triggering
+                        // empty TextBlock creation which causes
+                        // premature ToolCallEnd in streaming (P1-12 fix)
+                        if let Some(content) = delta
+                            .and_then(|d| d.get("content"))
+                            .and_then(|v| v.as_str())
+                            && !content.is_empty()
+                        {
+                            resp.append_text(content, Some("text_0"));
+                        }
+
+                        // Reasoning/thinking delta — also guard against an empty
+                        // string which would otherwise create an empty block.
+                        if let Some(reasoning) = delta
+                            .and_then(|d| d.get("reasoning_content"))
+                            .and_then(|v| v.as_str())
+                            && !reasoning.is_empty()
+                        {
+                            resp.append_thinking(
+                                reasoning,
+                                Some("thinking_0"),
+                                HashMap::new(),
+                            );
+                        }
+
+                        // Tool call delta
+                        if let Some(tool_calls) = delta
+                            .and_then(|d| d.get("tool_calls"))
+                            .and_then(|v| v.as_array())
+                        {
+                            for tc in tool_calls {
+                                let idx = tc
+                                    .get("index")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                // Use index-only block_id for stable streaming
+                                // accumulation. The tool_call `id` field may
+                                // arrive in a later SSE chunk, which would
+                                // cause StreamAccumulator to treat them as
+                                // separate tool calls if we included it here.
+                                let block_id = format!("tc_{idx}");
+
+                                let func = tc.get("function");
+                                let name = func
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let args = func
+                                    .and_then(|f| f.get("arguments"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+
+                                resp.append_tool_call(
+                                    &block_id,
+                                    name,
+                                    args,
+                                    HashMap::new(),
+                                );
+                            }
+                        }
+
+                        // Audio delta
+                        if let Some(audio) = delta.and_then(|d| d.get("audio")) {
+                            if let Some(data) =
+                                audio.get("data").and_then(|v| v.as_str())
+                            {
+                                let raw = base64::engine::general_purpose::STANDARD
+                                    .decode(data)
+                                    .unwrap_or_default();
+                                resp.append_data_block(
+                                    "audio_0",
+                                    &raw,
+                                    "audio/pcm16",
+                                    None,
+                                );
+                            }
+                            if let Some(transcript) =
+                                audio.get("transcript").and_then(|v| v.as_str())
+                            {
+                                resp.append_text(transcript, Some("transcript_0"));
+                            }
+                        }
+                    }
+                }
+
+                // Top-level usage in streaming chunk
+                if let Some(usage) = json.get("usage") {
+                    resp.usage = Some(ChatUsage {
+                        input_tokens: usage
+                            .get("prompt_tokens")
+                            .or_else(|| usage.get("input_tokens"))
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0),
+                        output_tokens: usage
+                            .get("completion_tokens")
+                            .or_else(|| usage.get("output_tokens"))
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0),
+                        time: 0.0,
+                        ..Default::default()
+                    });
+                }
+
+                // Drop empty carrier chunks. The previous `resp.id.is_empty()`
+                // check was dead code because `ChatResponse::default()` always
+                // assigns a random id, so every carrier was emitted — and the
+                // fabricated id could overwrite the real one in the accumulator.
+                if resp.content.is_empty()
+                    && resp.usage.is_none()
+                    && resp.finished_reason == FinishedReason::Completed
+                {
+                    return None;
+                }
+
+                Some(Ok(resp))
+            }
+            Err(e) => Some(Err(ModelError::SerializationError {
+                context: "dashscope SSE parse".to_string(),
+                source: e,
+            })),
+        }
     }
 
     /// Parse an error response body. Handles two formats:
@@ -777,5 +916,91 @@ mod tests {
         let tc = ToolChoice::with_tools("auto", vec!["search".to_string()]);
         let (filtered, _) = model.format_tools(Some(&tools), Some(&tc)).unwrap();
         assert_eq!(filtered.unwrap().len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // SSE cross-chunk buffering (audit D1/D2): a `data:` event split across TCP
+    // chunks — including inside a multi-byte UTF-8 character — must be
+    // reassembled, not dropped or corrupted.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sse_split_inside_multibyte_char_is_reassembled() {
+        // "你" is 3 bytes in UTF-8. Split the raw line mid-character so the
+        // first chunk ends with a partial byte sequence and the newline only
+        // arrives in the second chunk.
+        let event = "data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n";
+        let bytes = event.as_bytes();
+        let cut = event.find("你").unwrap() + 1; // byte index inside "你"
+        let (first, second) = bytes.split_at(cut);
+
+        let mut buf = Vec::new();
+        let out1 = DashScopeChatModel::ingest_sse_bytes(&mut buf, first);
+        assert!(out1.is_empty(), "partial line must stay buffered, not be dropped");
+        assert_eq!(buf.len(), cut, "partial bytes must be retained for next chunk");
+
+        let out2 = DashScopeChatModel::ingest_sse_bytes(&mut buf, second);
+        assert_eq!(out2.len(), 1, "completed line must yield exactly one event");
+        let resp = out2[0].as_ref().expect("parse must succeed");
+        assert_eq!(resp.get_text_content(""), "你好");
+        assert!(buf.is_empty(), "buffer must be drained after the newline");
+    }
+
+    #[test]
+    fn sse_multiple_events_in_one_chunk() {
+        let payload = "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\
+                       data: {\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n";
+        let mut buf = Vec::new();
+        let out = DashScopeChatModel::ingest_sse_bytes(&mut buf, payload.as_bytes());
+        assert_eq!(out.len(), 2);
+        let mut text = String::new();
+        for item in &out {
+            let resp = item.as_ref().unwrap();
+            text.push_str(&resp.get_text_content(""));
+        }
+        assert_eq!(text, "ab");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn sse_crlf_and_done_sentinel() {
+        let mut buf = Vec::new();
+        let payload = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\r\n\
+                       data: [DONE]\r\n";
+        let out = DashScopeChatModel::ingest_sse_bytes(&mut buf, payload.as_bytes());
+        assert_eq!(out.len(), 1, "[DONE] is a sentinel, not an event");
+        let resp = out[0].as_ref().unwrap();
+        assert_eq!(resp.get_text_content(""), "x");
+    }
+
+    #[test]
+    fn sse_empty_carrier_chunk_is_dropped() {
+        // `{"choices":[]}` without usage carries nothing; it must not be
+        // emitted with a fabricated random id (the old `id.is_empty()` check was
+        // dead code because ChatResponse::default() always assigns a uuid).
+        let mut buf = Vec::new();
+        let out = DashScopeChatModel::ingest_sse_bytes(
+            &mut buf,
+            b"data: {\"choices\":[]}\ndata: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n",
+        );
+        assert_eq!(out.len(), 1);
+        let resp = out[0].as_ref().unwrap();
+        assert_eq!(resp.get_text_content(""), "hi");
+    }
+
+    #[test]
+    fn sse_finish_reason_length_maps_to_interrupted() {
+        let mut buf = Vec::new();
+        let out = DashScopeChatModel::ingest_sse_bytes(
+            &mut buf,
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"length\"}]}\n",
+        );
+        assert_eq!(out.len(), 1);
+        let resp = out[0].as_ref().unwrap();
+        assert_eq!(
+            resp.finished_reason,
+            FinishedReason::Interrupted,
+            "a length-truncated stream must not be treated as completed"
+        );
     }
 }

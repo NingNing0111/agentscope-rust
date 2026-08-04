@@ -396,6 +396,37 @@ fn test_tool_result_end_event_output_round_trip() {
 }
 
 #[test]
+fn test_tool_result_end_metadata_round_trip() {
+    // E1: the struct's own `metadata` field is serde-renamed to
+    // `result_metadata` so it no longer collides with the flattened
+    // `EventBase.metadata`. Both must survive a round-trip.
+    use std::collections::HashMap;
+
+    let mut base = make_base();
+    base.metadata.insert("base_key".into(), serde_json::json!("base_val"));
+    let mut own = HashMap::new();
+    own.insert("own_key".into(), serde_json::json!("own_val"));
+
+    let event = ToolResultEndEvent {
+        base,
+        reply_id: "r-1".into(),
+        tool_call_id: "tc-1".into(),
+        state: agent_scope_message::ToolResultState::Success,
+        metadata: own,
+        output: Some("1958910".into()),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    // Both keys must be present and distinct.
+    assert!(json.contains(r#""base_key":"base_val""#), "base.metadata lost: {json}");
+    assert!(json.contains(r#""own_key":"own_val""#), "struct metadata lost: {json}");
+
+    let parsed: ToolResultEndEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.base.metadata["base_key"], serde_json::json!("base_val"));
+    assert_eq!(parsed.metadata["own_key"], serde_json::json!("own_val"));
+    assert_eq!(parsed.output.as_deref(), Some("1958910"));
+}
+
+#[test]
 fn test_end_event_backward_compat_missing_field() {
     // Old-style JSON without the new content fields must deserialize
     let old_json = r#"{"id":"ev-1","timestamp":"2026-01-01T00:00:00Z","type":"TEXT_BLOCK_END","reply_id":"r-1","block_id":"b-1"}"#;

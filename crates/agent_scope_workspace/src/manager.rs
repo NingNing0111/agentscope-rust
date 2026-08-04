@@ -75,12 +75,22 @@ impl WorkspaceManager {
             }
         }
 
+        // Fast path missed (or raced): build the workspace outside the lock, but
+        // re-check under the write lock before inserting so two concurrent `get`
+        // calls for the same key don't both `initialize` and one clobber the
+        // other (audit S8). The losing instance is simply dropped — for a
+        // LocalWorkspace that only means its initialize side-effects (seed
+        // files) ran once more, which is idempotent.
         let config = (self.factory)(key.to_string());
         let mut ws = LocalWorkspace::new(config);
         ws.initialize().await?;
         let ws: Arc<dyn WorkspaceBase> = Arc::new(ws);
 
         let mut map = self.entries.write().await;
+        if let Some(entry) = map.get_mut(key) {
+            entry.last_access = Instant::now();
+            return Ok(Arc::clone(&entry.workspace));
+        }
         map.insert(
             key.to_string(),
             ManagerEntry {

@@ -104,48 +104,29 @@ pub(crate) async fn run_streaming_loop(
         }
         cur_iter += 1;
 
-        // Prep messages + hooks
-        let messages = { inner.state.read().unwrap().context.clone() };
-        let mut hook_messages = messages.clone();
+        // Snapshot the current context purely for the token count used by the
+        // compression trigger and the first-iteration context-length dimension
+        // (computed before compression/injection mutate the state).
+        let count_messages = { inner.state.read().unwrap_or_else(|e| e.into_inner()).context.clone() };
+        let mut count_msgs = count_messages;
         if !system_prompt.is_empty()
             && let Ok(system_msg) =
                 agent_scope_message::factory::system_msg("system", &system_prompt)
         {
-            hook_messages.insert(0, system_msg);
-        }
-        let mut hook_tools = inner
-            .config
-            .toolkit
-            .as_ref()
-            .map(|tk| tk.get_tool_schemas());
-        for mw in inner.middlewares.iter() {
-            if let Err(e) = mw
-                .pre_reasoning(&inner.config.name, &mut hook_messages, &mut hook_tools)
-                .await
-            {
-                emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
-                let result = Err(AgentError::ValidationError {
-                    message: e.to_string(),
-                });
-                invoke_post_reply(&inner, &result).await;
-                return;
-            }
+            count_msgs.insert(0, system_msg);
         }
         let tool_schemas = inner
             .config
             .toolkit
             .as_ref()
             .map(|tk| tk.get_tool_schemas());
-
-        // Token count computed once, shared between compression and the
-        // first-iteration runtime-state injection context-length dimension.
         let token_count = inner
             .config
             .model
-            .count_tokens(&hook_messages, tool_schemas.as_deref());
+            .count_tokens(&count_msgs, tool_schemas.as_deref());
         let context_size = inner.config.model.context_size();
 
-        // Compression
+        // Compression (mutates `inner.state.context`).
         if inner.context_config.enable {
             let trigger = (context_size as f64 * inner.context_config.trigger_ratio) as usize;
             if token_count > trigger
@@ -154,6 +135,7 @@ pub(crate) async fn run_streaming_loop(
                     &inner.state,
                     &inner.context_config,
                     &session_id,
+                    token_count,
                 )
                 .await
             {
@@ -186,6 +168,36 @@ pub(crate) async fn run_streaming_loop(
             let _ = event_tx.send(AgentEvent::HintBlock(evt)).await;
         }
 
+        // Build the actual call messages from the NOW-updated state so the
+        // current model call sees the compressed context and the injected
+        // runtime hint (previously the pre-compression clone was sent).
+        let messages = { inner.state.read().unwrap_or_else(|e| e.into_inner()).context.clone() };
+        let mut hook_messages = messages;
+        if !system_prompt.is_empty()
+            && let Ok(system_msg) =
+                agent_scope_message::factory::system_msg("system", &system_prompt)
+        {
+            hook_messages.insert(0, system_msg);
+        }
+        let mut hook_tools = inner
+            .config
+            .toolkit
+            .as_ref()
+            .map(|tk| tk.get_tool_schemas());
+        for mw in inner.middlewares.iter() {
+            if let Err(e) = mw
+                .pre_reasoning(&inner.config.name, &mut hook_messages, &mut hook_tools)
+                .await
+            {
+                emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
+                let result = Err(AgentError::ValidationError {
+                    message: e.to_string(),
+                });
+                invoke_post_reply(&inner, &result).await;
+                return;
+            }
+        }
+
         // ModelCallStart
         let _ = event_tx
             .send(AgentEvent::ModelCallStart(ModelCallStartEvent {
@@ -198,7 +210,7 @@ pub(crate) async fn run_streaming_loop(
         let call_future = inner
             .config
             .model
-            .call(&hook_messages, tool_schemas.as_deref(), None);
+            .call(&hook_messages, hook_tools.as_deref(), None);
         let result = tokio::select! {
             r = call_future => r,
             _ = cancel_token.cancelled() => {
@@ -225,6 +237,32 @@ pub(crate) async fn run_streaming_loop(
         };
 
         match result {
+            // `interrupt()` may have landed between the `select!` resolution and
+            // this match (select is unbiased, so when both are ready it may pick
+            // the call branch even though the token was cancelled). Re-check the
+            // flag and treat it as an interruption rather than a completed reply,
+            // so the flag never leaks into the next reply (audit A9).
+            Ok(_) if inner.interrupted.load(std::sync::atomic::Ordering::SeqCst) => {
+                inner.interrupted.store(false, Ordering::SeqCst);
+                emit_interrupted(&event_tx, &reply_id, &session_id, base).await;
+                let result = Ok(Msg::new(
+                    inner.config.name.clone(),
+                    vec![ContentBlock::Text(TextBlock::new(
+                        inner.react_config.interruption_message.clone(),
+                    ))],
+                    Role::Assistant,
+                )
+                .unwrap_or_else(|_| {
+                    Msg::new(
+                        inner.config.name.clone(),
+                        vec![ContentBlock::Text(TextBlock::new("Interrupted".into()))],
+                        Role::Assistant,
+                    )
+                    .unwrap()
+                }));
+                invoke_post_reply(&inner, &result).await;
+                return;
+            }
             Ok(ModelCallResult::Complete(response)) => {
                 // Non-streaming path: emit text events → ModelCallEnd → tool events
                 // FR-003: Text content blocks go between ModelCallStart/End,
@@ -903,6 +941,16 @@ async fn execute_tool_calls(
     _base: fn() -> EventBase,
 ) {
     for tc in tool_calls {
+        // Honor cancellation: the consumer may have dropped the stream, OR the
+        // user may have called `interrupt()` (which sets `inner.interrupted`
+        // and cancels the token — but NOT `stream_handle`, which only closes
+        // when the stream is dropped). Side-effectful tools must not run after
+        // either signal (audit A4/A8).
+        if stream_handle.is_cancelled()
+            || inner.interrupted.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            break;
+        }
         let mut tc_mut = tc.clone();
         for mw in inner.middlewares.iter() {
             if let Err(e) = mw.pre_acting(&inner.config.name, &mut tc_mut).await {
@@ -1014,8 +1062,15 @@ async fn execute_tool_calls(
         // post_acting only fires for the Complete variant since Stream is consumed.
         // The batch path (react_loop.rs) follows the same pattern.
 
-        // Feed tool result to context with the ACTUAL collected output
-        add_tool_result_to_context(inner, &tc_mut, &output_text);
+        // Feed tool result to context with the ACTUAL collected output. If the
+        // stream was interrupted mid-tool (consumer drop or `interrupt()`), the
+        // partial output must NOT be written back — a half-finished tool result
+        // left as Running would pollute the next reply's context (audit A10).
+        if !stream_handle.is_cancelled()
+            && !inner.interrupted.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            add_tool_result_to_context(inner, &tc_mut, &output_text);
+        }
     }
 }
 

@@ -255,7 +255,17 @@ mod tests {
         let mut input = Some(vec![user_msg("user", "auth").unwrap()]);
         let model: Arc<dyn ChatModel> = Arc::new(TestModel);
         mw.pre_reply("agent", &mut input, &model).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // Wait until the background retrieval task finishes. Polling (rather
+        // than a fixed sleep) keeps this robust under parallel test load.
+        for _ in 0..100 {
+            {
+                let guard = mw.retrieval_handle.lock().await;
+                if guard.as_ref().is_some_and(|h| h.is_finished()) {
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
         let mut messages = input.unwrap();
         let mut tools = None;
         mw.pre_reasoning("agent", &mut messages, &mut tools)

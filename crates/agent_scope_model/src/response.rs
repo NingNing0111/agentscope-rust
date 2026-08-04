@@ -278,14 +278,12 @@ impl ChatResponse {
             }
         }
 
-        if self.usage.is_none() && other.usage.is_some() {
-            self.usage = other.usage.clone();
-        } else if let (Some(s_usage), Some(o_usage)) = (&mut self.usage, &other.usage) {
-            s_usage.input_tokens += o_usage.input_tokens;
-            s_usage.output_tokens += o_usage.output_tokens;
-            s_usage.cache_creation_input_tokens += o_usage.cache_creation_input_tokens;
-            s_usage.cache_input_tokens += o_usage.cache_input_tokens;
-            s_usage.time += o_usage.time;
+        if let Some(o_usage) = &other.usage {
+            // `usage` carries cumulative totals, not per-chunk deltas, so a
+            // later usage chunk supersedes an earlier one. Summing two totals
+            // would double-count the tokens (the StreamAccumulator path never
+            // sees this because it overwrites, but direct callers do).
+            self.usage = Some(o_usage.clone());
         }
 
         self

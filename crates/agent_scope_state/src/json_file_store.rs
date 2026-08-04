@@ -42,9 +42,13 @@ use crate::session_store::SessionStore;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecordFile {
     pub session_id: String,
+    #[serde(default = "default_status")]
     pub status: SessionStatus,
+    #[serde(default)]
     pub message_count: usize,
+    #[serde(default = "default_utc_now")]
     pub created_at: DateTime<Utc>,
+    #[serde(default = "default_utc_now")]
     pub last_active: DateTime<Utc>,
     pub state: AgentState,
 }
@@ -309,12 +313,18 @@ impl SessionStore for JsonFileSessionStore {
             };
 
             // Parse only the lightweight outer metadata, skipping the full
-            // AgentState payload (spec FR-010).
-            let meta: SessionMetaOnly =
-                serde_json::from_slice(&bytes).map_err(|e| SessionError::SerializationError {
-                    session_id: id.clone(),
-                    reason: e.to_string(),
-                })?;
+            // AgentState payload (spec FR-010). A single corrupted/truncated
+            // session file must not make the whole list fail — skip it with a
+            // warning so the remaining sessions stay enumerable (audit M5).
+            let meta: SessionMetaOnly = match serde_json::from_slice(&bytes) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    eprintln!(
+                        "json_file_store: skipping corrupted session file '{id}': {e}"
+                    );
+                    continue;
+                }
+            };
 
             metas.push(SessionMeta {
                 session_id: meta.session_id,

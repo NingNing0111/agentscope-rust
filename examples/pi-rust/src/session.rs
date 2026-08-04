@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::config::RuntimeConfig;
 use crate::error::{PiError, PiResult};
 
+/// Monotonic counter for unique temp-file names in [`SessionStore::save`].
+static SAVE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub id: String,
@@ -108,9 +111,18 @@ impl SessionStore {
 
     pub fn save(&self, session: &SessionRecord) -> PiResult<()> {
         fs::create_dir_all(&self.dir).map_err(|err| PiError::io("create sessions dir", err))?;
-        let path = self.path_for(&session.id);
+        let safe_id = safe_component(&session.id);
+        let path = self.dir.join(format!("{safe_id}.json"));
         let json = serde_json::to_string_pretty(session)?;
-        fs::write(path, json).map_err(|err| PiError::io("write session", err))
+        // Atomic write: rename is atomic on POSIX, so a crash mid-save cannot
+        // leave a truncated session file behind. The tmp name uses the same
+        // sanitized id so it cannot escape the sessions directory either.
+        let unique = SAVE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = self
+            .dir
+            .join(format!(".{safe_id}.tmp-{}-{unique}", std::process::id()));
+        fs::write(&tmp, json).map_err(|err| PiError::io("write session tmp", err))?;
+        fs::rename(&tmp, path).map_err(|err| PiError::io("commit session", err))
     }
 
     pub fn load(&self, id: &str) -> PiResult<SessionRecord> {
@@ -155,8 +167,42 @@ impl SessionStore {
     }
 
     fn path_for(&self, id: &str) -> PathBuf {
-        self.dir.join(format!("{id}.json"))
+        self.dir.join(format!("{}.json", safe_component(id)))
     }
+}
+
+/// Reduce a caller-supplied id to a single safe path component so it cannot
+/// traverse out of the sessions directory via `..` or a path separator.
+///
+/// An id made entirely of safe characters is returned unchanged (so existing
+/// `{id}.json` files stay addressable). Only when a character must be replaced
+/// is a short hash of the original appended, so two distinct ids that sanitize
+/// to the same component (e.g. `"a/b"` and `"a_b"`) still map to distinct files
+/// instead of silently overwriting each other's session (audit S7).
+fn safe_component(id: &str) -> String {
+    let mut needs_hash = false;
+    let mut out = String::with_capacity(id.len() + 9);
+    for ch in id.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+            needs_hash = true;
+        }
+    }
+    if out.is_empty() {
+        out.push('_');
+        needs_hash = true;
+    }
+    if needs_hash {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        id.hash(&mut hasher);
+        let hash = hasher.finish();
+        out.push('-');
+        out.push_str(&format!("{hash:x}"));
+    }
+    out
 }
 
 fn summarize(input: &str) -> String {

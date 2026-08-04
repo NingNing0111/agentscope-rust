@@ -12,7 +12,7 @@ pub async fn offload_context(
     sessions_dir: &str,
     data_dir: &str,
 ) -> Result<String, WorkspaceError> {
-    let session_dir = backend.join_path(sessions_dir, session_id);
+    let session_dir = backend.join_path(sessions_dir, &sanitize_component(session_id));
     if !backend.is_dir(&session_dir).await? {
         backend
             .write_file(&backend.join_path(&session_dir, ".keep"), b"")
@@ -95,19 +95,20 @@ pub async fn offload_tool_result(
     sessions_dir: &str,
     data_dir: &str,
 ) -> Result<String, WorkspaceError> {
-    let session_dir = backend.join_path(sessions_dir, session_id);
+    let session_dir = backend.join_path(sessions_dir, &sanitize_component(session_id));
     if !backend.is_dir(&session_dir).await? {
         backend
             .write_file(&backend.join_path(&session_dir, ".keep"), b"")
             .await?;
     }
 
-    let mut file_name = format!("tool_result-{}.txt", tool_result.id);
+    let safe_id = sanitize_component(&tool_result.id);
+    let mut file_name = format!("tool_result-{safe_id}.txt");
     let mut file_path = backend.join_path(&session_dir, &file_name);
 
     let mut counter = 1;
     while backend.file_exists(&file_path).await? {
-        file_name = format!("tool_result-{id}-({counter}).txt", id = tool_result.id);
+        file_name = format!("tool_result-{safe_id}-({counter}).txt");
         file_path = backend.join_path(&session_dir, &file_name);
         counter += 1;
     }
@@ -174,6 +175,40 @@ fn hash_base64(data: &str) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(data.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Reduce a value that is interpolated into a file path to a single safe path
+/// component, so an untrusted `session_id` or tool-result `id` cannot smuggle
+/// `..` or a path separator and escape the session/data directory.
+///
+/// A value made entirely of safe characters is returned unchanged (so existing
+/// paths stay addressable). Only when a character must be replaced is a short
+/// hash of the original appended, so two distinct inputs that sanitize to the
+/// same component (e.g. `"a/b"` and `"a_b"`) do not silently collide (audit S7).
+fn sanitize_component(value: &str) -> String {
+    let mut needs_hash = false;
+    let mut out = String::with_capacity(value.len() + 9);
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+            needs_hash = true;
+        }
+    }
+    if out.is_empty() {
+        out.push('_');
+        needs_hash = true;
+    }
+    if needs_hash {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut hasher);
+        let hash = hasher.finish();
+        out.push('-');
+        out.push_str(&format!("{hash:x}"));
+    }
+    out
 }
 
 fn base64_decode(data: &str) -> Result<Vec<u8>, String> {

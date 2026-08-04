@@ -445,7 +445,12 @@ impl Tool for TaskUpdateTool {
             let current = state.tasks_context.tasks[index].blocks.clone();
             let mut added_any = false;
             for block_id in new_blocks {
-                if !current.contains(block_id) && existed.contains(block_id) {
+                // Guard against a task blocking itself (a self-cycle would make
+                // it permanently blocked).
+                if block_id != &params.task_id
+                    && !current.contains(block_id)
+                    && existed.contains(block_id)
+                {
                     state
                         .tasks_context
                         .update_block_relation(&params.task_id, block_id);
@@ -468,7 +473,11 @@ impl Tool for TaskUpdateTool {
             let current = state.tasks_context.tasks[index].blocked_by.clone();
             let mut added_any = false;
             for blocked_by_id in new_blocked_by {
-                if !current.contains(blocked_by_id) && existed.contains(blocked_by_id) {
+                // Guard against a task blocking itself.
+                if blocked_by_id != &params.task_id
+                    && !current.contains(blocked_by_id)
+                    && existed.contains(blocked_by_id)
+                {
                     state
                         .tasks_context
                         .update_block_relation(blocked_by_id, &params.task_id);

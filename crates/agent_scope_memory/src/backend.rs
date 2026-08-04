@@ -6,6 +6,9 @@ use std::time::UNIX_EPOCH;
 
 use crate::MemoryError;
 
+/// Monotonic counter for unique temp-file names in [`LocalBackend::write_file`].
+static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[async_trait::async_trait]
 pub trait Backend: Send + Sync {
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, MemoryError>;
@@ -47,9 +50,23 @@ impl Backend for LocalBackend {
                 })?
                 .map_err(|err| io_error(path, err))?;
         }
-        tokio::fs::write(path, data)
+        // Atomic write: a process crash mid-write must not leave a truncated
+        // .md / index file that the frontmatter parser treats as corrupted.
+        // Write to a unique temp file, then rename (atomic on POSIX) so readers
+        // always see either the old or the new complete file (audit M4). No
+        // fsync here — rename-atomicity covers process crashes and keeping this
+        // on the hot write path matters (bulk index generation).
+        let unique = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp_path = format!("{path}.tmp-{}-{unique}", std::process::id());
+        tokio::fs::write(&tmp_path, data)
             .await
-            .map_err(|err| io_error(path, err))
+            .map_err(|err| io_error(path, err))?;
+        if let Err(err) = tokio::fs::rename(&tmp_path, path).await {
+            // Don't leave a stray temp file behind on failure.
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(io_error(path, err));
+        }
+        Ok(())
     }
 
     async fn delete_file(&self, path: &str) -> Result<(), MemoryError> {

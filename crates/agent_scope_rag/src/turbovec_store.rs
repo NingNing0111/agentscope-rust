@@ -349,13 +349,22 @@ impl VectorStore for TurbovecVectorStore {
             let mut ids = Vec::with_capacity(records.len());
             let mut metas = Vec::with_capacity(records.len());
 
+            // Validate the dimension of *every* incoming record BEFORE deleting
+            // any existing chunk for a colliding internal id. The previous code
+            // removed the old chunk on first collision and only then surfaced a
+            // dimension mismatch on a later record, leaving the collection half
+            // deleted (audit M11).
+            if let Some(bad) = records
+                .iter()
+                .find(|r| r.vector.len() != dim)
+            {
+                return Err(VectorStoreError::DimensionMismatch {
+                    expected: dim as u32,
+                    got: bad.vector.len(),
+                });
+            }
+
             for record in records {
-                if record.vector.len() != dim {
-                    return Err(VectorStoreError::DimensionMismatch {
-                        expected: dim as u32,
-                        got: record.vector.len(),
-                    });
-                }
                 let mut vector = record.vector;
                 l2_normalize(&mut vector)?;
                 flat.extend_from_slice(&vector);
@@ -635,8 +644,12 @@ fn collection_path(base: &Path, name: &str, extension: &str) -> PathBuf {
 }
 
 fn tmp_path(path: &Path) -> PathBuf {
+    // Unique temp name per process+call so two concurrent saves to the same
+    // target cannot stomp on one another's `.tmp` file (audit M10).
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut os = path.as_os_str().to_os_string();
-    os.push(".tmp");
+    os.push(format!(".tmp-{}-{unique}", std::process::id()));
     PathBuf::from(os)
 }
 

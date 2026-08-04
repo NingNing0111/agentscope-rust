@@ -113,6 +113,30 @@ impl FileMemory {
             mtime,
         })
     }
+
+    /// Enumerate every memory file on disk, sorted by mtime (newest first) but
+    /// NOT truncated to `retrieval_max_files`. Used by index rebuilds, which
+    /// must see *all* documents — the display-facing `list()` truncates to
+    /// `retrieval_max_files`, and using that for a rebuild would treat every
+    /// memory beyond the limit as "deleted" and purge its vectors while the
+    /// `.md` file stays on disk (audit M1).
+    #[tracing::instrument(skip(self))]
+    pub(crate) async fn list_all_headers(&self) -> Result<Vec<MemoryFileHeader>, MemoryError> {
+        debug!("listing all memory headers (untruncated)");
+        let paths = self.backend.list_dir(&self.root_dir, false).await?;
+        let mut headers = Vec::new();
+        for path in paths {
+            if let Some(header) = self.parse_header(path).await {
+                headers.push(header);
+            }
+        }
+        headers.sort_by(|a, b| {
+            b.mtime
+                .partial_cmp(&a.mtime)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(headers)
+    }
 }
 
 #[async_trait::async_trait]
@@ -140,6 +164,7 @@ impl Memory for FileMemory {
     #[tracing::instrument(skip(self))]
     async fn read(&self, name: &str) -> Result<Option<MemoryEntry>, MemoryError> {
         debug!(memory.name = name, "reading memory entry");
+        validate_name(name)?;
         let path = self.memory_path(name);
         if !self.backend.file_exists(&path).await? {
             return Ok(None);
@@ -152,6 +177,7 @@ impl Memory for FileMemory {
     #[tracing::instrument(skip(self))]
     async fn delete(&self, name: &str) -> Result<(), MemoryError> {
         info!(memory.name = name, "deleting memory entry");
+        validate_name(name)?;
         let path = self.memory_path(name);
         self.backend.delete_file(&path).await?;
         let _guard = self.index_lock.lock().await;
@@ -161,18 +187,7 @@ impl Memory for FileMemory {
     #[tracing::instrument(skip(self))]
     async fn list(&self) -> Result<Vec<MemoryFileHeader>, MemoryError> {
         debug!("listing memory headers");
-        let paths = self.backend.list_dir(&self.root_dir, false).await?;
-        let mut headers = Vec::new();
-        for path in paths {
-            if let Some(header) = self.parse_header(path).await {
-                headers.push(header);
-            }
-        }
-        headers.sort_by(|a, b| {
-            b.mtime
-                .partial_cmp(&a.mtime)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let mut headers = self.list_all_headers().await?;
         headers.truncate(self.config.retrieval_max_files);
         Ok(headers)
     }
@@ -186,7 +201,11 @@ impl Memory for FileMemory {
         debug!(query, "searching memories");
         let needle = query.to_ascii_lowercase();
         let mut results = Vec::new();
-        for header in self.list().await? {
+        // Search over *all* memories, not just the most recent
+        // `retrieval_max_files`. The truncation on `list()` is a retrieval
+        // display cap; a keyword search that silently misses older documents
+        // would drop valid results (audit M1).
+        for header in self.list_all_headers().await? {
             let name = header.filename.trim_end_matches(".md");
             if let Some(entry) = self.read(name).await? {
                 if let Some(filter) = &type_filter
@@ -222,26 +241,36 @@ impl Memory for FileMemory {
 }
 
 fn validate_entry(entry: &MemoryEntry) -> Result<(), MemoryError> {
+    validate_name(&entry.name)?;
+    if entry.description.trim().is_empty() {
+        return Err(MemoryError::ValidationError {
+            field: "description".into(),
+            message: "description must not be empty".into(),
+        });
+    }
+    Ok(())
+}
+
+/// Validate that a memory name is a single safe path component. Every name is
+/// interpolated into a file path (`{root}/{name}.md`), so an untrusted name
+/// containing `/`, `\`, `.` or `..` would read/write/delete files outside the
+/// memory root (audit M6). `write` already enforced this via `validate_entry`;
+/// `read`/`delete` take a bare name and must apply the same guard.
+fn validate_name(name: &str) -> Result<(), MemoryError> {
     let name_re = Regex::new(r"^[A-Za-z0-9_-]+$").map_err(|err| MemoryError::ValidationError {
         field: "name".into(),
         message: err.to_string(),
     })?;
-    if entry.name.trim().is_empty() {
+    if name.trim().is_empty() {
         return Err(MemoryError::ValidationError {
             field: "name".into(),
             message: "name must not be empty".into(),
         });
     }
-    if !name_re.is_match(&entry.name) {
+    if !name_re.is_match(name) {
         return Err(MemoryError::ValidationError {
             field: "name".into(),
             message: "name must match [A-Za-z0-9_-]+".into(),
-        });
-    }
-    if entry.description.trim().is_empty() {
-        return Err(MemoryError::ValidationError {
-            field: "description".into(),
-            message: "description must not be empty".into(),
         });
     }
     Ok(())

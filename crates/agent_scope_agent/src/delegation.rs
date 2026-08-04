@@ -384,11 +384,22 @@ pub async fn delegate_many(
         return Ok(results);
     }
 
-    let mut results = Vec::with_capacity(requests.len());
-    for request in requests {
-        results.push(delegate_once(registry, request).await?);
+    // `allow_concurrent` was requested: run the delegations in parallel.
+    // `join_all` collects the results in input order (previously this branch
+    // ran the same sequential loop as the non-concurrent path, silently
+    // ignoring the flag — audit A2). The first error is propagated, matching
+    // the sequential path's fail-fast semantics.
+    let results = futures::future::join_all(
+        requests
+            .into_iter()
+            .map(|request| delegate_once(registry, request)),
+    )
+    .await;
+    let mut out = Vec::with_capacity(results.len());
+    for result in results {
+        out.push(result?);
     }
-    Ok(results)
+    Ok(out)
 }
 
 /// Stream SubAgent events with trace correlation and a terminal result.

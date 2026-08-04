@@ -61,7 +61,7 @@ pub fn maybe_inject_runtime_state(
         return None;
     }
 
-    let mut state = state.write().unwrap();
+    let mut state = state.write().unwrap_or_else(|e| e.into_inner());
     let reply_id = state.reply_context.reply_id.clone();
 
     // =====================================================================

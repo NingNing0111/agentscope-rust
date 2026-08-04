@@ -178,6 +178,15 @@ impl MemoryVectorIndex for InMemIndex {
         Ok(())
     }
 
+    async fn list_documents(&self, collection: &str) -> Result<Vec<String>, String> {
+        let guard = self.collections.lock().unwrap();
+        let records = guard.get(collection).ok_or("collection not found")?;
+        let mut ids: Vec<String> = records.iter().map(|r| r.document_id.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    }
+
     async fn save(&self, _path: &str) -> Result<(), String> {
         Ok(())
     }

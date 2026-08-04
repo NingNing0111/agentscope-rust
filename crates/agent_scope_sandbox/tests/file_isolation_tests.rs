@@ -24,6 +24,21 @@ async fn sandbox_file_isolation_write_read_delete_list() {
 }
 
 #[tokio::test]
+async fn sandbox_delete_path_refuses_root() {
+    // `delete_path("/")` resolves to the sandbox root; deleting it would
+    // recursively wipe the entire sandbox, so it must be refused (audit S9).
+    let mut session = LocalSandboxSession::new(LocalSandboxConfig::default()).unwrap();
+    session.initialize().await.unwrap();
+    session.write_file("notes/result.txt", b"hello").await.unwrap();
+    assert!(session.delete_path("/").await.is_err());
+    // The sandbox is still usable afterwards.
+    assert_eq!(
+        session.read_file("notes/result.txt").await.unwrap(),
+        b"hello"
+    );
+}
+
+#[tokio::test]
 async fn sandbox_path_policy_rejects_traversal_and_symlink_escape() {
     let outside = tempfile::tempdir().unwrap();
     let mut session = LocalSandboxSession::new(LocalSandboxConfig::default()).unwrap();

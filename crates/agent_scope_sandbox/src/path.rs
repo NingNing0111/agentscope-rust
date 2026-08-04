@@ -96,6 +96,45 @@ impl SandboxPathResolver {
             let parent = path.parent().ok_or_else(|| SandboxError::ValidationError {
                 message: "path has no parent".into(),
             })?;
+            // Verify the parent chain BEFORE creating anything: a pre-planted
+            // symlink in the chain would otherwise make `create_dir_all` follow
+            // it and create directories outside the sandbox root as a side
+            // effect, even though the eventual file write is rejected.
+            let mut existing = if parent.as_os_str().is_empty() {
+                std::path::Path::new(".").to_path_buf()
+            } else {
+                parent.to_path_buf()
+            };
+            let mut missing: Vec<std::ffi::OsString> = Vec::new();
+            while !existing.exists() {
+                let Some(name) = existing.file_name() else { break };
+                let Some(up) = existing.parent() else { break };
+                missing.push(name.to_os_string());
+                existing = up.to_path_buf();
+            }
+            let mut current = existing
+                .canonicalize()
+                .map_err(|e| SandboxError::IoError {
+                    operation: format!("{operation}_resolve_parent"),
+                    message: e.to_string(),
+                })?;
+            self.ensure_contained(current.clone(), operation)?;
+            // Descend through the components that do not exist yet; any that
+            // already exist (e.g. planted by a concurrent writer, or a symlink)
+            // must be resolved and stay contained.
+            for comp in missing.iter().rev() {
+                current = current.join(comp);
+                if let Ok(meta) = std::fs::symlink_metadata(&current)
+                    && meta.file_type().is_symlink()
+                {
+                    let canon =
+                        current.canonicalize().map_err(|e| SandboxError::IoError {
+                            operation: operation.into(),
+                            message: e.to_string(),
+                        })?;
+                    self.ensure_contained(canon, operation)?;
+                }
+            }
             std::fs::create_dir_all(parent).map_err(|e| SandboxError::IoError {
                 operation: format!("{operation}_create_parent"),
                 message: e.to_string(),

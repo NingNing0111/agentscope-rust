@@ -29,13 +29,22 @@ pub(crate) async fn compress_context(
     state: &std::sync::RwLock<AgentState>,
     config: &ContextConfig,
     _session_id: &str,
+    // Pre-computed by the caller from the message list that will actually be
+    // sent (context + system prompt + tool schemas). Passed in rather than
+    // recomputed here so the trigger decision matches the caller's (a recount
+    // with a different shape could disagree and silently skip compression).
+    token_count: usize,
 ) -> Result<(), AgentError> {
     let context_size = model.context_size();
-    let mut state_write = state.write().unwrap();
 
-    // Estimate current tokens
-    let messages = &state_write.context;
-    let token_count = model.count_tokens(messages, None);
+    // Snapshot the context length WITHOUT holding the write lock: `count_tokens`
+    // is a user-implemented trait method that could panic, and panicking while
+    // the `RwLock` is held would poison it, breaking every later state access
+    // in the agent (audit A5).
+    let context_len = {
+        let state_read = state.read().unwrap_or_else(|e| e.into_inner());
+        state_read.context.len()
+    };
 
     let trigger_threshold = (context_size as f64 * config.trigger_ratio) as usize;
 
@@ -52,9 +61,9 @@ pub(crate) async fn compress_context(
     let mut removed_tokens = 0usize;
     let mut split_idx = 0usize;
 
-    for (i, _msg) in messages.iter().enumerate() {
-        // roughly: each message ~ avg token count
-        let msg_tokens = token_count / messages.len().max(1);
+    // roughly: each message ~ avg token count
+    let msg_tokens = token_count / context_len.max(1);
+    for i in 0..context_len {
         if removed_tokens + msg_tokens > target_reduction {
             break;
         }
@@ -66,6 +75,7 @@ pub(crate) async fn compress_context(
         return Ok(()); // Nothing to compress
     }
 
+    let mut state_write = state.write().unwrap_or_else(|e| e.into_inner());
     // Extract compressed messages and summarize
     let _old_messages: Vec<Msg> = state_write.context.drain(0..split_idx).collect();
 

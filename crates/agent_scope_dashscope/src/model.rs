@@ -162,7 +162,13 @@ impl DashScopeChatModel {
 
         // Tools
         if let Some(tools) = tools {
-            let formatted_tools: Vec<JsonValue> = tools
+            // Apply the ToolChoice tool-subset filter (round-4 M18): the subset
+            // restriction was implemented only in `format_tools`, which was
+            // never called from the request path, so a caller that restricted
+            // the model to a subset of tools silently received every tool.
+            let (effective, _tc_json) = self.format_tools(Some(tools), tool_choice)?;
+            let formatted_tools: Vec<JsonValue> = effective
+                .unwrap_or_default()
                 .iter()
                 .map(|t| {
                     let mut tool = t.clone();
@@ -255,13 +261,24 @@ impl DashScopeChatModel {
                 resp.finished_reason = FinishedReason::Interrupted;
             }
 
-            // Text content
-            if let Some(content) = message
-                .and_then(|m| m.get("content"))
-                .and_then(|v| v.as_str())
-                && !content.is_empty()
-            {
-                resp.append_text(content, None);
+            // Text content. Some multimodal models return `content` as an
+            // array of `{type, text}` parts; previously only the string form
+            // was accepted, so a non-streaming multimodal reply silently came
+            // back empty (round-4 M24).
+            if let Some(content) = message.and_then(|m| m.get("content")) {
+                if let Some(text) = content.as_str()
+                    && !text.is_empty()
+                {
+                    resp.append_text(text, None);
+                } else if let Some(parts) = content.as_array() {
+                    for part in parts {
+                        if let Some(text) = part.get("text").and_then(|t| t.as_str())
+                            && !text.is_empty()
+                        {
+                            resp.append_text(text, None);
+                        }
+                    }
+                }
             }
 
             // Reasoning/thinking content
@@ -496,8 +513,11 @@ impl DashScopeChatModel {
 
                 if let Some(choices_arr) = choices {
                     if choices_arr.is_empty() {
-                        // Empty choices: usage-only chunk
-                        if let Some(usage) = json.get("usage") {
+                        // Empty choices: usage-only chunk. Only a real object
+                        // counts — `"usage": null` must not fabricate a zero
+                        // usage record or defeat the empty-carrier drop below
+                        // (round-4 M17).
+                        if let Some(usage) = json.get("usage").and_then(|v| v.as_object()) {
                             resp.usage = Some(ChatUsage {
                                 input_tokens: usage
                                     .get("prompt_tokens")
@@ -611,8 +631,11 @@ impl DashScopeChatModel {
                     }
                 }
 
-                // Top-level usage in streaming chunk
-                if let Some(usage) = json.get("usage") {
+                // Top-level usage in streaming chunk. `"usage": null` (the
+                // common OpenAI-compatible carrier form) must not be treated as
+                // a real usage record — it would fabricate 0/0 tokens and
+                // prevent the empty-carrier drop (round-4 M17).
+                if let Some(usage) = json.get("usage").and_then(|v| v.as_object()) {
                     resp.usage = Some(ChatUsage {
                         input_tokens: usage
                             .get("prompt_tokens")
@@ -1002,5 +1025,33 @@ mod tests {
             FinishedReason::Interrupted,
             "a length-truncated stream must not be treated as completed"
         );
+    }
+
+    #[test]
+    fn sse_usage_null_is_not_treated_as_real_usage() {
+        // `"usage": null` (the common OpenAI-compatible carrier form) must not
+        // fabricate a 0/0 usage record: that would defeat the empty-carrier
+        // drop below and report 0 tokens for a real generation (round-4 M17).
+        let mut buf = Vec::new();
+        let out = DashScopeChatModel::ingest_sse_bytes(
+            &mut buf,
+            b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":null}\n",
+        );
+        assert_eq!(out.len(), 0, "usage-null carrier must be dropped");
+    }
+
+    #[test]
+    fn sse_real_usage_object_is_preserved() {
+        // A real usage object still lands on the response.
+        let mut buf = Vec::new();
+        let out = DashScopeChatModel::ingest_sse_bytes(
+            &mut buf,
+            b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n",
+        );
+        assert_eq!(out.len(), 1, "real usage-only chunk must be emitted");
+        let resp = out[0].as_ref().unwrap();
+        let usage = resp.usage.as_ref().expect("usage present");
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 5);
     }
 }

@@ -73,9 +73,9 @@ impl Formatter for DashScopeFormatter {
                     let (extra_text, _extra_promoted) =
                         self.convert_tool_result_to_string(&tr.output)?;
                     extra_entry.insert("content".to_string(), JsonValue::String(extra_text));
-                    if !msg.name.is_empty() {
-                        extra_entry.insert("name".to_string(), JsonValue::String(msg.name.clone()));
-                    }
+                    // No `name` on role=tool entries: OpenAI-compatible APIs
+                    // reject it (see the guard on the first entry), so the
+                    // extra entries must stay consistent with it (round-4 M22).
                     result.push(JsonValue::Object(extra_entry));
                 }
             } else {

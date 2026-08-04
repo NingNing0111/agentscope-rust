@@ -129,22 +129,35 @@ pub(crate) async fn run_streaming_loop(
         // Compression (mutates `inner.state.context`).
         if inner.context_config.enable {
             let trigger = (context_size as f64 * inner.context_config.trigger_ratio) as usize;
-            if token_count > trigger
-                && let Err(e) = crate::context_compression::compress_context(
+            if token_count > trigger {
+                let result = crate::context_compression::compress_context(
                     &inner.config.model,
                     &inner.state,
                     &inner.context_config,
                     &session_id,
                     token_count,
                 )
-                .await
-            {
-                emit_error_end(&event_tx, &reply_id, &session_id, &e.to_string(), base).await;
-                let result = Err(AgentError::ContextCompressionFailed {
-                    reason: e.to_string(),
-                });
-                invoke_post_reply(&inner, &result).await;
-                return;
+                .await;
+                if let Err(e) = result {
+                    // Degrade gracefully, matching the batch path: truncate the
+                    // oldest messages instead of failing the reply. Same input
+                    // and state must not yield opposite outcomes between the
+                    // two public APIs (audit round-4 M3).
+                    tracing::warn!(
+                        error = %e,
+                        "Context compression failed, falling back to truncation"
+                    );
+                    let mut state_write = inner
+                        .state
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let max_messages = (state_write.context.len() / 2).max(10);
+                    crate::context_compression::truncate_context(
+                        &mut state_write,
+                        &inner.context_config,
+                        max_messages,
+                    );
+                }
             }
         }
 
@@ -464,15 +477,14 @@ async fn consume_stream_progressive(
     loop {
         // Check for stream_handle cancellation before each poll.
         if stream_handle.is_cancelled() {
-            let _ = event_tx
-                .send(AgentEvent::ReplyEnd(ReplyEndEvent {
-                    base: base(),
-                    session_id: session_id.into(),
-                    reply_id: reply_id.into(),
-                    finished_reason: ReplyFinishedReason::Interrupted,
-                    error: None,
-                }))
-                .await;
+            // Close any half-open blocks so the event stream stays paired
+            // (same as the cancel_token branch below); then emit a UserInterrupt
+            // so consumers can distinguish an interruption from a normal
+            // completion (round-4 M6).
+            close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
+            close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
+            close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base).await;
+            emit_interrupted(event_tx, reply_id, session_id, base).await;
             return StreamOutcome::Cancelled;
         }
 
@@ -483,15 +495,7 @@ async fn consume_stream_progressive(
                 close_active_tool_blocks(&mut tracker, event_tx, reply_id, base).await;
                 close_all_text_blocks(&mut tracker, event_tx, reply_id, base).await;
                 close_all_thinking_blocks(&mut tracker, event_tx, reply_id, base).await;
-                let _ = event_tx
-                    .send(AgentEvent::ReplyEnd(ReplyEndEvent {
-                        base: base(),
-                        session_id: session_id.into(),
-                        reply_id: reply_id.into(),
-                        finished_reason: ReplyFinishedReason::Interrupted,
-                        error: None,
-                    }))
-                    .await;
+                emit_interrupted(event_tx, reply_id, session_id, base).await;
                 return StreamOutcome::Cancelled;
             }
         };
@@ -1299,7 +1303,10 @@ async fn emit_max_iters(
             base: base(),
             session_id: sid.into(),
             reply_id: rid.into(),
-            finished_reason: ReplyFinishedReason::Completed,
+            // Consistent with the batch path (react_loop.rs): exceeding the
+            // iteration budget must surface as ExceedMaxIters, not Completed
+            // (audit round-4 H1).
+            finished_reason: ReplyFinishedReason::ExceedMaxIters,
             error: None,
         }))
         .await;

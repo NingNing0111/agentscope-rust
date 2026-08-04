@@ -113,10 +113,16 @@ pub trait ChatModel: Send + Sync {
 
                     if attempt < max_retries {
                         // `retry_delay` is a public field a caller could set to
-                        // NaN or a negative value, both of which panic
-                        // `Duration::from_secs_f64`. Clamp so a misconfiguration
-                        // degrades to an immediate retry instead of a crash.
-                        let delay = retry_delay.max(0.0);
+                        // NaN, negative, or infinite — each panics
+                        // `Duration::from_secs_f64` (negative via `max(0.0)`;
+                        // infinity/NaN are rejected by `from_secs_f64`). Clamp
+                        // so a misconfiguration degrades to an immediate retry
+                        // instead of a crash (round-4 M20).
+                        let delay = if retry_delay.is_finite() {
+                            retry_delay.clamp(0.0, 600.0)
+                        } else {
+                            0.0
+                        };
                         tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
                     }
                 }

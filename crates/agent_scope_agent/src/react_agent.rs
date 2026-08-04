@@ -40,6 +40,10 @@ pub(crate) struct AgentInner {
     /// streaming reply followed by a batch reply) cannot race on the same
     /// session file.
     pub(crate) persist_lock: AsyncMutex<()>,
+    /// The original session's creation time, retained so auto-saves preserve
+    /// it instead of resetting it to "now" on every reply (round-4 F3).
+    /// `None` for a freshly constructed session.
+    pub(crate) session_created_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Cancellation token for interrupting in-progress model calls / stream consumption.
     /// Wrapped in Mutex so it can be replaced with a fresh token after cancellation
     /// (CancellationToken::cancel() is irreversible).
@@ -76,6 +80,8 @@ impl ReActAgent {
             context_config,
             middlewares,
             agent_state,
+            // A fresh agent has no persisted creation time; auto-saves stamp it now.
+            None,
         )
     }
 
@@ -101,9 +107,13 @@ impl ReActAgent {
             .clone()
             .unwrap_or_else(|| Arc::new(JsonFileSessionStore::with_default_dir()));
 
+        let mut session_created_at = None;
         let agent_state = match &config.session_id {
             Some(id) => match session_store.load(id).await {
                 Ok(session) => {
+                    // Retain the original creation time so later auto-saves do
+                    // not reset it to "now" (round-4 F3).
+                    session_created_at = Some(session.created_at());
                     let mut state = session.state().clone();
                     state.session_id = id.clone();
                     state
@@ -122,6 +132,7 @@ impl ReActAgent {
             context_config,
             middlewares,
             agent_state,
+            session_created_at,
         )
     }
 
@@ -132,6 +143,7 @@ impl ReActAgent {
         context_config: ContextConfig,
         middlewares: Vec<Arc<dyn Middleware>>,
         agent_state: AgentState,
+        session_created_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Self, AgentError> {
         react_config.validate()?;
         context_config.validate()?;
@@ -170,6 +182,7 @@ impl ReActAgent {
                 is_streaming: Arc::new(AtomicBool::new(false)),
                 session_store,
                 persist_lock: AsyncMutex::new(()),
+                session_created_at,
                 cancel_token: Mutex::new(CancellationToken::new()),
             }),
         })
@@ -330,12 +343,14 @@ pub(crate) async fn persist_after_reply(inner: &Arc<AgentInner>) {
         None => return,
     };
 
-    // Snapshot the state before acquiring the lock so holding the lock (and
-    // the I/O) does not block writers to the shared state.
-    let state = inner.state.read().unwrap().clone();
-    let session = SessionImpl::new(state);
-
+    // Snapshot AFTER acquiring the lock so an older snapshot can never be
+    // written over a newer one by a racing save from a finished streaming
+    // reply (audit round-4 M5). The lock serializes saves, so the last save
+    // always carries the newest state.
     let _guard = inner.persist_lock.lock().await;
+    let state = inner.state.read().unwrap().clone();
+    let session = build_session_for_persist(inner, state);
+
     if let Err(e) = store.save(&session).await {
         tracing::warn!(
             session_id = %session.id(),
@@ -359,13 +374,14 @@ pub(crate) fn spawn_persist_after_reply(inner: &Arc<AgentInner>) {
         Some(store) => Arc::clone(store),
         None => return,
     };
-
-    let state = inner.state.read().unwrap().clone();
-    let session = SessionImpl::new(state);
     let inner = Arc::clone(inner);
 
     tokio::spawn(async move {
+        // Snapshot AFTER acquiring the lock so an older snapshot cannot be
+        // written over a newer save from a following reply (audit round-4 M5).
         let _guard = inner.persist_lock.lock().await;
+        let state = inner.state.read().unwrap().clone();
+        let session = build_session_for_persist(&inner, state);
         if let Err(e) = store.save(&session).await {
             tracing::warn!(
                 session_id = %session.id(),
@@ -374,6 +390,20 @@ pub(crate) fn spawn_persist_after_reply(inner: &Arc<AgentInner>) {
             );
         }
     });
+}
+
+/// Construct the `SessionImpl` for an auto-save, preserving the original
+/// session creation time (round-4 F3) instead of letting `SessionImpl::new`
+/// stamp it with the current time on every save.
+fn build_session_for_persist(
+    inner: &Arc<AgentInner>,
+    state: AgentState,
+) -> SessionImpl {
+    if let Some(created_at) = inner.session_created_at {
+        SessionImpl::new(state).with_persisted_timestamps(created_at, chrono::Utc::now())
+    } else {
+        SessionImpl::new(state)
+    }
 }
 
 /// Batch reply: uses react_loop with mpsc channel.
@@ -489,6 +519,11 @@ async fn do_reply_stream(
         // Checkpoint the pre-reply state so an interrupted agent still
         // persists the latest state (spec FR-006).
         spawn_persist_after_reply(&inner);
+        // Streaming has no `Msg` result to return when interrupted before any
+        // reply starts, so it surfaces `Err(CancellationError)` — unlike the
+        // batch `reply()` which returns the interruption message as `Ok`. This
+        // asymmetry is intentional and documented by the recovery test
+        // (round-4 M4 re-examined: design difference, not a defect).
         return Err(AgentError::CancellationError {
             reply_id: "pre-reply-interrupted".into(),
         });

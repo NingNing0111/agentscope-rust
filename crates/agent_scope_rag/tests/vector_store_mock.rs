@@ -34,6 +34,14 @@ impl VectorStore for MockVectorStore {
         Ok(guard.contains_key(name))
     }
 
+    async fn collection_dimension(&self, name: &str) -> Result<Option<u32>, VectorStoreError> {
+        let guard = self
+            .collections
+            .read()
+            .map_err(|e| VectorStoreError::BackendError(format!("lock error: {e}")))?;
+        Ok(guard.get(name).map(|(dim, _)| *dim))
+    }
+
     async fn create_collection(&self, name: &str, dimensions: u32) -> Result<(), VectorStoreError> {
         let mut guard = self
             .collections

@@ -249,6 +249,17 @@ impl KnowledgeBase {
             })
             .collect();
 
+        // Re-inserting the same document_id with a different chunk set must not
+        // leave orphan vectors for chunks that no longer exist: the store
+        // replaces per-(document, chunk_index) ids, so a shorter new chunk list
+        // would otherwise keep the tail of the old list searchable (stale
+        // content) (round-4 M40). Delete the document's existing vectors first
+        // (idempotent when absent).
+        self.vector_store
+            .delete(&self.collection, &doc_id)
+            .await
+            .map_err(|e| KnowledgeBaseError::VectorStoreError(e.to_string()))?;
+
         self.vector_store
             .insert(&self.collection, records)
             .await

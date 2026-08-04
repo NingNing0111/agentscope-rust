@@ -17,6 +17,12 @@ fn default_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
+/// Default `metadata` value: an empty object, matching what `Msg::new`
+/// constructs, so omitted `metadata` does not round-trip to `null`.
+fn default_metadata() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
+}
+
 // ---------------------------------------------------------------------------
 // Role
 // ---------------------------------------------------------------------------
@@ -61,7 +67,10 @@ pub struct Msg {
     #[serde(default = "default_id")]
     pub id: String,
     /// Arbitrary metadata dictionary.
-    #[serde(default)]
+    /// Defaults to `{}` (not `null`) so round-tripping a message that omitted
+    /// `metadata` stays consistent with `Msg::new`, which always constructs an
+    /// empty object (round-4 M4).
+    #[serde(default = "default_metadata")]
     pub metadata: serde_json::Value,
     /// ISO 8601 creation timestamp.
     #[serde(default = "default_timestamp")]

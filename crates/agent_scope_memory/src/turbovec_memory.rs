@@ -159,6 +159,10 @@ pub trait MemoryVectorIndex: Send + Sync {
     /// Check whether a collection exists.
     async fn has_collection(&self, name: &str) -> Result<bool, String>;
 
+    /// Return the stored vector dimension of a collection, or `Ok(None)` if
+    /// the collection does not exist (round-4 M38).
+    async fn collection_dimension(&self, name: &str) -> Result<Option<u32>, String>;
+
     /// Create a collection for the given vector dimension.
     async fn create_collection(&self, name: &str, dimensions: u32) -> Result<(), String>;
 
@@ -421,6 +425,38 @@ impl TurbovecMemory {
             Err(e) => return Err(e),
         }
 
+        // A missing index while `.md` memory files already exist (or an index
+        // whose dimension disagrees with the current model) previously never
+        // triggered `auto_rebuild`, which only fired on a load *error* — so
+        // semantic_search silently returned nothing until the first write
+        // (round-4 M37/M38).
+        let status = this.vector_index_status().await?;
+        match status {
+            VectorIndexStatus::Missing | VectorIndexStatus::DimensionMismatch { .. } => {
+                if this.config.auto_rebuild {
+                    info!(?status, "auto-rebuilding index");
+                    let report = this.rebuild_index().await?;
+                    info!(
+                        indexed = report.indexed,
+                        skipped = report.skipped,
+                        "auto-rebuild complete"
+                    );
+                } else if matches!(status, VectorIndexStatus::DimensionMismatch { .. }) {
+                    // A dimension mismatch is a hard configuration error: fail
+                    // construction rather than silently degrading every search
+                    // to an empty result.
+                    return Err(MemoryError::SemanticIndexError {
+                        reason: format!(
+                            "vector index dimension does not match embedding model ({status:?})"
+                        ),
+                    });
+                }
+                // `Missing` without auto_rebuild is the normal fresh-start path:
+                // the collection is created lazily on the first write.
+            }
+            _ => {}
+        }
+
         Ok(this)
     }
 
@@ -543,7 +579,27 @@ impl TurbovecMemory {
             .has_collection(&self.config.collection_name)
             .await
         {
-            Ok(true) => Ok(VectorIndexStatus::Clean),
+            Ok(true) => {
+                // Collection present: verify its stored dimension matches the
+                // current embedding model, so a mismatched model card surfaces
+                // as `DimensionMismatch` instead of silently returning empty
+                // searches (round-4 M38).
+                let stored = self
+                    .vector_index
+                    .collection_dimension(&self.config.collection_name)
+                    .await
+                    .map_err(|e| MemoryError::SemanticIndexError { reason: e })?;
+                let model_dim = self.embedding_model.model_card().dimensions;
+                if let Some(stored) = stored
+                    && stored != model_dim
+                {
+                    return Ok(VectorIndexStatus::DimensionMismatch {
+                        expected: model_dim,
+                        got: stored,
+                    });
+                }
+                Ok(VectorIndexStatus::Clean)
+            }
             Ok(false) => Ok(VectorIndexStatus::Missing),
             Err(e) => Ok(VectorIndexStatus::Corrupted(e)),
         }
@@ -569,19 +625,14 @@ impl Memory for TurbovecMemory {
         let updated_at = entry.metadata.updated_at.clone();
         let content = entry.content.clone();
 
-        // Persist to Markdown first (source of truth).
-        self.file_memory.write(entry).await?;
-
-        // Then update the vector index.
+        // Embed FIRST, before touching the markdown file or the vector index.
+        // Previously the file was persisted and the old vectors deleted before
+        // the embed, so an embedding failure left the `.md` updated but the
+        // index stripped — the memory became permanently invisible to
+        // semantic_search until a later successful write or rebuild
+        // (round-4 M36).
         self.ensure_index_ready().await?;
 
-        // Delete old vector records for this document_id.
-        let _ = self
-            .vector_index
-            .delete(&self.config.collection_name, &name)
-            .await;
-
-        // Embed the content.
         let embedding_input = EmbeddingInput::Text(content.clone());
         let emb_response = self
             .embedding_model
@@ -598,6 +649,15 @@ impl Memory for TurbovecMemory {
         }
 
         let vector = emb_response.embeddings[0].clone();
+
+        // Persist to Markdown (source of truth) now that embedding succeeded.
+        self.file_memory.write(entry).await?;
+
+        // Replace the old vector records for this document_id.
+        let _ = self
+            .vector_index
+            .delete(&self.config.collection_name, &name)
+            .await;
 
         let mut metadata = HashMap::new();
         metadata.insert("memory_name".to_string(), name.clone());

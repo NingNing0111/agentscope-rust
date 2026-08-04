@@ -24,7 +24,12 @@ pub async fn write_index_line(
 ) -> Result<(), MemoryError> {
     let current = read_index(backend, path).await?;
     let prefix = format!("- [{filename}](");
-    let line = format!("- [{filename}]({filename}.md) — {description}");
+    // A description containing newlines would corrupt the single-line index
+    // entry — the trailing fragment becomes an orphan line that later
+    // replacement/removal never touches. Escape line breaks so the entry stays
+    // on one line (round-4 M45).
+    let safe_description = description.replace('\r', "").replace('\n', "\\n");
+    let line = format!("- [{filename}]({filename}.md) — {safe_description}");
     let mut replaced = false;
     let mut lines = Vec::new();
     for existing in current.lines() {
@@ -102,15 +107,32 @@ pub(crate) fn truncate_text_to_tokens(
     if count_text_tokens(text, model) <= max_tokens {
         return text.to_string();
     }
-    let mut out = String::new();
-    for ch in text.chars() {
-        let mut candidate = out.clone();
-        candidate.push(ch);
-        if count_text_tokens(&candidate, model) > max_tokens {
+    // Binary-search the longest prefix that fits within `max_tokens`. The
+    // previous char-by-char loop cloned the growing prefix and recounted
+    // tokens on every iteration (O(n²)), which a large memory file turned into
+    // a multi-million-operation stall and thousands of token counts
+    // (round-4 M42). Token count is monotonic in byte length, so binary search
+    // converges in O(log n) counts.
+    let mut lo = 0usize; // longest known-fitting byte index (char boundary)
+    let mut hi = text.len(); // exclusive upper bound, known to exceed
+    while hi > 0 && !text.is_char_boundary(hi) {
+        hi -= 1;
+    }
+    while lo < hi {
+        let mut mid = lo + (hi - lo) / 2;
+        while mid > lo && !text.is_char_boundary(mid) {
+            mid -= 1;
+        }
+        if mid == lo {
             break;
         }
-        out.push(ch);
+        if count_text_tokens(&text[..mid], model) <= max_tokens {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
     }
+    let mut out = text[..lo].to_string();
     out.push_str("\n<<<TRUNCATED>>>");
     out
 }

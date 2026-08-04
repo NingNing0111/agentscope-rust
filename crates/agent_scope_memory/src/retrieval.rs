@@ -30,12 +30,16 @@ pub async fn retrieve_relevant_files(
         });
     }
 
-    let headers = memory.list().await?;
+    // Use the untruncated enumeration: `list()` caps at `retrieval_max_files`
+    // (200), so with more memory files the model would never see the older,
+    // possibly relevant ones and would return nothing (round-4 M47; the search
+    // and rebuild paths were already switched to `list_all_headers`).
+    let headers = memory.list_all_headers().await?;
     if headers.is_empty() || max_results == 0 {
         return Ok(None);
     }
 
-    let manifest = headers
+    let full_manifest = headers
         .iter()
         .map(|header| {
             format!(
@@ -51,6 +55,24 @@ pub async fn retrieve_relevant_files(
         })
         .collect::<Vec<_>>()
         .join("\n");
+
+    // Cap the manifest so a very large memory store cannot exceed the model's
+    // context window and silently fail the structured-output call (round-4 M47
+    // follow-up). `truncate_text_to_tokens` returns the input unchanged when it
+    // already fits the budget; otherwise it bisects to the longest prefix that
+    // fits, and we then drop any entry it cut mid-line.
+    let manifest_budget = ((model.context_size() / 4).max(2000)) as usize;
+    let mut manifest = truncate_text_to_tokens(&full_manifest, manifest_budget, model.as_ref());
+    if manifest != full_manifest {
+        // `truncate_text_to_tokens` appends "<<<TRUNCATED>>>"; remove it and
+        // any partial trailing entry (an entry always starts with "\n- ").
+        if let Some(suffix) = manifest.rfind("\n<<<TRUNCATED>>>") {
+            manifest.truncate(suffix);
+        }
+        if let Some(last_entry) = manifest.rfind("\n- ") {
+            manifest.truncate(last_entry);
+        }
+    }
 
     let prompt = format!(
         "{}\n\nMemory manifest:\n{}\n\nUser query:\n{}\n\nReturn JSON with selected_files containing at most {} filenames.",

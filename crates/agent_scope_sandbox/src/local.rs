@@ -23,6 +23,31 @@ use crate::path::SandboxPathResolver;
 use crate::policy::SandboxPolicy;
 use crate::session::{LocalSandboxConfig, SandboxSession, SandboxState};
 
+/// Upper bound for a single `read_file` call. An agent-created giant file
+/// (e.g. via Bash `dd`) must not be read wholly into memory and OOM the host;
+/// `policy.max_output_bytes` only bounds command output, not file reads
+/// (round-4 M29).
+const MAX_READ_FILE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Kill the process group led by `child_pid`. The child is spawned with
+/// `.process_group(0)`, so its process-group id equals its pid; signalling the
+/// negative pgid reaps the direct child *and* any grandchildren that inherited
+/// its stdout/stderr pipes (e.g. `sh -c 'sleep 1000 &'`), which would otherwise
+/// survive the direct child, keep the pipes open, and leak (round-4 M28).
+/// Best-effort: a missing/unknown pid or a group that no longer exists is
+/// silently ignored (the caller also kills the direct child).
+#[cfg(unix)]
+fn kill_process_group(child_pid: Option<u32>) {
+    if let Some(pid) = child_pid {
+        use nix::sys::signal::{killpg, Signal};
+        use nix::unistd::Pid;
+        let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_child_pid: Option<u32>) {}
+
 #[derive(Debug)]
 pub struct LocalSandboxSession {
     session_id: String,
@@ -306,6 +331,14 @@ impl SandboxSession for LocalSandboxSession {
         cmd.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
         cmd.env("HOME", cwd.as_os_str());
         cmd.env("TMPDIR", std::env::temp_dir());
+        // Put the child in its own process group so a timeout can reap the
+        // whole tree. A grandchild spawned via `sh -c 'sleep 1000 &'` would
+        // otherwise survive the direct child and keep the output pipes open,
+        // hanging the read and leaking the process (round-4 M28).
+        #[cfg(unix)]
+        {
+            cmd.process_group(0);
+        }
         cmd.args(&request.argv[1..])
             .current_dir(&cwd)
             .stdout(Stdio::piped())
@@ -325,6 +358,7 @@ impl SandboxSession for LocalSandboxSession {
             operation: format!("spawn {}", request.argv[0]),
             message: e.to_string(),
         })?;
+        let child_pid = child.id();
         if let Some(stdin) = request.stdin.clone()
             && let Some(mut child_stdin) = child.stdin.take()
         {
@@ -366,7 +400,9 @@ impl SandboxSession for LocalSandboxSession {
         });
 
         let wait_result = timeout(timeout_duration, child.wait()).await;
-        let (mut status, mut exit_code, mut hits) = match wait_result {
+        // `status`/`exit_code` are immutable once set: the read timeouts below
+        // no longer overwrite the child's real exit status (round-4 M28).
+        let (status, exit_code, mut hits) = match wait_result {
             Ok(Ok(status)) => {
                 let code = status.code().unwrap_or(-1);
                 (ExecutionStatus::Exited { code }, Some(code), Vec::new())
@@ -378,14 +414,18 @@ impl SandboxSession for LocalSandboxSession {
                 });
             }
             Err(_) => {
-                child.kill().await.map_err(|e| SandboxError::IoError {
-                    operation: "timeout_kill".into(),
-                    message: e.to_string(),
-                })?;
-                child.wait().await.map_err(|e| SandboxError::IoError {
-                    operation: "timeout_wait".into(),
-                    message: e.to_string(),
-                })?;
+                // The command outlived its deadline. Reap the whole process
+                // group (direct child + any grandchildren holding the output
+                // pipes), then confirm the direct child is gone. If the kill is
+                // refused (EPERM) or races a reaped PID, do not block forever
+                // on `child.wait()`: bound the wait (round-4 M28).
+                kill_process_group(child_pid);
+                let _ = child.kill().await;
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    child.wait(),
+                )
+                .await;
                 (
                     ExecutionStatus::TimedOut,
                     None,
@@ -396,14 +436,15 @@ impl SandboxSession for LocalSandboxSession {
         // A grandchild that inherited the stdout/stderr pipe keeps its write
         // end open, so `read_to_end` would never reach EOF and would block
         // forever (the previous timeout only wrapped `child.wait`). Bound the
-        // read joins with the same deadline; on expiry, report the result as
-        // timed out. The direct child was already killed on the wait timeout,
-        // and `kill_on_drop` covers the abort paths.
-        // `tokio::select!` with a `&mut` handle (rather than `timeout`) keeps the
-        // JoinHandle alive so the timeout branch can abort the detached read
-        // task; a grandchild holding the pipe's write end would otherwise keep
-        // `read_to_end` blocked on EOF forever, leaking the task and the pipe
-        // (audit S3).
+        // read joins with the same deadline. The direct child has already been
+        // waited above, so a read timeout means a grandchild is holding the
+        // pipe: preserve the child's *real* exit status (it is authoritative)
+        // rather than overwriting it with TimedOut, and reap the process group
+        // (round-4 M28). `tokio::select!` with a `&mut` handle (rather than
+        // `timeout`) keeps the JoinHandle alive so the timeout branch can abort
+        // the detached read task; a grandchild holding the pipe's write end
+        // would otherwise keep `read_to_end` blocked on EOF forever, leaking
+        // the task and the pipe (audit S3).
         let stdout = tokio::select! {
             joined = &mut stdout_task => joined
                 .map_err(|e| SandboxError::IoError {
@@ -415,9 +456,8 @@ impl SandboxSession for LocalSandboxSession {
                     message: e.to_string(),
                 })?,
             _ = tokio::time::sleep(timeout_duration) => {
-                status = ExecutionStatus::TimedOut;
-                exit_code = None;
                 hits.push(ResourceLimitHit::Timeout);
+                kill_process_group(child_pid);
                 let _ = child.kill().await;
                 stdout_task.abort();
                 Vec::new()
@@ -434,9 +474,8 @@ impl SandboxSession for LocalSandboxSession {
                     message: e.to_string(),
                 })?,
             _ = tokio::time::sleep(timeout_duration) => {
-                status = ExecutionStatus::TimedOut;
-                exit_code = None;
                 hits.push(ResourceLimitHit::Timeout);
+                kill_process_group(child_pid);
                 let _ = child.kill().await;
                 stderr_task.abort();
                 Vec::new()
@@ -466,12 +505,35 @@ impl SandboxSession for LocalSandboxSession {
     async fn read_file(&self, path: &str) -> SandboxResult<Vec<u8>> {
         self.guard("read_file")?;
         let p = self.resolver()?.resolve(path, None, true, "read_file")?;
-        tokio::fs::read(&p)
+        let file = tokio::fs::File::open(&p).await.map_err(|e| SandboxError::IoError {
+            operation: "read_file".into(),
+            message: e.to_string(),
+        })?;
+        let meta = file.metadata().await.map_err(|e| SandboxError::IoError {
+            operation: "read_file".into(),
+            message: e.to_string(),
+        })?;
+        // Refuse oversized files up-front so we never allocate them (round-4 M29).
+        if meta.len() > MAX_READ_FILE_BYTES as u64 {
+            return Err(SandboxError::ValidationError {
+                message: format!(
+                    "read_file: '{}' is {} bytes, exceeding the {} byte cap",
+                    path,
+                    meta.len(),
+                    MAX_READ_FILE_BYTES
+                ),
+            });
+        }
+        use tokio::io::AsyncReadExt;
+        let mut buf = Vec::with_capacity(meta.len() as usize);
+        file.take((MAX_READ_FILE_BYTES + 1) as u64)
+            .read_to_end(&mut buf)
             .await
             .map_err(|e| SandboxError::IoError {
                 operation: "read_file".into(),
                 message: e.to_string(),
-            })
+            })?;
+        Ok(buf)
     }
 
     async fn write_file(&mut self, path: &str, data: &[u8]) -> SandboxResult<()> {

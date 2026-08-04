@@ -85,6 +85,10 @@ pub trait VectorStore: Send + Sync {
     /// Check if a collection exists.
     async fn has_collection(&self, name: &str) -> Result<bool, VectorStoreError>;
 
+    /// Return the stored vector dimension of a collection, or `Ok(None)` if
+    /// the collection does not exist (round-4 M38).
+    async fn collection_dimension(&self, name: &str) -> Result<Option<u32>, VectorStoreError>;
+
     /// Create a collection with the given vector dimensions.
     async fn create_collection(&self, name: &str, dimensions: u32) -> Result<(), VectorStoreError>;
 

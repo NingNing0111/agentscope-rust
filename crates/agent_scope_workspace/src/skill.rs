@@ -336,6 +336,17 @@ async fn copy_dir_recursive(src: &str, dst: &str) -> Result<(), std::io::Error> 
         let src_path = entry.path();
         let file_name = entry.file_name();
         let dst_path = std::path::Path::new(dst).join(&file_name);
+        if file_type.is_symlink() {
+            // A symlink inside a skill directory can point anywhere on the
+            // host; `tokio::fs::copy` would follow it and copy the target's
+            // contents (e.g. a private key) into the workspace. Skip symlinks
+            // rather than dereference them (round-4 M30).
+            tracing::warn!(
+                path = %src_path.display(),
+                "skipping symlink in skill directory during copy"
+            );
+            continue;
+        }
         if file_type.is_dir() {
             Box::pin(copy_dir_recursive(
                 &src_path.to_string_lossy(),

@@ -70,10 +70,17 @@ fn py_value_repr(v: &JsonValue) -> String {
 }
 
 /// Python `dict`-style repr of a metadata map, e.g. `{'key': 'value'}`.
+///
+/// Keys are sorted so the output is deterministic across processes — Rust's
+/// `HashMap` iteration order is randomized per process, which made the same
+/// task's metadata repr differ between runs and broke the module's
+/// golden-snapshot/diff-test goal (round-4 F4).
 fn py_dict_repr(map: &HashMap<String, JsonValue>) -> String {
-    let items: Vec<String> = map
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort();
+    let items: Vec<String> = keys
         .iter()
-        .map(|(k, v)| format!("'{k}': {}", py_value_repr(v)))
+        .map(|k| format!("'{k}': {}", py_value_repr(&map[*k])))
         .collect();
     format!("{{{}}}", items.join(", "))
 }

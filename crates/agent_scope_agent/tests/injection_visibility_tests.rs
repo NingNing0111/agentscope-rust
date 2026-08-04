@@ -12,8 +12,8 @@ mod mocks;
 use std::sync::{Arc, Mutex};
 
 use agent_scope_agent::{Agent, AgentConfig, ContextConfig, ReActAgent, ReActConfig};
-use agent_scope_message::{ContentBlock, Msg, TextBlock};
 use agent_scope_message::factory::user_msg;
+use agent_scope_message::{ContentBlock, Msg, TextBlock};
 use agent_scope_model::{
     ChatModel, ChatResponse, ChatUsage, ModelCallResult, ModelError, ToolChoice,
 };
@@ -57,7 +57,8 @@ impl ChatModel for RecordingModel {
     ) -> Result<ModelCallResult, ModelError> {
         self.calls.lock().unwrap().push(messages.to_vec());
         let mut resp = ChatResponse::default();
-        resp.content.push(ContentBlock::Text(TextBlock::new("done".into())));
+        resp.content
+            .push(ContentBlock::Text(TextBlock::new("done".into())));
         resp.usage = Some(ChatUsage::default());
         Ok(ModelCallResult::Complete(resp))
     }

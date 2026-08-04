@@ -1066,3 +1066,72 @@ async fn test_unbounded_channel_all_events() {
             .any(|e| matches!(e, agent_scope_event::AgentEvent::ReplyEnd(_)))
     );
 }
+
+/// Regression (round-4 H1): the streaming path must report iteration-budget
+/// exhaustion as `ExceedMaxIters`, matching the batch path. Previously the
+/// streaming `ReplyEnd` claimed `Completed`, so a consumer that keyed off
+/// `finished_reason` concluded the reply succeeded normally.
+#[tokio::test]
+async fn test_streaming_max_iters_reply_end_is_exceed_max_iters() {
+    use agent_scope_types::ReplyFinishedReason;
+
+    let chunks = vec![tool_call_chunk("tc1", "stream_echo", r#"{}"#)];
+    let model = Arc::new(MockStreamingModel::new("mock", chunks));
+    let tool_chunks: Vec<Result<ToolResultBlock, agent_scope_tool::ToolError>> = vec![Ok(
+        ToolResultBlock::new(
+            "tc1".into(),
+            "stream_echo".into(),
+            ToolOutput::Text("done".into()),
+        ),
+    )];
+    let stream_tool = MockStreamingTool::new("stream_echo", tool_chunks);
+
+    let mut tk = ToolKit::new();
+    tk.register(stream_tool);
+    let config = AgentConfig::builder()
+        .name("agent")
+        .model(model)
+        .toolkit(tk)
+        .build()
+        .unwrap();
+    let react_config = ReActConfig {
+        max_iters: 1,
+        ..ReActConfig::default()
+    };
+    let agent = ReActAgent::new(
+        config,
+        react_config,
+        ContextConfig::default(),
+        vec![],
+    )
+    .unwrap();
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "hi").unwrap()]))
+        .await
+        .unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, agent_scope_event::AgentEvent::ExceedMaxIters(_))),
+        "expected ExceedMaxIters event"
+    );
+    let reply_ends: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            agent_scope_event::AgentEvent::ReplyEnd(ev) => Some(ev),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reply_ends.len(), 1, "expected exactly one ReplyEnd");
+    assert_eq!(
+        reply_ends[0].finished_reason,
+        ReplyFinishedReason::ExceedMaxIters,
+        "streaming ReplyEnd must report ExceedMaxIters, not Completed"
+    );
+}

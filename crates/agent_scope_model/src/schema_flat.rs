@@ -33,22 +33,29 @@ fn flatten_with_defs(
         // recursing further and risking a stack overflow.
         return JsonValue::Object(serde_json::Map::new());
     }
-    if let Some(ref_str) = node.get("$ref").and_then(|v| v.as_str())
-        && let Some(type_name) = ref_str.strip_prefix("#/$defs/")
-    {
-        // A definition that is already on the current resolution path is a
-        // genuine cycle; everything else (resolved earlier) is expanded again.
-        if !visiting.contains(type_name)
-            && let Some(def) = defs.get(type_name)
-        {
-            visiting.insert(type_name.to_string());
-            let result = flatten_with_defs(def, defs, visiting, depth + 1);
-            visiting.remove(type_name);
-            return result;
+    if let Some(ref_str) = node.get("$ref").and_then(|v| v.as_str()) {
+        if let Some(type_name) = ref_str.strip_prefix("#/$defs/") {
+            // A definition that is already on the current resolution path is a
+            // genuine cycle; everything else (resolved earlier) is expanded again.
+            if !visiting.contains(type_name)
+                && let Some(def) = defs.get(type_name)
+            {
+                visiting.insert(type_name.to_string());
+                let result = flatten_with_defs(def, defs, visiting, depth + 1);
+                visiting.remove(type_name);
+                return result;
+            }
+            // Genuine cycle or missing definition: emit an empty schema (`{}`,
+            // accepts anything) instead of a literal-string placeholder that is
+            // not a valid JSON Schema and would corrupt the request sent to the model.
+            return JsonValue::Object(serde_json::Map::new());
         }
-        // Genuine cycle or missing definition: emit an empty schema (`{}`,
-        // accepts anything) instead of a literal-string placeholder that is not
-        // a valid JSON Schema and would corrupt the request sent to the model.
+        // A `$ref` that is not a `#/$defs/` reference (e.g. `#/definitions/...`,
+        // `#/components/schemas/...`, or an external URL) cannot be resolved
+        // here and must not be forwarded: providers do not resolve refs, so a
+        // passed-through `$ref` is either rejected or silently drops the
+        // property. Emit an empty schema (accepts anything) instead
+        // (round-4 M19).
         return JsonValue::Object(serde_json::Map::new());
     }
 

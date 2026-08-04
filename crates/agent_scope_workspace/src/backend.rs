@@ -9,6 +9,10 @@ use crate::error::WorkspaceError;
 /// limit truncates the captured output.
 const MAX_SHELL_OUTPUT_BYTES: usize = 1_048_576; // 1 MiB
 
+/// Upper bound for a single `read_file` call, so an agent-created giant file
+/// cannot be loaded wholly into memory (round-4 M29).
+const MAX_READ_FILE_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
+
 // ---------------------------------------------------------------------------
 // ExecOutput
 // ---------------------------------------------------------------------------
@@ -248,11 +252,36 @@ impl WorkspaceBackend for LocalBackend {
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, WorkspaceError> {
-        tokio::fs::read(path)
+        let file = tokio::fs::File::open(path).await.map_err(|e| {
+            WorkspaceError::BackendError {
+                message: format!("read_file '{path}': {e}"),
+            }
+        })?;
+        let meta = file.metadata().await.map_err(|e| {
+            WorkspaceError::BackendError {
+                message: format!("read_file '{path}': {e}"),
+            }
+        })?;
+        // Cap the read so an agent-created giant file cannot be loaded wholly
+        // into memory (OOM) — mirrors the sandbox `read_file` cap (round-4 M29).
+        if meta.len() > MAX_READ_FILE_BYTES as u64 {
+            return Err(WorkspaceError::BackendError {
+                message: format!(
+                    "read_file '{path}': {} bytes exceeds the {} byte cap",
+                    meta.len(),
+                    MAX_READ_FILE_BYTES
+                ),
+            });
+        }
+        use tokio::io::AsyncReadExt;
+        let mut buf = Vec::with_capacity(meta.len() as usize);
+        file.take((MAX_READ_FILE_BYTES + 1) as u64)
+            .read_to_end(&mut buf)
             .await
             .map_err(|e| WorkspaceError::BackendError {
                 message: format!("read_file '{path}': {e}"),
-            })
+            })?;
+        Ok(buf)
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), WorkspaceError> {

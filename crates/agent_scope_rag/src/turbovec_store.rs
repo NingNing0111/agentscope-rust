@@ -253,6 +253,17 @@ impl VectorStore for TurbovecVectorStore {
         Ok(guard.contains_key(name))
     }
 
+    async fn collection_dimension(&self, name: &str) -> Result<Option<u32>, VectorStoreError> {
+        let guard = self.collections.read().await;
+        let Some(arc) = guard.get(name) else {
+            return Ok(None);
+        };
+        let inner = arc
+            .read()
+            .map_err(|e| VectorStoreError::BackendError(format!("lock error: {e}")))?;
+        Ok(Some(inner.dim as u32))
+    }
+
     /// Create a collection with a fixed vector dimension.
     async fn create_collection(&self, name: &str, dimensions: u32) -> Result<(), VectorStoreError> {
         let dim = dimensions as usize;

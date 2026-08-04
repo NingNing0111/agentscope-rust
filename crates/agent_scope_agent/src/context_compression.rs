@@ -8,9 +8,10 @@
 //! count exceeds `context_size * trigger_ratio`. See Python's `_react_agent.py`
 //! for the reference implementation.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use agent_scope_message::Msg;
+use agent_scope_message::{ContentBlock, Msg};
 use agent_scope_model::ChatModel;
 use agent_scope_state::{AgentState, SummaryContent};
 
@@ -75,19 +76,64 @@ pub(crate) async fn compress_context(
         return Ok(()); // Nothing to compress
     }
 
+    // Tool-pair-aware boundary (round-4 H10). Each tool round is stored as an
+    // `assistant(ToolCall)` message immediately followed by one
+    // `assistant(ToolResult)` message per call. If `drain(0..split_idx)` keeps
+    // a ToolResult whose ToolCall was drained, the next model call would carry
+    // an orphan tool result and be rejected by the API. Extend the boundary so
+    // every result whose call was drained is drained too.
+    let split_idx = {
+        let state_read = state.read().unwrap_or_else(|e| e.into_inner());
+        let context = &state_read.context;
+        let drained_call_ids: HashSet<String> = context[0..split_idx]
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::ToolCall(tc) => Some(tc.id.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut adjusted = split_idx;
+        while let Some(msg) = context.get(adjusted) {
+            let is_orphan_result = msg.content.iter().any(|b| match b {
+                ContentBlock::ToolResult(tr) => drained_call_ids.contains(&tr.id),
+                _ => false,
+            });
+            if !is_orphan_result {
+                break;
+            }
+            adjusted += 1;
+        }
+        adjusted
+    };
+
     let mut state_write = state.write().unwrap_or_else(|e| e.into_inner());
+    // Clamp the drain boundary to the actual context length. `split_idx` is
+    // derived from a read snapshot taken just above; under future concurrent
+    // mutation `split_idx` could exceed the current length, and `drain(0..n)`
+    // with `n > len` panics *while holding the write lock*, poisoning the
+    // RwLock for every later state access (round-4 H10 follow-up).
+    let drain_to = split_idx.min(state_write.context.len());
     // Extract compressed messages and summarize
-    let _old_messages: Vec<Msg> = state_write.context.drain(0..split_idx).collect();
+    let _old_messages: Vec<Msg> = state_write.context.drain(0..drain_to).collect();
 
     // For now: set summary to a placeholder text
     // Full model-based summarization is deferred to a future iteration
-    state_write.summary = SummaryContent::Text(format!(
+    let summary_text = format!(
         "[Compressed {} messages, ~{} tokens]",
-        split_idx, removed_tokens
-    ));
+        drain_to, removed_tokens
+    );
+    state_write.summary = SummaryContent::Text(summary_text.clone());
+
+    // Surface the summary to the model. Previously it was stored on the state
+    // but never included in the call messages, so the agent silently "forgot"
+    // the compressed turns without any recap (round-4 M11).
+    if let Ok(summary_msg) = agent_scope_message::factory::user_msg("", &summary_text) {
+        state_write.context.insert(0, summary_msg);
+    }
 
     tracing::info!(
-        compressed_messages = split_idx,
+        compressed_messages = drain_to,
         remaining = state_write.context.len(),
         "Context compressed"
     );

@@ -73,6 +73,13 @@ impl VectorStore for MockVectorStore {
         Ok(self.data.read().unwrap().contains_key(name))
     }
 
+    async fn collection_dimension(
+        &self,
+        _name: &str,
+    ) -> Result<Option<u32>, agent_scope_rag::error::VectorStoreError> {
+        Ok(None)
+    }
+
     async fn create_collection(
         &self,
         name: &str,

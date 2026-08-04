@@ -107,6 +107,12 @@ impl MemoryVectorIndex for InMemIndex {
         Ok(self.collections.lock().unwrap().contains_key(name))
     }
 
+    async fn collection_dimension(&self, _name: &str) -> Result<Option<u32>, String> {
+        // The mock stores no dimensions; returning None disables the
+        // load-time dimension check, matching the mock's behavior.
+        Ok(None)
+    }
+
     async fn create_collection(&self, name: &str, _dimensions: u32) -> Result<(), String> {
         self.collections
             .lock()

@@ -146,15 +146,26 @@ impl EmbeddingModel for DashScopeEmbeddingModel {
             })
             .collect();
 
+        // The cache key must include the model identity: two models sharing a
+        // cache dir can return different dimensions for the same text, and a
+        // hit from the wrong model would serve a wrong-dimension vector past
+        // the dimension check below (round-4 M41).
+        let cache_key_input = format!(
+            "{}|{}|{}",
+            self.model_card.name,
+            self.model_card.dimensions,
+            texts.join("\x00")
+        );
+        let cache_key = agent_scope_embedding::cache::hash_key(&cache_key_input);
+
         // Check cache if available
-        if let Some(ref cache) = self.cache {
-            let key = agent_scope_embedding::cache::hash_key(&texts.join("\x00"));
-            if let Some(cached) = cache.lookup(&key) {
-                return Ok(EmbeddingResponse {
-                    embeddings: cached,
-                    usage: EmbeddingUsage { total_tokens: 0 },
-                });
-            }
+        if let Some(ref cache) = self.cache
+            && let Some(cached) = cache.lookup(&cache_key)
+        {
+            return Ok(EmbeddingResponse {
+                embeddings: cached,
+                usage: EmbeddingUsage { total_tokens: 0 },
+            });
         }
 
         let url = format!(
@@ -232,8 +243,7 @@ impl EmbeddingModel for DashScopeEmbeddingModel {
 
         // Store in cache if available
         if let Some(ref cache) = self.cache {
-            let key = agent_scope_embedding::cache::hash_key(&texts.join("\x00"));
-            cache.store(&key, result.embeddings.clone());
+            cache.store(&cache_key, result.embeddings.clone());
         }
 
         Ok(result)

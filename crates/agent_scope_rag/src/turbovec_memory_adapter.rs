@@ -77,6 +77,15 @@ impl MemoryVectorIndex for TurbovecIndexAdapter {
             .map_err(|e| e.to_string())
     }
 
+    async fn collection_dimension(&self, name: &str) -> Result<Option<u32>, String> {
+        self.store
+            .read()
+            .await
+            .collection_dimension(name)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     async fn create_collection(&self, name: &str, dimensions: u32) -> Result<(), String> {
         self.store
             .read()

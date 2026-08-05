@@ -20,6 +20,10 @@ pub struct SessionRecord {
     pub turns: Vec<ConversationTurn>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// Snapshot of the agent's task list captured at the last turn, so the
+    /// plan/progress/completion state survives across sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tasks_snapshot: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +82,7 @@ impl SessionRecord {
             model: config.model.clone(),
             turns: Vec::new(),
             summary: None,
+            tasks_snapshot: None,
         }
     }
 
@@ -100,7 +105,17 @@ impl SessionRecord {
             error,
         });
         self.updated_at = now;
-        self.summary = self.turns.last().map(|turn| summarize(&turn.user_input));
+        self.summary = self
+            .turns
+            .last()
+            .map(|turn| summarize(&turn.assistant_text));
+    }
+
+    /// Persist a snapshot of the agent's task list into the session record.
+    /// Kept separate from `add_turn` so the turn API stays unchanged.
+    pub fn snapshot_tasks(&mut self, tasks: serde_json::Value) {
+        self.tasks_snapshot = Some(tasks);
+        self.updated_at = chrono::Utc::now().to_rfc3339();
     }
 }
 
@@ -206,9 +221,15 @@ fn safe_component(id: &str) -> String {
 }
 
 fn summarize(input: &str) -> String {
-    let mut text: String = input.chars().take(80).collect();
-    if input.chars().count() > 80 {
+    // Collapse whitespace so a multi-line reply does not break the one-line
+    // `/sessions` listing, then truncate to 80 chars.
+    let collapsed: String = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut text: String = collapsed.chars().take(80).collect();
+    if collapsed.chars().count() > 80 {
         text.push('…');
+    }
+    if text.is_empty() {
+        text = "(no reply)".to_string();
     }
     text
 }

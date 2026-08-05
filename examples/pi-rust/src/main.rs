@@ -8,7 +8,7 @@
 use clap::Parser;
 use pi_rust::config::{Cli, RuntimeConfig};
 use pi_rust::error::PiResult;
-use pi_rust::{agent, repl, session};
+use pi_rust::{agent, repl, session, tui};
 
 #[tokio::main]
 async fn main() {
@@ -43,9 +43,11 @@ async fn run(config: RuntimeConfig) -> PiResult<()> {
         return Ok(());
     }
 
-    let runtime = agent::AgentRuntime::build(config).await?;
+    let runtime = agent::AgentRuntime::build(config.clone()).await?;
     if let Some(prompt) = runtime.config.prompt.clone() {
         repl::run_one_shot(runtime, prompt).await
+    } else if tui::use_tui(&runtime.config) {
+        tui::run_interactive_tui(runtime).await
     } else {
         repl::run_interactive(runtime).await
     }

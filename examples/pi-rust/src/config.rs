@@ -72,6 +72,10 @@ pub struct Cli {
 
     #[arg(long)]
     pub show_json_events: bool,
+
+    /// Disable the ratatui TUI and use the classic line REPL instead.
+    #[arg(long)]
+    pub no_tui: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +98,7 @@ pub struct RuntimeConfig {
     pub command_timeout_secs: u64,
     pub show_events: bool,
     pub show_json_events: bool,
+    pub no_tui: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +171,7 @@ impl RuntimeConfig {
             command_timeout_secs: cli.command_timeout_secs,
             show_events: cli.show_events,
             show_json_events: cli.show_json_events,
+            no_tui: cli.no_tui,
         })
     }
 }

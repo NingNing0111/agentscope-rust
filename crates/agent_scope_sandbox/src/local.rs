@@ -39,7 +39,7 @@ const MAX_READ_FILE_BYTES: usize = 10 * 1024 * 1024;
 #[cfg(unix)]
 fn kill_process_group(child_pid: Option<u32>) {
     if let Some(pid) = child_pid {
-        use nix::sys::signal::{killpg, Signal};
+        use nix::sys::signal::{Signal, killpg};
         use nix::unistd::Pid;
         let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
     }
@@ -421,11 +421,7 @@ impl SandboxSession for LocalSandboxSession {
                 // on `child.wait()`: bound the wait (round-4 M28).
                 kill_process_group(child_pid);
                 let _ = child.kill().await;
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    child.wait(),
-                )
-                .await;
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
                 (
                     ExecutionStatus::TimedOut,
                     None,
@@ -505,10 +501,12 @@ impl SandboxSession for LocalSandboxSession {
     async fn read_file(&self, path: &str) -> SandboxResult<Vec<u8>> {
         self.guard("read_file")?;
         let p = self.resolver()?.resolve(path, None, true, "read_file")?;
-        let file = tokio::fs::File::open(&p).await.map_err(|e| SandboxError::IoError {
-            operation: "read_file".into(),
-            message: e.to_string(),
-        })?;
+        let file = tokio::fs::File::open(&p)
+            .await
+            .map_err(|e| SandboxError::IoError {
+                operation: "read_file".into(),
+                message: e.to_string(),
+            })?;
         let meta = file.metadata().await.map_err(|e| SandboxError::IoError {
             operation: "read_file".into(),
             message: e.to_string(),

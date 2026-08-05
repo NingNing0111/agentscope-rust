@@ -250,3 +250,126 @@ async fn test_flat_error_format() {
         );
     }
 }
+
+/// Structured output on a *streaming-configured* model must still work: the
+/// DashScope override forces `stream: false` in the request body instead of
+/// letting the trait default error out on `ModelCallResult::Stream`.
+#[tokio::test]
+async fn structured_output_works_on_streaming_model() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-mock-so",
+            "object": "chat.completion",
+            "model": "qwen-plus",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "generate_structured_output",
+                            "arguments": r#"{"selected_files":["auth.md"]}"#
+                        }
+                    }]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 5, "completion_tokens": 3 }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let model = DashScopeChatModel::new("test-key", "qwen-plus")
+        .with_base_url(mock_server.uri())
+        .with_stream(true);
+
+    let msg = user_msg("user", "which memory is relevant?").unwrap();
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "selected_files": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["selected_files"]
+    });
+
+    let result = model.generate_structured_output(&[msg], &schema).await;
+    assert!(result.is_ok(), "Expected Ok, got {:?}", result.err());
+    let response = result.unwrap();
+    assert_eq!(response.content["selected_files"][0], "auth.md");
+
+    // Even though the model is configured streaming, the structured-output
+    // request must have forced `stream: false` and dropped the stale
+    // `stream_options` (DashScope requires the two to be set together).
+    let requests = mock_server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        requests
+            .last()
+            .expect("expected at least one request")
+            .body
+            .as_ref(),
+    )
+    .unwrap();
+    assert_eq!(body["stream"], false, "stream must be forced off");
+    assert!(
+        body.get("stream_options").is_none(),
+        "stream_options must be dropped when stream is false: {body}"
+    );
+}
+
+/// A malformed tool-call argument from the model must fall back to JSON repair
+/// and still produce a structured response (mirrors the trait default).
+#[tokio::test]
+async fn structured_output_repairs_malformed_json() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-mock-so2",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call-2",
+                        "type": "function",
+                        "function": {
+                            "name": "generate_structured_output",
+                            "arguments": r#"{"selected_files":["auth.md"]"#
+                        }
+                    }]
+                },
+                "finish_reason": "stop"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let model = DashScopeChatModel::new("test-key", "qwen-plus")
+        .with_base_url(mock_server.uri())
+        .with_stream(true);
+
+    let msg = user_msg("user", "pick a memory").unwrap();
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "selected_files": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["selected_files"]
+    });
+
+    let result = model.generate_structured_output(&[msg], &schema).await;
+    assert!(
+        result.is_ok(),
+        "Expected repair to succeed, got {:?}",
+        result.err()
+    );
+    let response = result.unwrap();
+    assert_eq!(response.content["selected_files"][0], "auth.md");
+}

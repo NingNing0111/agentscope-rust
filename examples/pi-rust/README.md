@@ -6,13 +6,17 @@
 
 - DashScope/Qwen 默认模型提供商
 - ReActAgent 推理-行动循环
-- 交互式 REPL 与 `--prompt` 单轮模式
-- `Read`、`Write`、`Edit`、`Bash` 四个编码工具
+- **ratatui TUI 交互界面**：顶部状态栏、可滚动的消息流（思考内容、助手文本、工具调用/结果实时流式展示）、底部输入框；确认弹窗（y/n/a/d）；`--no-tui` 回退经典 line REPL
+- `--prompt` 单轮模式
+- `Read`、`Write`、`Edit`、`Bash` 四个编码工具 + `Grep`、`Glob`、`ListDir` 三个搜索浏览工具 + `Memory` 长期记忆写入工具
+- 任务闭环：内置 `TaskCreate/TaskList/TaskGet/TaskUpdate` 计划工具，`/tasks` 查看进度，会话记录任务快照
+- 确认闭环：破坏性覆盖写与危险 shell 命令经宿主 y/n 批准后自动重试
 - `--mode coding` Coding workflow：理解、规划、修改、验证、迭代、汇总
 - `--skill-path` 加载 workspace skills，并通过 `Skill` 工具按需读取完整说明
 - 工作目录边界校验与可见输出截断
 - JSON 会话持久化与 `--resume`
-- 可选 MemoryMiddleware
+- 长期记忆：`Memory` 工具写入 `workdir/Memory/*.md` 与 `MEMORY.md` 索引，重启后自动注入，跨会话持久
+- Ctrl+C 可中断正在运行的 agent 并回到提示符
 
 ## 使用
 
@@ -20,6 +24,16 @@
 export API_KEY="sk-your-key"
 rtk cargo run -p pi-rust -- --help
 rtk cargo run -p pi-rust -- --prompt "请用一句话说明你是什么。"
+```
+
+不带 `--prompt` 启动即进入 **TUI 交互界面**（需要真实 TTY；管道/CI 或 `--no-tui` 时自动回退经典 line REPL）：
+
+```bash
+rtk cargo run -p pi-rust -- \
+  --workdir .pi-rust \
+  --cwd . \
+  --model qwen-plus \
+  --mode coding
 ```
 
 常用参数：
@@ -30,8 +44,30 @@ rtk cargo run -p pi-rust -- \
   --cwd . \
   --model qwen-plus \
   --mode coding \
-  --show-events
+  --show-events \
+  --no-tui        # 强制使用 line REPL
 ```
+
+## TUI 界面
+
+```
+┌ pi-rust  dashscope · qwen-plus · mode react · cwd . · skills 0  [running] ┐
+│ user  请用 Grep 搜索项目里所有调用 println! 的地方                            │
+│ ⋯ 我需要先定位 src/ 下的源文件…                                            │
+│ Grep [Grep] {pattern: "println!", path: "src"}                            │
+│ → success                                                                  │
+│ 找到了 3 处调用 println! 的地方：…                                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│   running…                                                                │
+│ > _                                                                        │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- 消息流实时流式展示：思考内容（`⋯` 斜体灰）、助手文本、工具调用摘要行与结果（`→ success` / `→ error: …`）
+- 按 `Up`/`Down`/`PgUp`/`PgDn` 滚动消息区（新内容到达时自动跟随底部）
+- 输入 `/help` 打开帮助覆盖层（`Esc` 或 `q` 关闭）；其他 `/` 命令输出显示到消息流
+- 需要宿主确认的操作（危险 shell 命令、覆盖写）弹出确认框：`y` 批准 / `n` 拒绝 / `a` 全部批准 / `d` 全部拒绝 / `Esc` 取消
+- `Enter` 发送输入；`Esc` 清空输入框；agent 运行时 `Ctrl+C` 中断，空闲时 `Ctrl+C` 保存并退出
 
 ## Skills
 
@@ -67,9 +103,16 @@ description: Rust coding workflow guidance
 - `/skill NAME`：显示指定 skill 的完整说明
 - `/sessions`：列出本地会话
 - `/save`：保存当前会话
+- `/tasks`：显示 agent 的任务计划/进度/完成状态
+- `/approvals`：列出本会话已批准的破坏性操作
+- `/context`：显示上下文消息数
 - `/events on|off`：切换可读事件输出
 - `/json on|off`：切换 JSON 事件输出
 - `/exit` 或 `/quit`：保存并退出
+
+### 确认闭环
+
+当 `Write` 覆盖已有文件或 `Bash` 执行危险命令时，工具会先返回 `confirmation_required` 并拒绝执行。随后 REPL 会逐一询问（`y`/`N`）：批准的操作以精确指纹（如 `bash:rm hello.txt`、`write:/abs/path`）记入会话级 approvals，并**自动用同一 prompt 重试**（最多 3 轮），被批准的操作随后正常执行；拒绝的操作不再询问。`/approvals` 可查看已批准项，重启进程后重置。
 
 ## 安全模型
 
@@ -79,6 +122,8 @@ description: Rust coding workflow guidance
 - `Write` 默认不覆盖已有文件，除非工具调用明确设置 `overwrite=true`；覆盖已有文件会返回 `confirmation_required`，当前示例不把模型自填字段视为真实用户确认。
 - `Edit` 使用精确字符串替换；默认要求匹配项唯一。
 - `Bash` 在 `--cwd` 中执行，并对 `rm`、`git reset`、安装命令、写重定向、网络脚本等风险命令返回 `confirmation_required`。
+- `Grep`/`Glob`/`ListDir` 只读，跳过隐藏条目（`.` 前缀）与符号链接，并受结果数上限约束。
+- `Memory` 仅写入 `--workdir/Memory/`（记忆文件名会归一化为安全 ASCII 组件），不接触工作目录内其他文件；写入立即可见，`--no-memory` 时工具返回 `memory_disabled`。
 
 ## 会话布局
 
@@ -87,7 +132,7 @@ description: Rust coding workflow guidance
 ```text
 .pi-rust/
 ├── sessions/   # JSON 会话记录
-└── Memory/     # MemoryMiddleware 文件存储
+└── Memory/     # 长期记忆（Memory 工具写入 + MEMORY.md 索引）
 ```
 
 恢复最近会话：

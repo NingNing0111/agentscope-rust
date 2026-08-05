@@ -8,10 +8,7 @@ use pi_rust::tools::{
 };
 
 fn state(dir: &tempfile::TempDir) -> ToolState {
-    ToolState {
-        cwd: dir.path().canonicalize().unwrap(),
-        command_timeout_secs: 1,
-    }
+    ToolState::new(dir.path().canonicalize().unwrap(), 1)
 }
 
 fn demo_skill() -> Skill {
@@ -350,4 +347,67 @@ fn truncation_is_visible() {
     let text = "a".repeat(20_000);
     let truncated = truncate_output(&text);
     assert!(truncated.contains("truncated output"));
+}
+
+#[test]
+fn write_approval_set_bypasses_confirmation() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("hello.txt"), "old").unwrap();
+    let state = state(&dir);
+    let path = resolve_workspace_path(&state.cwd, "hello.txt").unwrap();
+    state
+        .approvals
+        .lock()
+        .unwrap()
+        .insert(format!("write:{}", path.display()));
+
+    let result = write_tool(
+        &state,
+        WriteInput {
+            path: "hello.txt".into(),
+            content: "new".into(),
+            overwrite: true,
+            confirmed: false,
+        },
+    );
+    assert!(result.ok, "{result:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("hello.txt")).unwrap(),
+        "new"
+    );
+}
+
+#[tokio::test]
+async fn bash_approval_set_bypasses_confirmation() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("hello.txt"), "hello").unwrap();
+    let state = state(&dir);
+    state
+        .approvals
+        .lock()
+        .unwrap()
+        .insert("bash:rm hello.txt".to_string());
+
+    let result = bash_tool(
+        &state,
+        BashInput {
+            command: "rm hello.txt".into(),
+            timeout_secs: Some(2),
+            confirmed: false,
+        },
+    )
+    .await;
+    assert!(result.ok, "{result:?}");
+    assert!(!dir.path().join("hello.txt").exists());
+}
+
+#[test]
+fn build_toolkit_registers_search_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    let toolkit = build_toolkit(state(&dir), vec![]);
+    for name in [
+        "Read", "Write", "Edit", "Bash", "Grep", "Glob", "ListDir", "Memory",
+    ] {
+        assert!(toolkit.contains(name), "missing {name} in toolkit");
+    }
 }

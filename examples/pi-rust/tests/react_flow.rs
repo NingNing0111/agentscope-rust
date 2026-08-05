@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -11,7 +12,7 @@ use clap::Parser;
 use futures::{Stream, stream};
 use pi_rust::config::{Cli, RuntimeConfig};
 use pi_rust::session::{SessionRecord, SessionStore};
-use pi_rust::tools::{ToolState, build_toolkit};
+use pi_rust::tools::{ToolState, build_toolkit, resolve_workspace_path};
 use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone)]
@@ -105,10 +106,7 @@ async fn react_flow_reads_file_then_answers() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
     let toolkit = build_toolkit(
-        ToolState {
-            cwd: dir.path().canonicalize().unwrap(),
-            command_timeout_secs: 2,
-        },
+        ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
     );
     let agent = agent_with(
@@ -136,10 +134,7 @@ async fn react_flow_reads_file_then_answers() {
 async fn react_flow_writes_and_edits_file() {
     let dir = tempfile::tempdir().unwrap();
     let toolkit = build_toolkit(
-        ToolState {
-            cwd: dir.path().canonicalize().unwrap(),
-            command_timeout_secs: 2,
-        },
+        ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
     );
     let agent = agent_with(
@@ -173,10 +168,7 @@ async fn react_flow_writes_and_edits_file() {
 async fn react_flow_executes_safe_bash() {
     let dir = tempfile::tempdir().unwrap();
     let toolkit = build_toolkit(
-        ToolState {
-            cwd: dir.path().canonicalize().unwrap(),
-            command_timeout_secs: 2,
-        },
+        ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
     );
     let agent = agent_with(
@@ -201,10 +193,7 @@ async fn react_flow_executes_safe_bash() {
 async fn react_flow_uses_skill_tool_when_loaded() {
     let dir = tempfile::tempdir().unwrap();
     let toolkit = build_toolkit(
-        ToolState {
-            cwd: dir.path().canonicalize().unwrap(),
-            command_timeout_secs: 2,
-        },
+        ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![demo_skill()],
     );
     let agent = agent_with(
@@ -230,10 +219,7 @@ async fn coding_flow_edits_and_verifies_once() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("hello.txt"), "Hello, World!").unwrap();
     let toolkit = build_toolkit(
-        ToolState {
-            cwd: dir.path().canonicalize().unwrap(),
-            command_timeout_secs: 2,
-        },
+        ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
     );
     let agent = agent_with(
@@ -275,10 +261,7 @@ async fn coding_flow_iterates_after_failed_verification() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("hello.txt"), "Hello, World!").unwrap();
     let toolkit = build_toolkit(
-        ToolState {
-            cwd: dir.path().canonicalize().unwrap(),
-            command_timeout_secs: 2,
-        },
+        ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
     );
     let agent = agent_with(
@@ -421,4 +404,64 @@ fn memory_and_rag_disable_flags_build_runtime_config() {
     .unwrap();
     assert!(!enabled.no_memory);
     assert!(!enabled.no_rag);
+}
+
+#[tokio::test]
+async fn approval_gate_denies_then_allows_overwrite() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("hello.txt"), "old").unwrap();
+    let path = dir.path().join("hello.txt");
+    let approvals = Arc::new(Mutex::new(HashSet::new()));
+    let make_state = || {
+        let mut state = ToolState::new(dir.path().canonicalize().unwrap(), 2);
+        state.approvals = Arc::clone(&approvals);
+        state
+    };
+    let overwrite_input =
+        r#"{"path":"hello.txt","content":"new","overwrite":true,"confirmed":false}"#;
+
+    // First turn: the overwrite is denied (no approval yet); the file is intact.
+    let agent1 = agent_with(
+        vec![
+            ScriptedResponse::ToolCall {
+                id: "tc1".into(),
+                name: "Write".into(),
+                input: overwrite_input.into(),
+            },
+            ScriptedResponse::Text("needs approval".into()),
+        ],
+        build_toolkit(make_state(), vec![]),
+    );
+    let first = agent1
+        .reply(Some(vec![user_msg("user", "overwrite hello").unwrap()]))
+        .await
+        .unwrap();
+    assert_eq!(first.get_text_content("").unwrap(), "needs approval");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+
+    // Simulate the REPL approval: record the fingerprint, then the same call
+    // succeeds on the retry. Use resolve_workspace_path so the fingerprint
+    // matches the canonical path the tool derives.
+    let fp_path = resolve_workspace_path(&make_state().cwd, "hello.txt").unwrap();
+    approvals
+        .lock()
+        .unwrap()
+        .insert(format!("write:{}", fp_path.display()));
+    let agent2 = agent_with(
+        vec![
+            ScriptedResponse::ToolCall {
+                id: "tc1".into(),
+                name: "Write".into(),
+                input: overwrite_input.into(),
+            },
+            ScriptedResponse::Text("done".into()),
+        ],
+        build_toolkit(make_state(), vec![]),
+    );
+    let second = agent2
+        .reply(Some(vec![user_msg("user", "overwrite hello").unwrap()]))
+        .await
+        .unwrap();
+    assert_eq!(second.get_text_content("").unwrap(), "done");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
 }

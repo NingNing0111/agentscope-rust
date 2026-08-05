@@ -9,3 +9,4 @@ pub mod render;
 pub mod repl;
 pub mod session;
 pub mod tools;
+pub mod tui;

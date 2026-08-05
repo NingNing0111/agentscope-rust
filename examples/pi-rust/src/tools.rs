@@ -1,13 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use agent_scope_memory::{Memory, MemoryEntry, MemoryType};
 use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
 use agent_scope_tool::{FunctionTool, SkillViewer, ToolKit};
 use agent_scope_workspace::Skill;
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -20,19 +22,81 @@ const MAX_TOOL_OUTPUT_CHARS: usize = 16_000;
 /// memory wholesale and stall/OOM the host.
 const MAX_READ_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 
-#[derive(Debug, Clone)]
+/// Default result cap for Grep matches.
+const DEFAULT_GREP_MAX_RESULTS: usize = 50;
+/// Hard upper bound on Grep matches regardless of the requested `max_results`.
+const MAX_GREP_RESULTS: usize = 500;
+/// Per-line character cap in Grep output so a huge line cannot dominate the result.
+const MAX_GREP_LINE_CHARS: usize = 200;
+/// Stop scanning after this many files so Grep over a huge tree cannot stall the host.
+const MAX_GREP_SCAN_FILES: usize = 50_000;
+/// Default cap on Glob results.
+const DEFAULT_GLOB_MAX_RESULTS: usize = 200;
+/// Default cap on ListDir entries.
+const DEFAULT_LISTDIR_MAX_ENTRIES: usize = 500;
+
+#[derive(Clone)]
 pub struct ToolState {
     pub cwd: PathBuf,
     pub command_timeout_secs: u64,
+    /// Host-side approved operation fingerprints shared with the REPL. A tool
+    /// skips its confirmation gate when the operation fingerprint is present
+    /// (the REPL inserted it after the user approved).
+    pub approvals: Arc<Mutex<HashSet<String>>>,
+    /// Shared long-term memory store, injected by the agent runtime so the
+    /// Memory tool and the library's MemoryMiddleware see the same files.
+    /// `None` when memory is disabled (`--no-memory`).
+    pub memory: Option<Arc<dyn Memory>>,
 }
 
 impl ToolState {
-    pub fn from_config(config: &RuntimeConfig) -> Self {
+    pub fn new(cwd: PathBuf, command_timeout_secs: u64) -> Self {
         Self {
-            cwd: config.cwd.clone(),
-            command_timeout_secs: config.command_timeout_secs,
+            cwd,
+            command_timeout_secs,
+            approvals: Arc::new(Mutex::new(HashSet::new())),
+            memory: None,
         }
     }
+
+    pub fn from_config(config: &RuntimeConfig) -> Self {
+        Self::new(config.cwd.clone(), config.command_timeout_secs)
+    }
+}
+
+/// Deterministic fingerprint for an operation that requires host confirmation.
+///
+/// Used on both sides of the confirmation loop — the tool checks it against
+/// `ToolState.approvals` before gating, and the render layer derives the same
+/// value from the tool-call input so the REPL knows which operation to offer
+/// for approval. Keeping both sides on this one function guarantees the
+/// fingerprints always agree.
+pub fn approval_fingerprint(
+    tool_name: &str,
+    input_json: &serde_json::Value,
+    cwd: &Path,
+) -> Option<String> {
+    match tool_name {
+        "Bash" => input_json
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .map(|cmd| format!("bash:{}", cmd.trim())),
+        "Write" => input_json
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|path| resolve_workspace_path(cwd, path).ok())
+            .map(|path| format!("write:{}", path.display())),
+        _ => None,
+    }
+}
+
+fn is_approved(state: &ToolState, fingerprint: &str) -> bool {
+    // A poisoned lock fails closed (treat as not approved) rather than panicking.
+    state
+        .approvals
+        .lock()
+        .map(|approvals| approvals.contains(fingerprint))
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +215,49 @@ pub struct BashInput {
     pub confirmed: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct GrepInput {
+    pub pattern: String,
+    /// Subdirectory or file to search under; defaults to the workspace root.
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub case_insensitive: bool,
+    #[serde(default)]
+    pub max_results: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct GlobInput {
+    /// Glob pattern relative to `path`, e.g. `src/**/*.rs` or `*.txt`.
+    pub pattern: String,
+    /// Base directory for the pattern; defaults to the workspace root.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ListDirInput {
+    pub path: String,
+    #[serde(default)]
+    pub show_hidden: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct MemoryInput {
+    /// Identifier for the memory entry. The tool sanitizes it into a safe ASCII
+    /// filename component, so any string works; keep semantic detail in
+    /// `description` (which is what appears in the MEMORY.md index).
+    pub name: String,
+    /// One-line description shown in the MEMORY.md index (may contain any text,
+    /// e.g. "the user's name is 张德帅").
+    pub description: String,
+    /// Memory category: user | feedback | project | reference.
+    pub mem_type: String,
+    /// Full body of the memory entry.
+    pub content: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionLevel {
@@ -231,10 +338,50 @@ pub fn build_toolkit(state: ToolState, skills: Vec<Skill>) -> ToolKit {
     let bash_state = Arc::clone(&state);
     toolkit.register(FunctionTool::new(
         "Bash",
-        "Execute a shell command in the configured project working directory with timeout and truncation.",
+        "Execute a shell command (or CLI pipeline) in the configured project working directory with timeout and truncation. Use this to run any command the user asks for — fetching data (curl), git operations, builds, tests, or verification.",
         move |input: BashInput| {
             let state = Arc::clone(&bash_state);
             async move { bash_tool(&state, input).await.into_block("Bash") }
+        },
+    ));
+
+    let grep_state = Arc::clone(&state);
+    toolkit.register(FunctionTool::new(
+        "Grep",
+        "Recursively search for a substring in UTF-8 text files under the workspace, returning file:line:content matches. Prefer limiting the search path to a subdirectory.",
+        move |input: GrepInput| {
+            let state = Arc::clone(&grep_state);
+            async move { grep_tool(&state, input).into_block("Grep") }
+        },
+    ));
+
+    let glob_state = Arc::clone(&state);
+    toolkit.register(FunctionTool::new(
+        "Glob",
+        "List files under the workspace matching a glob pattern such as **/*.rs or src/**.",
+        move |input: GlobInput| {
+            let state = Arc::clone(&glob_state);
+            async move { glob_tool(&state, input).into_block("Glob") }
+        },
+    ));
+
+    let listdir_state = Arc::clone(&state);
+    toolkit.register(FunctionTool::new(
+        "ListDir",
+        "List the direct entries (files and subdirectories) of a directory under the workspace.",
+        move |input: ListDirInput| {
+            let state = Arc::clone(&listdir_state);
+            async move { list_dir_tool(&state, input).into_block("ListDir") }
+        },
+    ));
+
+    let memory_state = Arc::clone(&state);
+    toolkit.register(FunctionTool::new(
+        "Memory",
+        "Persist a fact the user asked you to remember (their name, a preference, a project decision) into long-term memory. Provide a name, a one-line description, a type (user|feedback|project|reference), and the content. The entry is written to disk and shown in MEMORY.md.",
+        move |input: MemoryInput| {
+            let state = Arc::clone(&memory_state);
+            async move { memory_tool(&state, input).await.into_block("Memory") }
         },
     ));
 
@@ -289,16 +436,14 @@ pub fn resolve_workspace_path(cwd: &Path, input: &str) -> Result<PathBuf, ToolRe
         deepest
     };
     if let Some(existing) = existing_ancestor {
-        let canon = existing
-            .canonicalize()
-            .map_err(|e| {
-                ToolResultShape::err(
-                    "path_resolution",
-                    "io",
-                    format!("failed to resolve path: {e}"),
-                    false,
-                )
-            })?;
+        let canon = existing.canonicalize().map_err(|e| {
+            ToolResultShape::err(
+                "path_resolution",
+                "io",
+                format!("failed to resolve path: {e}"),
+                false,
+            )
+        })?;
         // The resolved ancestor must still live inside the real workspace root.
         let real_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
         if !canon.starts_with(&real_cwd) {
@@ -408,12 +553,15 @@ pub fn write_tool(state: &ToolState, input: WriteInput) -> ToolResultShape {
     };
     let decision = classify_write_permission(state, &input, &path);
     if decision.level == PermissionLevel::Confirm && !input.confirmed {
-        return ToolResultShape::err(
-            "confirmation_required",
-            "permission",
-            decision.reason,
-            false,
-        );
+        let fingerprint = format!("write:{}", path.display());
+        if !is_approved(state, &fingerprint) {
+            return ToolResultShape::err(
+                "confirmation_required",
+                "permission",
+                decision.reason,
+                false,
+            );
+        }
     }
     if path.exists() && !input.overwrite {
         return ToolResultShape::err(
@@ -521,12 +669,15 @@ pub async fn bash_tool(state: &ToolState, input: BashInput) -> ToolResultShape {
         );
     }
     if is_destructive_command(command) && !input.confirmed {
-        return ToolResultShape::err(
-            "confirmation_required",
-            "permission",
-            "command requires confirmation before execution",
-            false,
-        );
+        let fingerprint = format!("bash:{command}");
+        if !is_approved(state, &fingerprint) {
+            return ToolResultShape::err(
+                "confirmation_required",
+                "permission",
+                "command requires confirmation before execution",
+                false,
+            );
+        }
     }
     let timeout = Duration::from_secs(input.timeout_secs.unwrap_or(state.command_timeout_secs));
     run_shell_command(state, command, timeout).await
@@ -632,6 +783,379 @@ pub fn truncate_output(text: &str) -> String {
     format!("{truncated}\n... truncated output to {MAX_TOOL_OUTPUT_CHARS} characters")
 }
 
+/// Convert a glob pattern into an anchored regular expression.
+///
+/// Supported syntax: `*` (within a path segment), `**` (across directories),
+/// `?` (single non-separator character). Everything else is matched literally.
+/// `**/` is expanded to `(?:.*/)?` so `src/**/*.rs` also matches `src/main.rs`.
+pub fn glob_to_regex(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len() * 2);
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                if i + 1 < chars.len() && chars[i + 1] == '*' {
+                    if i + 2 < chars.len() && chars[i + 2] == '/' {
+                        out.push_str("(?:.*/)?");
+                        i += 3; // consume `**/`
+                    } else {
+                        out.push_str(".*");
+                        i += 2;
+                    }
+                } else {
+                    out.push_str("[^/]*");
+                    i += 1;
+                }
+            }
+            '?' => {
+                out.push_str("[^/]");
+                i += 1;
+            }
+            other => {
+                out.push_str(&regex::escape(&other.to_string()));
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+pub fn grep_tool(state: &ToolState, input: GrepInput) -> ToolResultShape {
+    let pattern = input.pattern.trim();
+    if pattern.is_empty() {
+        return ToolResultShape::err(
+            "invalid_arguments",
+            "validation",
+            "pattern must not be empty",
+            false,
+        );
+    }
+    let base = match resolve_workspace_path(&state.cwd, input.path.as_deref().unwrap_or(".")) {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
+    if !base.exists() {
+        return ToolResultShape::err("file_not_found", "io", "search path does not exist", false);
+    }
+    let max_results = input
+        .max_results
+        .unwrap_or(DEFAULT_GREP_MAX_RESULTS)
+        .min(MAX_GREP_RESULTS);
+    let needle = if input.case_insensitive {
+        pattern.to_lowercase()
+    } else {
+        pattern.to_string()
+    };
+
+    let mut matches: Vec<String> = Vec::new();
+    let mut matched_files: HashSet<String> = HashSet::new();
+    let mut files_scanned = 0usize;
+    let mut scan_limit_hit = false;
+    let mut stack = vec![base];
+    while let Some(dir) = stack.pop() {
+        if files_scanned >= MAX_GREP_SCAN_FILES {
+            scan_limit_hit = true;
+            break;
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if matches.len() >= max_results {
+                break;
+            }
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with('.') {
+                continue; // skip hidden entries (covers .git, .pi-rust, etc.)
+            }
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_symlink() {
+                continue; // never follow symlinks (avoids escaping the workspace)
+            }
+            if ft.is_dir() {
+                stack.push(entry.path());
+                continue;
+            }
+            if !ft.is_file() {
+                continue;
+            }
+            files_scanned += 1;
+            let Ok(text) = fs::read_to_string(entry.path()) else {
+                continue;
+            }; // skip binary/non-UTF8
+            for (idx, line) in text.lines().enumerate() {
+                let hay = if input.case_insensitive {
+                    line.to_lowercase()
+                } else {
+                    line.to_string()
+                };
+                if hay.contains(&needle) {
+                    let rel = display_rel(&state.cwd, &entry.path());
+                    matched_files.insert(rel.clone());
+                    let line_capped: String = line.chars().take(MAX_GREP_LINE_CHARS).collect();
+                    matches.push(format!("{rel}:{}:{line_capped}", idx + 1));
+                    if matches.len() >= max_results {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if matches.is_empty() {
+        return ToolResultShape::ok(format!("no matches for {pattern:?}"), None);
+    }
+    let limit_note = if scan_limit_hit {
+        "; scan hit the file cap, results may be incomplete"
+    } else {
+        ""
+    };
+    ToolResultShape::ok(
+        format!(
+            "{} match(es) in {} file(s){limit_note}",
+            matches.len(),
+            matched_files.len()
+        ),
+        Some(truncate_output(&matches.join("\n"))),
+    )
+}
+
+pub fn glob_tool(state: &ToolState, input: GlobInput) -> ToolResultShape {
+    let pattern = input.pattern.trim();
+    if pattern.is_empty() {
+        return ToolResultShape::err(
+            "invalid_arguments",
+            "validation",
+            "pattern must not be empty",
+            false,
+        );
+    }
+    let base = match resolve_workspace_path(&state.cwd, input.path.as_deref().unwrap_or(".")) {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
+    if !base.exists() {
+        return ToolResultShape::err("file_not_found", "io", "glob path does not exist", false);
+    }
+    let regex_str = glob_to_regex(pattern);
+    let re = match Regex::new(&format!("^{regex_str}$")) {
+        Ok(re) => re,
+        Err(err) => {
+            return ToolResultShape::err(
+                "invalid_pattern",
+                "validation",
+                format!("invalid glob pattern: {err}"),
+                false,
+            );
+        }
+    };
+
+    let mut files: Vec<String> = Vec::new();
+    let mut stack = vec![base.clone()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if files.len() >= DEFAULT_GLOB_MAX_RESULTS {
+                break;
+            }
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                stack.push(entry.path());
+            } else if ft.is_file()
+                && let Ok(rel) = entry.path().strip_prefix(&base)
+            {
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                if re.is_match(&rel_str) {
+                    files.push(rel_str);
+                }
+            }
+        }
+    }
+    if files.is_empty() {
+        return ToolResultShape::ok(format!("no files match {pattern:?}"), None);
+    }
+    files.sort();
+    ToolResultShape::ok(
+        format!("{} file(s) match {pattern:?}", files.len()),
+        Some(truncate_output(&files.join("\n"))),
+    )
+}
+
+pub fn list_dir_tool(state: &ToolState, input: ListDirInput) -> ToolResultShape {
+    let path = match resolve_workspace_path(&state.cwd, &input.path) {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
+    if !path.exists() {
+        return ToolResultShape::err("file_not_found", "io", "directory does not exist", false);
+    }
+    if path.is_file() {
+        return ToolResultShape::err(
+            "unsupported_file_type",
+            "validation",
+            "target is a file",
+            false,
+        );
+    }
+    let read_dir = match fs::read_dir(&path) {
+        Ok(rd) => rd,
+        Err(err) => {
+            return ToolResultShape::err("permission_denied", "permission", err.to_string(), false);
+        }
+    };
+    let mut dirs: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    for entry in read_dir.flatten() {
+        if dirs.len() + files.len() >= DEFAULT_LISTDIR_MAX_ENTRIES {
+            break;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !input.show_hidden && name.starts_with('.') {
+            continue;
+        }
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_symlink() {
+            continue;
+        }
+        if ft.is_dir() {
+            dirs.push(format!("{name}/"));
+        } else {
+            files.push(name);
+        }
+    }
+    dirs.sort();
+    files.sort();
+    let mut entries = dirs;
+    entries.extend(files);
+    ToolResultShape::ok(
+        format!(
+            "listed {} entr(ies) in {}",
+            entries.len(),
+            display_rel(&state.cwd, &path)
+        ),
+        Some(entries.join("\n")),
+    )
+}
+
 fn display_rel(cwd: &Path, path: &Path) -> String {
     path.strip_prefix(cwd).unwrap_or(path).display().to_string()
+}
+
+/// Persist a fact the user asked to be remembered into the shared long-term
+/// memory store. The write is durable on disk (`workdir/Memory/{name}.md` plus
+/// the MEMORY.md index line), so the next reply in this session and any later
+/// session that re-reads the index can see it.
+pub async fn memory_tool(state: &ToolState, input: MemoryInput) -> ToolResultShape {
+    let Some(memory) = &state.memory else {
+        return ToolResultShape::err(
+            "memory_disabled",
+            "validation",
+            "memory is disabled (--no-memory)",
+            false,
+        );
+    };
+    let name = input.name.trim();
+    if name.is_empty() {
+        return ToolResultShape::err(
+            "invalid_arguments",
+            "validation",
+            "name must not be empty",
+            false,
+        );
+    }
+    let description = input.description.trim();
+    if description.is_empty() {
+        return ToolResultShape::err(
+            "invalid_arguments",
+            "validation",
+            "description must not be empty",
+            false,
+        );
+    }
+    let mem_type = MemoryType::from(input.mem_type.as_str());
+    if matches!(mem_type, MemoryType::Unknown(_)) {
+        return ToolResultShape::err(
+            "invalid_arguments",
+            "validation",
+            "mem_type must be one of: user, feedback, project, reference",
+            false,
+        );
+    }
+    let safe_name = sanitize_memory_name(name);
+    let entry = MemoryEntry::new(
+        safe_name.clone(),
+        description,
+        mem_type.clone(),
+        input.content,
+    );
+    match memory.write(entry).await {
+        Ok(()) => ToolResultShape::ok(
+            format!("Saved memory '{safe_name}'."),
+            Some(format!(
+                "description: {description}\ntype: {}",
+                mem_type.as_str()
+            )),
+        ),
+        Err(err) => ToolResultShape::err(
+            "memory_write_failed",
+            "internal",
+            format!("failed to write memory: {err}"),
+            false,
+        ),
+    }
+}
+
+/// Reduce an arbitrary memory name to a safe, stable ASCII filename component
+/// (`^[A-Za-z0-9_-]+$`, enforced by `agent_scope_memory`'s `validate_name`).
+///
+/// ASCII letters/digits/`-`/`_` are kept; any other character collapses into a
+/// single separator. If the result is empty (e.g. a purely CJK name) or any
+/// non-ASCII character was dropped, a short hash of the original is appended so
+/// two distinct names still map to distinct files instead of colliding on the
+/// bare prefix. Semantic detail lives in the entry `description`, not the name.
+fn sanitize_memory_name(raw: &str) -> String {
+    let mut slug = String::with_capacity(raw.len());
+    let mut has_non_ascii = false;
+    let mut prev_sep = false;
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            slug.push(ch);
+            prev_sep = false;
+        } else {
+            has_non_ascii = true;
+            if !prev_sep && !slug.is_empty() {
+                slug.push('-');
+                prev_sep = true;
+            }
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if has_non_ascii || slug.is_empty() {
+        let hash = short_hash(raw);
+        if slug.is_empty() {
+            slug = format!("mem-{hash}");
+        } else {
+            slug = format!("{slug}-{hash}");
+        }
+    }
+    slug
+}
+
+fn short_hash(input: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    let full = format!("{:x}", hasher.finish());
+    full[..8.min(full.len())].to_string()
 }

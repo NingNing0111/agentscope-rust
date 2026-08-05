@@ -70,3 +70,40 @@ fn corrupt_session_json_is_ignored_by_listing_and_errors_on_selected_load() {
     let err = store.load("bad").unwrap_err();
     assert!(err.safe_message().contains("expected") || err.safe_message().contains("JSON"));
 }
+
+#[test]
+fn session_summary_uses_assistant_reply() {
+    let workdir = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let config = config(&workdir, &cwd);
+    let mut record = SessionRecord::new(&config);
+    // A long user input must not become the session summary; the reply does.
+    record.add_turn("x".repeat(200), Vec::new(), "short reply".into(), None);
+    assert_eq!(record.summary.as_deref(), Some("short reply"));
+    // Multi-line replies collapse into a single line.
+    record.add_turn("q".into(), Vec::new(), "line one\nline two".into(), None);
+    assert_eq!(record.summary.as_deref(), Some("line one line two"));
+}
+
+#[test]
+fn session_tasks_snapshot_round_trips() {
+    let workdir = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let config = config(&workdir, &cwd);
+    let mut record = SessionRecord::new(&config);
+    let tasks = serde_json::json!({
+        "tasks": [
+            { "id": "1", "subject": "fix bug", "state": "in_progress" }
+        ]
+    });
+    record.snapshot_tasks(tasks.clone());
+
+    let json = serde_json::to_string(&record).unwrap();
+    assert!(json.contains("tasks_snapshot"), "{json}");
+    let restored: SessionRecord = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.tasks_snapshot, Some(tasks));
+    // A fresh record has no snapshot field serialized.
+    let fresh = SessionRecord::new(&config);
+    let fresh_json = serde_json::to_string(&fresh).unwrap();
+    assert!(!fresh_json.contains("tasks_snapshot"), "{fresh_json}");
+}

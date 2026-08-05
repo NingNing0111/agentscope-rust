@@ -1,14 +1,18 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
-use agent_scope_event::AgentEvent;
+use agent_scope_event::{AgentEvent, ToolResultEndEvent};
 use agent_scope_message::ToolResultState;
 
 use crate::error::PiResult;
+use crate::tools::{ToolResultShape, approval_fingerprint};
 
 #[derive(Debug, Clone)]
 pub struct RenderConfig {
     pub show_events: bool,
     pub show_json_events: bool,
+    /// Workspace root, used to normalize Write paths into approval fingerprints.
+    pub cwd: PathBuf,
 }
 
 /// Cap for buffered tool-output text (per tool call) used to build result
@@ -17,6 +21,17 @@ const TOOL_OUTPUT_BUFFER_CAP: usize = 2000;
 
 /// Character limit for the excerpt shown in a tool result line.
 const TOOL_RESULT_EXCERPT_LIMIT: usize = 200;
+
+/// An operation the host should offer for approval after a tool was denied
+/// with `confirmation_required`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmationCandidate {
+    pub tool_name: String,
+    /// Exact fingerprint the tool checks against its approvals set.
+    pub fingerprint: String,
+    /// Human-readable description, e.g. `[Bash] $ rm -rf x`.
+    pub description: String,
+}
 
 #[derive(Debug, Default)]
 pub struct RenderedTurn {
@@ -27,41 +42,68 @@ pub struct RenderedTurn {
     /// Map of tool_call_id → tool name, captured at `ToolCallStart`.
     #[doc(hidden)]
     pub tool_call_names: HashMap<String, String>,
+    /// Map of tool_call_id → raw input JSON, captured at `ToolCallEnd`.
+    #[doc(hidden)]
+    pub tool_call_inputs: HashMap<String, String>,
     /// Accumulated (capped) tool output text per tool_call_id.
     #[doc(hidden)]
     pub tool_outputs: HashMap<String, String>,
+    /// Operations denied with `confirmation_required` in this turn.
+    pub confirmation_candidates: Vec<ConfirmationCandidate>,
+    /// Whether the turn was interrupted by the host (Ctrl+C).
+    pub interrupted: bool,
 }
 
+/// Process one agent event: collect turn state and return the text the line
+/// REPL should print for it (empty vec = nothing to print).
+///
+/// The returned chunks preserve the original `println!`/`print!` semantics
+/// (`TextBlockDelta` yields a `print` block without trailing newline; most
+/// other events yield a newline-terminated line). The TUI ignores the return
+/// value and renders events itself; confirmation-candidate collection and the
+/// turn fields are shared by both frontends.
 pub fn render_event(
     event: AgentEvent,
     config: &RenderConfig,
     turn: &mut RenderedTurn,
-) -> PiResult<()> {
+) -> PiResult<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
     if config.show_json_events {
-        println!("{}", serde_json::to_string(&event)?);
+        out.push(format!("{}\n", serde_json::to_string(&event)?));
     }
     match &event {
         AgentEvent::TextBlockDelta(delta) => {
-            print!("{}", delta.delta);
+            out.push(delta.delta.clone());
             turn.text.push_str(&delta.delta);
         }
-        AgentEvent::ToolCallStart(start) if config.show_events => {
-            println!("\n→ tool {} ({})", start.tool_call_name, start.tool_call_id);
-        }
         AgentEvent::ToolCallStart(start) => {
-            // `ToolCallEnd` does not carry the tool name — remember it here.
+            // `ToolCallEnd` does not carry the tool name — remember it here
+            // regardless of event verbosity (confirmation collection needs it).
             turn.tool_call_names
                 .insert(start.tool_call_id.clone(), start.tool_call_name.clone());
+            if config.show_events {
+                out.push(format!(
+                    "\n→ tool {} ({})\n",
+                    start.tool_call_name, start.tool_call_id
+                ));
+            }
         }
-        AgentEvent::ToolCallEnd(end) if !config.show_events => {
-            let name = turn
-                .tool_call_names
-                .get(&end.tool_call_id)
-                .map(String::as_str)
-                .unwrap_or("?");
-            let line = tool_call_summary(name, end.input.as_deref());
-            turn.tool_lines.push(line.clone());
-            println!("\n{line}");
+        AgentEvent::ToolCallEnd(end) => {
+            // Raw input JSON is needed to derive approval fingerprints later.
+            if let Some(input) = &end.input {
+                turn.tool_call_inputs
+                    .insert(end.tool_call_id.clone(), input.clone());
+            }
+            if !config.show_events {
+                let name = turn
+                    .tool_call_names
+                    .get(&end.tool_call_id)
+                    .map(String::as_str)
+                    .unwrap_or("?");
+                let line = tool_call_summary(name, end.input.as_deref());
+                turn.tool_lines.push(line.clone());
+                out.push(format!("\n{line}\n"));
+            }
         }
         AgentEvent::ToolResultTextDelta(delta) if !config.show_events => {
             // Buffer tool output (capped) so the result line can show a
@@ -74,30 +116,102 @@ pub fn render_event(
                 entry.push_str(&delta.delta);
             }
         }
-        AgentEvent::ToolResultEnd(end) if config.show_events => {
-            println!("← tool result {} {:?}", end.tool_call_id, end.state);
-        }
         AgentEvent::ToolResultEnd(end) => {
-            let line = tool_result_line(&turn.tool_outputs, end);
-            turn.tool_lines.push(line.clone());
-            println!("  {line}");
+            collect_confirmation_candidates(turn, config, end);
+            if config.show_events {
+                out.push(format!(
+                    "← tool result {} {:?}\n",
+                    end.tool_call_id, end.state
+                ));
+            } else {
+                let line = tool_result_line(&turn.tool_outputs, end);
+                turn.tool_lines.push(line.clone());
+                out.push(format!("  {line}\n"));
+            }
+        }
+        AgentEvent::UserInterrupt(_) => {
+            turn.interrupted = true;
+            out.push("\n[interrupted]\n".to_string());
         }
         AgentEvent::RequireUserConfirm(confirm) if config.show_events => {
-            println!(
-                "? confirmation required for {} tool call(s)",
+            out.push(format!(
+                "? confirmation required for {} tool call(s)\n",
                 confirm.tool_calls.len()
-            );
+            ));
         }
         AgentEvent::ReplyEnd(_) => {
-            println!();
+            out.push("\n".to_string());
         }
         _ if config.show_events => {
-            println!("event: {}", event_name(&event));
+            out.push(format!("event: {}\n", event_name(&event)));
         }
         _ => {}
     }
     turn.events.push(event);
-    Ok(())
+    Ok(out)
+}
+
+/// Collect operations the host should offer for approval.
+///
+/// A `Denied` tool result whose output is a `ToolResultShape` with
+/// `error.code == "confirmation_required"` becomes a [`ConfirmationCandidate`]
+/// (deduplicated by value). This runs regardless of `show_events`, so the REPL
+/// can always offer approvals.
+fn collect_confirmation_candidates(
+    turn: &mut RenderedTurn,
+    config: &RenderConfig,
+    end: &ToolResultEndEvent,
+) {
+    if end.state != ToolResultState::Denied {
+        return;
+    }
+    // The output carries the full ToolResultShape JSON (batch and streaming
+    // paths both attach the tool output text to ToolResultEnd).
+    let text = end
+        .output
+        .as_deref()
+        .or_else(|| turn.tool_outputs.get(&end.tool_call_id).map(String::as_str))
+        .unwrap_or("");
+    let Ok(shape) = serde_json::from_str::<ToolResultShape>(text) else {
+        return;
+    };
+    let Some(error) = &shape.error else { return };
+    if error.code != "confirmation_required" {
+        return;
+    }
+    let Some(tool_name) = turn.tool_call_names.get(&end.tool_call_id) else {
+        return;
+    };
+    let Some(input_raw) = turn.tool_call_inputs.get(&end.tool_call_id) else {
+        return;
+    };
+    let Ok(input_json) = serde_json::from_str::<serde_json::Value>(input_raw) else {
+        return;
+    };
+    let Some(fingerprint) = approval_fingerprint(tool_name, &input_json, &config.cwd) else {
+        return;
+    };
+    let description = match tool_name.as_str() {
+        "Bash" => input_json
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .map(|command| format!("[Bash] $ {command}"))
+            .unwrap_or_else(|| "[Bash]".to_string()),
+        "Write" => input_json
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .map(|path| format!("[Write] {path}"))
+            .unwrap_or_else(|| "[Write]".to_string()),
+        _ => format!("[{tool_name}]"),
+    };
+    let candidate = ConfirmationCandidate {
+        tool_name: tool_name.clone(),
+        fingerprint,
+        description,
+    };
+    if !turn.confirmation_candidates.contains(&candidate) {
+        turn.confirmation_candidates.push(candidate);
+    }
 }
 
 /// Build a compact one-line summary of a tool call for display, extracting the
@@ -105,7 +219,7 @@ pub fn render_event(
 ///
 /// Malformed JSON is common for LLM tool-call streams, so a parse failure
 /// falls back to a truncated raw excerpt.
-fn tool_call_summary(name: &str, input: Option<&str>) -> String {
+pub fn tool_call_summary(name: &str, input: Option<&str>) -> String {
     let input = input.unwrap_or("");
     let value = serde_json::from_str::<serde_json::Value>(input);
     let Some(value) = value.ok() else {
@@ -152,7 +266,7 @@ fn tool_call_summary(name: &str, input: Option<&str>) -> String {
 
 /// Build the result line for a finished tool call: `→ success` or `→ error:
 /// <excerpt>`.
-fn tool_result_line(
+pub fn tool_result_line(
     tool_outputs: &HashMap<String, String>,
     end: &agent_scope_event::ToolResultEndEvent,
 ) -> String {
@@ -245,6 +359,7 @@ mod tests {
         RenderConfig {
             show_events: false,
             show_json_events: false,
+            cwd: PathBuf::from("."),
         }
     }
 

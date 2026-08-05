@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use agent_scope_agent::{
     Agent, AgentConfig, ContextConfig, MemoryMiddleware, Middleware, PermissionContext,
@@ -6,6 +7,7 @@ use agent_scope_agent::{
 };
 use agent_scope_dashscope::{DashScopeChatModel, DashScopeEmbeddingModel};
 use agent_scope_embedding::EmbeddingModelCard;
+use agent_scope_memory::{FileMemory, Memory, MemoryConfig};
 use agent_scope_message::factory::{assistant_msg, user_msg};
 use agent_scope_rag::{KnowledgeBase, RAGMiddleware, RAGMode, TurbovecVectorStore};
 use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, Skill, WorkspaceBase};
@@ -22,6 +24,11 @@ pub struct AgentRuntime {
     pub store: SessionStore,
     pub skills: Vec<Skill>,
     pub skill_instructions: String,
+    /// Host-approved operation fingerprints, shared with the tool closures.
+    /// The REPL inserts fingerprints here after the user approves a denied
+    /// destructive operation, which makes the tool skip its confirmation gate
+    /// on retry.
+    pub approvals: Arc<Mutex<HashSet<String>>>,
 }
 
 impl AgentRuntime {
@@ -41,10 +48,18 @@ impl AgentRuntime {
             SessionRecord::new(&config)
         };
 
+        let approvals = Arc::new(Mutex::new(HashSet::new()));
+        let mut probe_state = ToolState::from_config(&config);
+        probe_state.approvals = Arc::clone(&approvals);
         let skills = load_workspace_skills(&config).await?;
-        let skill_probe = build_toolkit(ToolState::from_config(&config), skills.clone());
+        let skill_probe = build_toolkit(probe_state, skills.clone());
         let skill_instructions = skill_probe.get_skill_instructions(None);
-        let agent = build_react_agent(&config, skills.clone(), &skill_instructions)?;
+        let agent = build_react_agent(
+            &config,
+            skills.clone(),
+            &skill_instructions,
+            Arc::clone(&approvals),
+        )?;
         for turn in &session.turns {
             let user = user_msg("user", &turn.user_input)?;
             let assistant = assistant_msg("assistant", &turn.assistant_text);
@@ -58,6 +73,7 @@ impl AgentRuntime {
             store,
             skills,
             skill_instructions,
+            approvals,
         })
     }
 }
@@ -91,9 +107,34 @@ fn build_react_agent(
     config: &RuntimeConfig,
     skills: Vec<Skill>,
     skill_instructions: &str,
+    approvals: Arc<Mutex<HashSet<String>>>,
 ) -> PiResult<ReActAgent> {
     let has_skills = !skills.is_empty();
     let model = Arc::new(DashScopeChatModel::new(&config.api_key, &config.model).with_stream(true));
+
+    // One shared memory store is used by both the Memory tool (writes) and the
+    // library's MemoryMiddleware (index injection + retrieval), so a fact the
+    // model saves in one turn is immediately visible to the next turn and to
+    // any later session started from the same workdir.
+    let (memory, memory_config): (Option<Arc<dyn Memory>>, Option<MemoryConfig>) = if config
+        .no_memory
+    {
+        (None, None)
+    } else {
+        let workdir = config.workdir.to_string_lossy().to_string();
+        let memory_dir = config.workdir.join("Memory").to_string_lossy().to_string();
+        let memory_config = MemoryConfig {
+            memory_dir,
+            ..MemoryConfig::default()
+        };
+        (
+            Some(
+                Arc::new(FileMemory::new(&workdir, memory_config.clone(), None)) as Arc<dyn Memory>,
+            ),
+            Some(memory_config),
+        )
+    };
+
     let mut builder = AgentConfig::builder()
         .name("pi_rust")
         .model(model.clone())
@@ -104,20 +145,19 @@ fn build_react_agent(
         .auto_persist(false);
 
     if !config.no_tools {
+        let mut state = ToolState::from_config(config);
+        state.approvals = approvals;
+        state.memory = memory.clone();
         builder = builder
-            .toolkit(build_toolkit(ToolState::from_config(config), skills))
+            .toolkit(build_toolkit(state, skills))
             .permission_context(permission_context(has_skills));
     }
 
     let mut middlewares: Vec<Arc<dyn Middleware>> = Vec::new();
-    if !config.no_memory {
-        let memory_dir = config.workdir.join("Memory");
-        let workdir = config.workdir.to_string_lossy().to_string();
-        let memory_dir = memory_dir.to_string_lossy().to_string();
-        middlewares.push(Arc::new(MemoryMiddleware::with_config(
-            &workdir,
-            &memory_dir,
-            agent_scope_memory::MemoryConfig::default(),
+    if let (Some(memory), Some(config)) = (&memory, &memory_config) {
+        middlewares.push(Arc::new(MemoryMiddleware::new(
+            Arc::clone(memory),
+            config.clone(),
         )));
     }
     if !config.no_rag {
@@ -165,6 +205,10 @@ fn permission_context(has_skills: bool) -> PermissionContext {
     context.add_rule(PermissionRule::allow("Write"));
     context.add_rule(PermissionRule::allow("Edit"));
     context.add_rule(PermissionRule::allow("Bash"));
+    context.add_rule(PermissionRule::allow("Grep"));
+    context.add_rule(PermissionRule::allow("Glob"));
+    context.add_rule(PermissionRule::allow("ListDir"));
+    context.add_rule(PermissionRule::allow("Memory"));
     if has_skills {
         context.add_rule(PermissionRule::allow("Skill"));
     }
@@ -212,9 +256,11 @@ the argument is too big: prefer incremental writes.
 
 Capabilities:
 - Use Read before explaining or editing files.
+- Use Grep/Glob/ListDir to locate and explore files before editing.
 - Use Write to create files and Edit for exact replacements.
-- Risky overwrites and destructive shell commands require host-side confirmation; do not claim they were approved unless the tool actually succeeds.
-- Use Bash for safe verification commands in the configured working directory.
+- Use Bash to execute command-line tasks directly: run the commands the user asks for (curl/git/build/test/verify — anything that can be done in the shell). Prefer executing the command yourself over handing the user a script or manual steps.
+- Destructive shell commands and risky overwrites are gated by the host: the REPL asks the user y/n, and approved operations are retried automatically. Just call the tool normally; approval is the host's job. Do not claim an operation was approved unless the tool actually succeeded.
+- When the user asks you to remember something (their name, a preference, a fact), call the Memory tool to save it. Never claim you remembered something you did not persist.
 - Keep answers concise, structured, and actionable.
 - Never reveal API keys or secrets.
 {mode_guidance}
@@ -272,6 +318,7 @@ mod tests {
             command_timeout_secs: 30,
             show_events: false,
             show_json_events: false,
+            no_tui: false,
         }
     }
 

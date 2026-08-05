@@ -12,9 +12,10 @@ use futures::Stream;
 use serde_json::Value as JsonValue;
 
 use agent_scope_model::formatter::Formatter;
+use agent_scope_model::json_repair::json_repair;
 use agent_scope_model::model_error::{ModelError, ModelErrorKind};
 use agent_scope_model::model_trait::{ChatModel, ModelCallResult};
-use agent_scope_model::response::{ChatResponse, FinishedReason};
+use agent_scope_model::response::{ChatResponse, FinishedReason, StructuredResponse};
 use agent_scope_model::schema_flat::flatten_json_schema_with_defs;
 use agent_scope_model::tool_choice::ToolChoice;
 use agent_scope_model::usage::ChatUsage;
@@ -418,10 +419,7 @@ impl DashScopeChatModel {
     /// complete line. Partial trailing bytes (a line split across chunks, or a
     /// multi-byte UTF-8 character cut mid-sequence) stay in `buf` for the next
     /// call. Kept separate so the chunk-boundary behaviour is unit-testable.
-    fn ingest_sse_bytes(
-        buf: &mut Vec<u8>,
-        bytes: &[u8],
-    ) -> Vec<Result<ChatResponse, ModelError>> {
+    fn ingest_sse_bytes(buf: &mut Vec<u8>, bytes: &[u8]) -> Vec<Result<ChatResponse, ModelError>> {
         let mut out: Vec<Result<ChatResponse, ModelError>> = Vec::new();
         buf.extend_from_slice(bytes);
         // Consume every complete '\n'-terminated line; the tail stays buffered.
@@ -470,7 +468,9 @@ impl DashScopeChatModel {
     /// rather than emitted with a fabricated id.
     fn parse_sse_line(line: &str) -> Option<Result<ChatResponse, ModelError>> {
         // Accept both `data: {...}` and `data:{...}` (SSE spec allows no space).
-        let data = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
+        let data = line
+            .strip_prefix("data: ")
+            .or_else(|| line.strip_prefix("data:"))?;
         if data.trim() == "[DONE]" {
             return None; // End of stream signal
         }
@@ -564,11 +564,7 @@ impl DashScopeChatModel {
                             .and_then(|v| v.as_str())
                             && !reasoning.is_empty()
                         {
-                            resp.append_thinking(
-                                reasoning,
-                                Some("thinking_0"),
-                                HashMap::new(),
-                            );
+                            resp.append_thinking(reasoning, Some("thinking_0"), HashMap::new());
                         }
 
                         // Tool call delta
@@ -577,10 +573,7 @@ impl DashScopeChatModel {
                             .and_then(|v| v.as_array())
                         {
                             for tc in tool_calls {
-                                let idx = tc
-                                    .get("index")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0);
+                                let idx = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
                                 // Use index-only block_id for stable streaming
                                 // accumulation. The tool_call `id` field may
                                 // arrive in a later SSE chunk, which would
@@ -598,29 +591,17 @@ impl DashScopeChatModel {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
 
-                                resp.append_tool_call(
-                                    &block_id,
-                                    name,
-                                    args,
-                                    HashMap::new(),
-                                );
+                                resp.append_tool_call(&block_id, name, args, HashMap::new());
                             }
                         }
 
                         // Audio delta
                         if let Some(audio) = delta.and_then(|d| d.get("audio")) {
-                            if let Some(data) =
-                                audio.get("data").and_then(|v| v.as_str())
-                            {
+                            if let Some(data) = audio.get("data").and_then(|v| v.as_str()) {
                                 let raw = base64::engine::general_purpose::STANDARD
                                     .decode(data)
                                     .unwrap_or_default();
-                                resp.append_data_block(
-                                    "audio_0",
-                                    &raw,
-                                    "audio/pcm16",
-                                    None,
-                                );
+                                resp.append_data_block("audio_0", &raw, "audio/pcm16", None);
                             }
                             if let Some(transcript) =
                                 audio.get("transcript").and_then(|v| v.as_str())
@@ -778,6 +759,116 @@ impl ChatModel for DashScopeChatModel {
             ModelErrorKind::RateLimit,
             ModelErrorKind::InternalServer,
         ]
+    }
+
+    /// Structured output needs the complete JSON in a single response. The
+    /// trait's default implementation routes through `self.call()`, which on a
+    /// streaming-configured model returns a `Stream` and errors out. Override to
+    /// force a non-streaming request (`stream: false`) so structured output
+    /// (e.g. memory retrieval selection) works even when the model is
+    /// configured with `.with_stream(true)`.
+    async fn generate_structured_output(
+        &self,
+        messages: &[Msg],
+        structured_model: &JsonValue,
+    ) -> Result<StructuredResponse, ModelError> {
+        if messages.is_empty() {
+            return Err(ModelError::ValidationError {
+                field: "messages".to_string(),
+                message: "messages list must not be empty for structured output".to_string(),
+            });
+        }
+
+        let json_schema = flatten_json_schema_with_defs(structured_model);
+        let tool_schema = serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "generate_structured_output",
+                "description": "Generate structured output matching the required schema.",
+                "parameters": json_schema
+            }
+        });
+        let tools = vec![tool_schema];
+        let tool_choice = ToolChoice::required();
+
+        let mut body = self.build_request_body(messages, Some(&tools), Some(&tool_choice))?;
+        // The model may be configured streaming; structured output must not be.
+        // `build_request_body` adds `stream_options` when `self.stream` is on —
+        // DashScope requires `stream` and `stream_options` to be set together,
+        // so forcing `stream: false` must also drop the stale `stream_options`.
+        let JsonValue::Object(body_map) = &mut body else {
+            return Err(ModelError::FormatError {
+                context: "dashscope".to_string(),
+                source: agent_scope_model::FormatError::InvalidMessage(
+                    "request body is not a JSON object".to_string(),
+                ),
+            });
+        };
+        body_map.insert("stream".to_string(), JsonValue::Bool(false));
+        body_map.remove("stream_options");
+
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ModelError::ApiError {
+                status: 0,
+                message: e.to_string(),
+                provider: "dashscope".to_string(),
+            })?;
+
+        let status = response.status().as_u16();
+        if !response.status().is_success() {
+            let err_text = response.text().await.unwrap_or_default();
+            let parsed = Self::parse_error_response(&err_text);
+            return Err(ModelError::ApiError {
+                status,
+                message: parsed,
+                provider: "dashscope".to_string(),
+            });
+        }
+
+        let json: JsonValue = response.json().await.map_err(|e| ModelError::ApiError {
+            status: 0,
+            message: format!("JSON parse error: {e}"),
+            provider: "dashscope".to_string(),
+        })?;
+        let resp = self.parse_completion_response(&json)?;
+
+        let tool_input = resp
+            .content
+            .iter()
+            .find_map(|b| {
+                if let agent_scope_message::ContentBlock::ToolCall(tc) = b {
+                    Some(tc.input.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| ModelError::StructuredOutputError {
+                reason: "No tool call found in response".to_string(),
+            })?;
+
+        // Try parsing, fall back to JSON repair (mirrors the trait default).
+        let parsed: JsonValue = serde_json::from_str(&tool_input)
+            .or_else(|_| {
+                let repaired = json_repair(&tool_input);
+                serde_json::from_str(&repaired)
+            })
+            .map_err(|e| ModelError::StructuredOutputError {
+                reason: format!("Failed to parse tool call input as JSON: {e}"),
+            })?;
+
+        Ok(StructuredResponse {
+            content: parsed,
+            usage: resp.usage,
+            ..Default::default()
+        })
     }
 
     async fn call_api(
@@ -959,8 +1050,15 @@ mod tests {
 
         let mut buf = Vec::new();
         let out1 = DashScopeChatModel::ingest_sse_bytes(&mut buf, first);
-        assert!(out1.is_empty(), "partial line must stay buffered, not be dropped");
-        assert_eq!(buf.len(), cut, "partial bytes must be retained for next chunk");
+        assert!(
+            out1.is_empty(),
+            "partial line must stay buffered, not be dropped"
+        );
+        assert_eq!(
+            buf.len(),
+            cut,
+            "partial bytes must be retained for next chunk"
+        );
 
         let out2 = DashScopeChatModel::ingest_sse_bytes(&mut buf, second);
         assert_eq!(out2.len(), 1, "completed line must yield exactly one event");

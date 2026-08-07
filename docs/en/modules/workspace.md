@@ -71,14 +71,16 @@ Tools returned by `LocalWorkspace.list_tools()`:
 pub struct McpClientConfig {
     pub name: String,
     pub transport: McpTransportConfig,
+    pub is_stateful: bool,
 }
 pub enum McpTransportConfig {
     Stdio { command: String, args: Vec<String> },
-    Sse { url: String },
+    Sse { url: String, headers: HashMap<String, String> },
+    StreamableHttp { url: String, headers: HashMap<String, String> },
 }
 ```
 
-`McpRegistry` manages MCP client lifecycle (startup, tool discovery, shutdown).
+`McpRegistry` is a **config-only** registry (load/save/list); the runtime connection, tool discovery, and tool-call adapters live in the `agent_scope_mcp` crate (`McpClient` / `McpTool` / `McpExt`). See [MCP Integration](./mcp.md).
 
 ### 2.5 Skill Management
 
@@ -139,6 +141,7 @@ let mcp = McpClientConfig {
         command: "node".into(),
         args: vec!["server.js".into()],
     },
+    is_stateful: true,
 };
 let config = LocalWorkspaceConfig {
     default_mcps: vec![mcp],
@@ -170,7 +173,9 @@ let ws = manager.get_workspace(&ws_id)?;
 | `WorkspaceError::InvalidSkill` | Invalid skill file format |
 | `WorkspaceError::GatewayError` | Sandbox gateway error (placeholder, pending integration) |
 | `WorkspaceError::AlreadyClosed` | Operating on a closed workspace |
-| `WorkspaceError::McpError` | MCP client startup/communication failure |
+| `WorkspaceError::McpNotFound` | No persisted MCP config with that name |
+| `WorkspaceError::McpConnectionError` | MCP transport-level failure (spawn/connect/disconnect) |
+| `WorkspaceError::McpCallError` | Protocol/peer error during an MCP call |
 
 **Unsupported**:
 - `GatewayError` is currently a placeholder; sandbox↔workspace gateway integration is pending.

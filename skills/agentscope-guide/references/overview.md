@@ -34,6 +34,7 @@ agentscope-rust/
 | `agent_scope_memory` | 能力 | 长期记忆 | `Memory` trait、`FileMemory`、`TurbovecMemory`、`MemoryConfig`、`MemoryEntry`、`Backend` |
 | `agent_scope_rag` | 能力 | RAG 管线 | `Parser`、`Chunker`、`VectorStore`、`KnowledgeBase`、`RAGMiddleware`、`TurbovecVectorStore` |
 | `agent_scope_workspace` | 能力 | 工作空间 | `LocalWorkspace`、`WorkspaceBase`、`WorkspaceManager`、`SkillManager`、`McpRegistry` |
+| `agent_scope_mcp` | 能力 | MCP 服务器集成 | `McpClient`、`McpTool`、`McpExt`(依赖 `rmcp` 官方 SDK) |
 | `agent_scope_sandbox` | 能力 | 沙箱执行 | `SandboxSession`、`LocalSandboxSession`、`SandboxPolicy`、`CapabilityReport` |
 | `agent_scope_utils` | 工具 | 通用工具 | 内部辅助 |
 
@@ -47,7 +48,7 @@ agentscope-rust/
 能力层:  tool(依赖 message)     memory(独立)
          rag(依赖 embedding/model/tool)  
          workspace(依赖 tool)   sandbox(独立)
-         state(依赖 message)
+         mcp(依赖 workspace/tool)   state(依赖 message)
 编排层:  agent(依赖 model/message/tool/event/memory/state)
 Provider: dashscope(依赖 model/embedding)
 ```
@@ -61,7 +62,7 @@ Provider: dashscope(依赖 model/embedding)
 
 1. **基础层**:定义"数据长什么样"——消息协议、内容块、事件枚举、错误分类。
 2. **抽象层**:定义"能力接口"——`ChatModel`、`EmbeddingModel` 这类 trait,不绑定厂商。
-3. **能力层**:实现"具体能力"——工具系统、记忆、RAG、工作空间、沙箱。
+3. **能力层**:实现"具体能力"——工具系统、记忆、RAG、工作空间、MCP 集成、沙箱。
 4. **编排层**:把能力组合成 Agent——`ReActAgent` 的 reasoning→acting 循环、middleware 挂载、权限检查。
 5. **Provider 层**:厂商适配——DashScope 的 HTTP 调用与消息格式转换。
 
@@ -75,5 +76,6 @@ Provider: dashscope(依赖 model/embedding)
 | 给 Agent 加长期记忆 | 上述 + `agent_scope_memory`(经 `agent_scope_agent::MemoryMiddleware`) |
 | 给 Agent 加文档知识库 | 上述 + `agent_scope_rag` + `agent_scope_embedding` |
 | Agent 需要操作文件/Shell | 上述 + `agent_scope_workspace`(或 `agent_scope_sandbox`) |
+| Agent 需要调用外部 MCP 服务器(Excalidraw、搜索等) | 上述 + `agent_scope_mcp`(`McpExt::connect_mcp`) |
 | 管理多会话上下文 | `agent_scope_state` |
 | 多步骤任务规划 / 子 Agent 委派 | `agent_scope_agent` 的 `Planner` / `SubAgent` |

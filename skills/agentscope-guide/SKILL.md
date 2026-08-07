@@ -31,6 +31,7 @@ AgentScope Rust 是一个用 Rust 重构的 Agent 开发框架,以**多 crate wo
 | `agent_scope_memory` | **记忆系统**:`Memory` trait、`FileMemory`、`TurbovecMemory`、`MemoryConfig`、`MemoryEntry` |
 | `agent_scope_rag` | **RAG**:`Parser`、`Chunker`、`KnowledgeBase`、`TurbovecVectorStore`、`RAGMiddleware` |
 | `agent_scope_workspace` | **工作空间**:`LocalWorkspace`(隔离文件系统 + 内置工具)、Skill 管理 |
+| `agent_scope_mcp` | **MCP 集成**:`McpClient`/`McpTool`/`McpExt`(连接外部 MCP 服务器并适配为统一 `Tool`) |
 | `agent_scope_state` | **会话状态**:`AgentState`、`ReplyContext`、`SessionStore` |
 | `agent_scope_sandbox` | **沙箱**(对应 microsandbox) |
 | `agent_scope_embedding` / `agent_scope_types` / `agent_scope_utils` | 基础支撑 |
@@ -333,7 +334,26 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
   ws.initialize().await?;
   ```
 
-🔗 详细参考:[`references/workspace.md`](references/workspace.md)(`LocalWorkspace`/`WorkspaceManager`/`Skill` 管理/MCP)、[`references/session.md`](references/session.md)(`Session`/`SessionStore`/上下文裁剪)。`LocalSandboxSession` 沙箱定义在 `agent_scope_sandbox` crate,用法见 `references/workspace.md` §9。
+- **MCP 集成**(`agent_scope_mcp`):把外部 MCP 服务器(Excalidraw、网页搜索等)接入为统一 `Tool`。配置注册在 workspace(`McpClientConfig`),运行时连接走 `McpExt`:
+
+  ```rust
+  use agent_scope_mcp::McpExt;
+  use agent_scope_workspace::mcp::{McpClientConfig, McpTransportConfig};
+
+  ws.add_mcp(McpClientConfig {
+      name: "excalidraw".into(),
+      transport: McpTransportConfig::Stdio {
+          command: "mcp-excalidraw-server".into(),
+          args: vec![],
+      },
+      is_stateful: true,
+  }).await?;
+  let tools = ws.connect_mcp("excalidraw").await?; // Vec<Arc<dyn Tool>>
+  // 直接当本地工具用: tools.find(|t| t.name() == "excalidraw/create_element") ...
+  ws.disconnect_mcp("excalidraw").await?; // 释放子进程/连接
+  ```
+
+🔗 详细参考:[`references/workspace.md`](references/workspace.md)(`LocalWorkspace`/`WorkspaceManager`/`Skill` 管理/MCP 配置)、[`references/workspace.md` §6](references/workspace.md)(MCP 运行时 `agent_scope_mcp` 连接与调用)、[`references/session.md`](references/session.md)(`Session`/`SessionStore`/上下文裁剪)。`LocalSandboxSession` 沙箱定义在 `agent_scope_sandbox` crate,用法见 `references/workspace.md` §9。
 
 ---
 
@@ -488,7 +508,7 @@ cargo run -p pi-rust -- --workdir .pi-rust --cwd . --model qwen-plus --mode codi
 | [`references/agent.md`](references/agent.md) | `Agent` trait、`ReActAgent`、`AgentConfig`/`ReActConfig`/`ContextConfig`、`Middleware`、权限、`Planner`、`SubAgent` |
 | [`references/memory.md`](references/memory.md) | `Memory` trait、`FileMemory`、`MemoryConfig`、`MemoryMiddleware`、`Backend`、`TurbovecMemory` |
 | [`references/rag.md`](references/rag.md) | `Parser`/`Chunker`/`VectorStore`/`KnowledgeBase`/`RAGMiddleware`、文档导入、Agentic vs Static |
-| [`references/workspace.md`](references/workspace.md) | `LocalWorkspace`/`WorkspaceManager`/Skill 管理/MCP;`LocalSandboxSession` 沙箱(定义于 `agent_scope_sandbox`) |
+| [`references/workspace.md`](references/workspace.md) | `LocalWorkspace`/`WorkspaceManager`/Skill 管理/MCP 配置与运行时(`agent_scope_mcp` 连接/调用);`LocalSandboxSession` 沙箱(定义于 `agent_scope_sandbox`) |
 | [`references/session.md`](references/session.md) | `Session`/`SessionImpl`/`AgentState`/`SessionStore`/上下文裁剪 |
 
 ---

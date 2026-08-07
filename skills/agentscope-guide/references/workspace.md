@@ -128,10 +128,14 @@ You are a weather reporter. When asked about weather:
 
 `ToolKit` 侧:`add_skill_dir(path)` / `add_skill(skill)` / `add_skill_loader(loader)`,`ToolKit::new()` 默认自动带 `SkillViewer`。
 
-## 6. MCP 配置
+## 6. MCP 配置与运行时(`agent_scope_mcp`)
+
+### 6.1 配置注册(workspace 侧)
+
+`McpClientConfig` 描述一个外部 MCP 服务器,持久化到 `<workdir>/.mcp`(JSON 数组):
 
 ```rust
-use agent_scope_workspace::{McpClientConfig, McpTransportConfig};
+use agent_scope_workspace::mcp::{McpClientConfig, McpTransportConfig};
 
 let mcp = McpClientConfig {
     name: "my-server".into(),
@@ -139,11 +143,43 @@ let mcp = McpClientConfig {
         command: "node".into(),
         args: vec!["server.js".into()],
     },
+    is_stateful: true,
 };
-// 或 McpTransportConfig::Sse { url: String }
+// 或 McpTransportConfig::Sse { url, headers }(连接时映射到 StreamableHttp)
+// 或 McpTransportConfig::StreamableHttp { url, headers }
 ```
 
-`McpRegistry` 管理 MCP 客户端生命周期(启动、发现 tools、关闭)。
+通过 `WorkspaceBase` 的 `add_mcp` / `remove_mcp` / `list_mcps` 管理。`McpRegistry` 只负责配置的加载/保存/索引,`authorization`、`x-api-key` 等敏感 header 在持久化与返回时**始终脱敏为 `[REDACTED]`**。
+
+### 6.2 运行时连接(`agent_scope_mcp` crate)
+
+**配置在 workspace,运行时在 `agent_scope_mcp`**(依赖 `rmcp` 官方 SDK)。连接生命周期通过 `McpExt` 扩展 trait 挂到 `LocalWorkspace` 上:
+
+```rust
+use agent_scope_mcp::McpExt;
+use agent_scope_workspace::mcp::{McpClientConfig, McpTransportConfig};
+
+ws.add_mcp(McpClientConfig {
+    name: "my-server".into(),
+    transport: McpTransportConfig::Stdio {
+        command: "node".into(),
+        args: vec!["server.js".into()],
+    },
+    is_stateful: true,
+}).await?;
+
+let tools = ws.connect_mcp("my-server").await?;   // 连接 + 发现工具 → Vec<Arc<dyn Tool>>
+let cached = ws.get_mcp_tools("my-server").await?; // 缓存列表,连接生命周期内可查
+ws.disconnect_mcp("my-server").await?;             // 关闭连接,释放子进程/套接字
+```
+
+- 工具名带前缀:`"{mcp_name}/{tool_name}"`(如 `excalidraw/create_element`)。
+- 每个远程工具被适配为 `agent_scope_mcp::McpTool`,实现统一 `Tool` trait,`read_only` 从远程 `annotations.read_only_hint` 传递。
+- 所有工具共享同一条活跃连接(`McpClient` 内部 `tokio::sync::Mutex` 串行化调用)。
+- workspace `close()` / `reset()` 自动断开所有 MCP 连接(FR-010)。
+- 依赖:需在 `Cargo.toml` 加入 `agent_scope_mcp`(非 workspace 默认依赖)。
+
+真实示例:`crates/agent_scope_mcp/examples/mcp_excalidraw_debug.rs`(对 `mcp-excalidraw-server` 做完整 stdio 往返)。
 
 ## 7. 沙箱:`SandboxSession` trait
 
@@ -269,7 +305,9 @@ let config = LocalSandboxConfig {
 | `WorkspaceError::IoError` | 文件操作失败 |
 | `WorkspaceError::InvalidSkill` | 技能文件格式错误 |
 | `WorkspaceError::AlreadyClosed` | 对已关闭 workspace 操作 |
-| `WorkspaceError::McpError` | MCP 客户端启动/通信失败 |
+| `WorkspaceError::McpNotFound` | 无该名称的持久化 MCP 配置 |
+| `WorkspaceError::McpConnectionError` | MCP 传输层失败(派生/连接/断开) |
+| `WorkspaceError::McpCallError` | MCP 调用期间协议/对端错误 |
 | `SandboxError::PathTraversal` | 路径越界或符号链接逃逸 |
 | `SandboxError::Timeout` | 命令执行超时 |
 | `SandboxError::OutputLimitExceeded` | 输出超 `max_output_bytes` |

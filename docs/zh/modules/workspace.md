@@ -71,14 +71,16 @@ pub trait WorkspaceBase: Send + Sync {
 pub struct McpClientConfig {
     pub name: String,
     pub transport: McpTransportConfig,
+    pub is_stateful: bool,
 }
 pub enum McpTransportConfig {
     Stdio { command: String, args: Vec<String> },
-    Sse { url: String },
+    Sse { url: String, headers: HashMap<String, String> },
+    StreamableHttp { url: String, headers: HashMap<String, String> },
 }
 ```
 
-`McpRegistry` 管理 MCP 客户端生命周期（启动、发现 tools、关闭）。
+`McpRegistry` 是**纯配置**注册表（加载/保存/索引）；运行时连接、工具发现与工具调用适配器在 `agent_scope_mcp` crate（`McpClient` / `McpTool` / `McpExt`）。详见 [MCP 集成](./mcp.md)。
 
 ### 2.5 技能管理
 
@@ -140,6 +142,7 @@ let mcp = McpClientConfig {
         command: "node".into(),
         args: vec!["server.js".into()],
     },
+    is_stateful: true,
 };
 let config = LocalWorkspaceConfig {
     default_mcps: vec![mcp],
@@ -171,7 +174,9 @@ let ws = manager.get_workspace(&ws_id)?;
 | `WorkspaceError::InvalidSkill` | 技能文件格式错误 |
 | `WorkspaceError::GatewayError` | 沙箱网关错误（占位，待集成） |
 | `WorkspaceError::AlreadyClosed` | 对已关闭 workspace 操作 |
-| `WorkspaceError::McpError` | MCP 客户端启动/通信失败 |
+| `WorkspaceError::McpNotFound` | 不存在该名称的持久化 MCP 配置 |
+| `WorkspaceError::McpConnectionError` | MCP 传输层失败（派生/连接/断开） |
+| `WorkspaceError::McpCallError` | MCP 调用期间协议/对端错误 |
 
 **不支持**：
 - `GatewayError` 当前为占位，沙箱←→工作空间网关集成待完善。

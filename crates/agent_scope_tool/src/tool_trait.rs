@@ -81,6 +81,13 @@ pub enum ToolError {
         tool_name: String,
     },
 
+    /// Duplicate registration attempted for an already registered tool name.
+    #[error("tool '{tool_name}' is already registered")]
+    DuplicateName {
+        /// Name of the duplicate tool.
+        tool_name: String,
+    },
+
     /// Requested skill was not found in the registered skill set.
     #[error("skill '{skill_name}' not found")]
     SkillNotFound {

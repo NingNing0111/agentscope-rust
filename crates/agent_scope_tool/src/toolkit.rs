@@ -2,7 +2,8 @@
 //!
 //! Aligns with AgentScope Python's `Toolkit`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, RwLock};
 
 use agent_scope_message::ToolCallBlock;
 use agent_scope_workspace::Skill;
@@ -51,7 +52,7 @@ impl ToolGroup {
     /// `Loader` trait objects, and wraps `Dir` in a `LocalSkillLoader`.
     /// Duplicate names are deduplicated (first-registered wins).
     pub async fn list_skills(&self) -> Vec<Skill> {
-        let mut seen: HashMap<String, Skill> = HashMap::new();
+        let mut seen: BTreeMap<String, Skill> = BTreeMap::new();
 
         for source in &self.skills_or_loaders {
             let skills: Vec<Skill> = match source {
@@ -64,7 +65,8 @@ impl ToolGroup {
             };
 
             for skill in skills {
-                if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(skill.name.clone())
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    seen.entry(skill.name.clone())
                 {
                     e.insert(skill);
                 } else {
@@ -114,6 +116,7 @@ impl ToolGroup {
 pub struct ToolKit {
     tools: HashMap<String, Box<dyn Tool>>,
     tool_groups: Vec<ToolGroup>,
+    skill_cache: Arc<RwLock<BTreeMap<String, Skill>>>,
 }
 
 impl Default for ToolKit {
@@ -129,12 +132,15 @@ impl ToolKit {
     /// pre-registered [`SkillViewer`] tool. (T028)
     #[allow(clippy::mutable_key_type)]
     pub fn new() -> Self {
+        let skill_cache = Arc::new(RwLock::new(BTreeMap::new()));
+        let viewer_cache = Arc::clone(&skill_cache);
         let mut tk = Self {
             tools: HashMap::new(),
             tool_groups: vec![ToolGroup::new(
                 "basic",
                 "Default group for general-purpose tools and skills",
             )],
+            skill_cache,
         };
 
         // Auto-register SkillViewer with a callback that queries this toolkit
@@ -144,8 +150,16 @@ impl ToolKit {
         // in practice, we use a simpler approach: we create SkillViewer with a
         // noop callback and immediately replace it with a proper one.
 
-        // Create SkillViewer with a lazy callback
-        let skill_viewer = SkillViewer::new(Box::new(|_activated_groups| HashMap::new()));
+        // Create SkillViewer backed by the same sync skill snapshot used for
+        // prompt generation, so the prompt's list and `Skill` reads stay aligned.
+        let skill_viewer = SkillViewer::new(Box::new(move |_activated_groups| {
+            viewer_cache
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .map(|(name, skill)| (name.clone(), skill.clone()))
+                .collect()
+        }));
         tk.tools
             .insert(skill_viewer.name().to_string(), Box::new(skill_viewer));
 
@@ -179,7 +193,15 @@ impl ToolKit {
 
         // For now, just ensure SkillViewer is registered.
         if !self.tools.contains_key("Skill") {
-            let skill_viewer = SkillViewer::new(Box::new(|_activated_groups| HashMap::new()));
+            let viewer_cache = Arc::clone(&self.skill_cache);
+            let skill_viewer = SkillViewer::new(Box::new(move |_activated_groups| {
+                viewer_cache
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .iter()
+                    .map(|(name, skill)| (name.clone(), skill.clone()))
+                    .collect()
+            }));
             self.tools
                 .insert(skill_viewer.name().to_string(), Box::new(skill_viewer));
         }
@@ -202,10 +224,31 @@ impl ToolKit {
 
     // -- Registration (T023, T024) --
 
-    /// Registers a tool.  If a tool with the same name already exists it is
-    /// silently replaced (same behaviour as Python AgentScope).
+    /// Registers a tool, rejecting duplicate names.
+    ///
+    /// This is the fail-closed registration API: if a tool with the same name
+    /// is already present, the original tool is retained and
+    /// [`ToolError::DuplicateName`] is returned.
+    pub fn try_register(&mut self, tool: impl Tool + 'static) -> Result<(), ToolError> {
+        let name = tool.name().to_string();
+        if self.tools.contains_key(&name) {
+            return Err(ToolError::DuplicateName { tool_name: name });
+        }
+        self.tools.insert(name, Box::new(tool));
+        Ok(())
+    }
+
+    /// Registers a tool. If a tool with the same name already exists, the
+    /// original tool is retained and a warning is emitted.
+    ///
+    /// Prefer [`ToolKit::try_register`] when callers need to handle duplicates
+    /// explicitly. This method is kept for source compatibility and is
+    /// deterministic/fail-closed: duplicates never replace existing tools.
     pub fn register(&mut self, tool: impl Tool + 'static) {
-        self.tools.insert(tool.name().to_string(), Box::new(tool));
+        let name = tool.name().to_string();
+        if let Err(err) = self.try_register(tool) {
+            tracing::warn!(tool = %name, error = %err, "duplicate tool registration ignored");
+        }
     }
 
     /// Removes a specific tool by name, returning it if it existed.
@@ -221,17 +264,21 @@ impl ToolKit {
     // -- Skill registration (NEW: T025, T026, T027) --
 
     /// Register a skill directory.  Creates a [`LocalSkillLoader`]
-    /// internally and adds it to the default tool group. (T025)
+    /// internally and adds a synchronous snapshot to the default tool group. (T025)
+    ///
+    /// The directory is read during registration so sync prompt generation,
+    /// async `list_skills()`, and the built-in `Skill` viewer expose the same
+    /// deterministic skill set without blocking an async runtime later.
     pub fn add_skill_dir(&mut self, path: &str) {
-        if let Some(group) = self.tool_groups.first_mut() {
-            group
-                .skills_or_loaders
-                .push(SkillOrLoader::Dir(path.to_string()));
+        let loader = LocalSkillLoader::new(path, true);
+        for skill in loader.list_skills_blocking() {
+            self.add_skill(skill);
         }
     }
 
     /// Register a [`Skill`] object directly into the default tool group. (T026)
     pub fn add_skill(&mut self, skill: Skill) {
+        self.cache_skill_if_absent(&skill);
         if let Some(group) = self.tool_groups.first_mut() {
             group.skills_or_loaders.push(SkillOrLoader::Skill(skill));
         }
@@ -249,6 +296,41 @@ impl ToolKit {
     /// group will be expanded on `list_skills()`.
     pub fn add_tool_group(&mut self, group: ToolGroup) {
         self.tool_groups.push(group);
+        self.refresh_sync_skill_cache();
+    }
+
+    fn cache_skill_if_absent(&self, skill: &Skill) {
+        let mut cache = self.skill_cache.write().unwrap_or_else(|e| e.into_inner());
+        cache
+            .entry(skill.name.clone())
+            .or_insert_with(|| skill.clone());
+    }
+
+    fn refresh_sync_skill_cache(&self) {
+        let mut seen: BTreeMap<String, Skill> = BTreeMap::new();
+
+        for group in &self.tool_groups {
+            for source in &group.skills_or_loaders {
+                match source {
+                    SkillOrLoader::Skill(s) => {
+                        seen.entry(s.name.clone()).or_insert_with(|| s.clone());
+                    }
+                    SkillOrLoader::Dir(path) => {
+                        let local = LocalSkillLoader::new(path, true);
+                        for skill in local.list_skills_blocking() {
+                            seen.entry(skill.name.clone()).or_insert(skill);
+                        }
+                    }
+                    SkillOrLoader::Loader(_) => {
+                        // Custom async loaders cannot be awaited from the sync
+                        // prompt/viewer path. They remain available via
+                        // `list_skills().await`.
+                    }
+                }
+            }
+        }
+
+        *self.skill_cache.write().unwrap_or_else(|e| e.into_inner()) = seen;
     }
 
     // -- Skill queries (NEW: T024, T029) --
@@ -256,11 +338,12 @@ impl ToolKit {
     /// List all skills across all tool groups.  Skills with duplicate
     /// names are deduplicated (first-registered wins). (T024)
     pub async fn list_skills(&self) -> Vec<Skill> {
-        let mut seen: HashMap<String, Skill> = HashMap::new();
+        let mut seen: BTreeMap<String, Skill> = BTreeMap::new();
 
         for group in &self.tool_groups {
             for skill in group.list_skills().await {
-                if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(skill.name.clone())
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    seen.entry(skill.name.clone())
                 {
                     e.insert(skill);
                 } else {
@@ -338,24 +421,17 @@ impl ToolKit {
             .replace("{skills_list}", &skills_xml)
     }
 
-    /// Synchronous snapshot of directly-registered skills (from
-    /// `SkillOrLoader::Skill` variants only). Used for prompt generation
-    /// where async is unavailable.
+    /// Synchronous snapshot of skills available to prompt generation and the
+    /// built-in SkillViewer. Directory registrations are cached eagerly by
+    /// `add_skill_dir`; custom async loaders are intentionally excluded because
+    /// this API cannot await.
     fn list_skills_sync(&self) -> Vec<Skill> {
-        let mut seen: HashMap<String, Skill> = HashMap::new();
-
-        for group in &self.tool_groups {
-            for source in &group.skills_or_loaders {
-                if let SkillOrLoader::Skill(s) = source
-                    && let std::collections::hash_map::Entry::Vacant(e) = seen.entry(s.name.clone())
-                {
-                    e.insert(s.clone());
-                }
-                // Skip Loader and Dir — need async to expand
-            }
-        }
-
-        seen.into_values().collect()
+        self.skill_cache
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect()
     }
 
     // -- Schema export (T025) --
@@ -582,27 +658,31 @@ mod tests {
         assert!(matches!(err, ToolError::NotFound { .. }));
     }
 
-    // -- T033: name override --
+    // -- T033: duplicate registration is fail-closed --
     #[tokio::test]
-    async fn test_name_override_on_duplicate_register() {
+    async fn test_try_register_duplicate_returns_error_and_keeps_original() {
         let mut tk = ToolKit::new();
-        tk.register(make_search_tool());
+        tk.try_register(make_search_tool()).unwrap();
 
-        // Register a different tool under the same name
         #[derive(Debug, Clone, Deserialize, JsonSchema)]
         struct DummyInput {}
         async fn v2_handler(_input: DummyInput) -> String {
             "v2".into()
         }
-        tk.register(FunctionTool::new("search", "Search v2", v2_handler));
+        let err = tk
+            .try_register(FunctionTool::new("search", "Search v2", v2_handler))
+            .unwrap_err();
 
+        assert!(matches!(err, ToolError::DuplicateName { tool_name } if tool_name == "search"));
         let schemas = tk.get_tool_schemas();
-        let search_schemas: Vec<_> = schemas
+        let search_schema = schemas
             .iter()
-            .filter(|s| s["function"]["name"].as_str() == Some("search"))
-            .collect();
-        assert_eq!(search_schemas.len(), 1);
-        assert_eq!(search_schemas[0]["function"]["description"], "Search v2");
+            .find(|s| s["function"]["name"].as_str() == Some("search"))
+            .unwrap();
+        assert_eq!(
+            search_schema["function"]["description"],
+            "Search for things"
+        );
     }
 
     // -- T034: clear + remove --

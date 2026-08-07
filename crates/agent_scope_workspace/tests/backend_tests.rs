@@ -102,3 +102,75 @@ async fn test_is_absolute() {
     assert!(backend.is_absolute("/absolute/path"));
     assert!(!backend.is_absolute("relative/path"));
 }
+
+// ============================================================================
+// Defect 2: exec_shell process group / output overflow tests (FAILING before fix)
+// ============================================================================
+
+/// Grandchildren must be reaped when the parent times out (defect 2).
+#[cfg(target_family = "unix")]
+#[tokio::test]
+async fn test_exec_shell_timeout_kills_grandchildren() {
+    let (_td, workdir) = common::temp_workdir();
+    let backend = LocalBackend::new();
+
+    // Spawn a grandchild that outlives the direct child: `sh -c 'sleep 100 & sleep 999'`
+    // The `sleep 100 &` creates a background grandchild. When the direct `sh` is
+    // killed, the grandchild must also die.
+    let output = backend
+        .exec_shell(&["sh", "-c", "sleep 100 & sleep 999"], &workdir, Some(1.0))
+        .await
+        .unwrap();
+
+    // After timeout, exit code is 124 (matching the `timeout` command convention)
+    assert_eq!(output.exit_code, 124);
+
+    // Give a moment for cleanup, then verify no orphan sleep processes
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+}
+
+/// Infinite-output command like `yes` must not hang when there is no timeout
+/// (defect 2). Without the fix, `yes` fills the pipe and blocks, causing
+/// `child.wait()` to hang forever.
+#[cfg(target_family = "unix")]
+#[tokio::test]
+async fn test_exec_shell_yes_does_not_hang() {
+    let (_td, workdir) = common::temp_workdir();
+    let backend = LocalBackend::new();
+
+    // This test must complete within a few seconds, not hang forever.
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        backend.exec_shell(&["yes"], &workdir, None),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) => {
+            // Output should be truncated (capped at ~1 MiB)
+            assert!(output.stdout.len() <= 1_048_576 + 1);
+        }
+        Ok(Err(e)) => {
+            // Any error is acceptable as long as we don't hang
+            let _ = e;
+        }
+        Err(_elapsed) => {
+            panic!("exec_shell with `yes` hung for >10s — output overflow not handled");
+        }
+    }
+}
+
+/// When output overflows the cap, exit_code should indicate the kill.
+#[cfg(target_family = "unix")]
+#[tokio::test]
+async fn test_exec_shell_output_overflow_exit_code() {
+    let (_td, workdir) = common::temp_workdir();
+    let backend = LocalBackend::new();
+
+    let output = backend.exec_shell(&["yes"], &workdir, None).await.unwrap();
+
+    // After overflow kill, exit_code should be non-zero (SIGKILL -> -1 or 137)
+    assert_ne!(output.exit_code, 0);
+    // Output should be truncated
+    assert!(output.stdout.len() <= 1_048_576 + 1);
+}

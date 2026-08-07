@@ -165,3 +165,201 @@ async fn test_get_instructions() {
     assert!(instructions.contains(&workdir));
     assert!(instructions.contains("LocalBackend"));
 }
+
+// ============================================================================
+// Defect 1: Path escape tests (FAILING before containment fix)
+// ============================================================================
+
+/// The backend exposed via `get_backend()` must refuse to read files outside
+/// the workdir via absolute paths.
+#[tokio::test]
+async fn test_cannot_read_absolute_path_outside_workdir() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let backend = ws.get_backend().unwrap();
+    // Attempt to read /etc/passwd — must fail
+    let result = backend.read_file("/etc/passwd").await;
+    assert!(
+        result.is_err(),
+        "read_file should reject absolute path outside workdir"
+    );
+}
+
+/// The backend must refuse to read files via `..` escape from the workdir.
+#[tokio::test]
+async fn test_cannot_read_parent_traversal() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let backend = ws.get_backend().unwrap();
+    let traversal = backend.join_path(&workdir, "../../etc/passwd");
+    let result = backend.read_file(&traversal).await;
+    assert!(
+        result.is_err(),
+        "read_file should reject path with `..` traversal"
+    );
+}
+
+/// The backend must refuse to write files via absolute path outside workdir.
+#[tokio::test]
+async fn test_cannot_write_absolute_path_outside_workdir() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let backend = ws.get_backend().unwrap();
+    let result = backend
+        .write_file("/tmp/should-not-exist-escape-test", b"evil")
+        .await;
+    assert!(
+        result.is_err(),
+        "write_file should reject absolute path outside workdir"
+    );
+}
+
+/// The backend must refuse to write via `..` traversal.
+#[tokio::test]
+async fn test_cannot_write_parent_traversal() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let backend = ws.get_backend().unwrap();
+    let traversal = backend.join_path(&workdir, "../../tmp/escape-test");
+    let result = backend.write_file(&traversal, b"evil").await;
+    assert!(
+        result.is_err(),
+        "write_file should reject path with `..` traversal"
+    );
+}
+
+/// The backend must refuse to delete paths outside workdir.
+#[tokio::test]
+async fn test_cannot_delete_absolute_path_outside_workdir() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let backend = ws.get_backend().unwrap();
+    // Attempt to delete /etc — must fail (even if it doesn't exist, path escape is rejected)
+    let result = backend
+        .delete_path("/tmp/workspace-escape-delete-test")
+        .await;
+    assert!(
+        result.is_err(),
+        "delete_path should reject absolute path outside workdir"
+    );
+}
+
+/// The backend must refuse to delete via `..` traversal.
+#[tokio::test]
+async fn test_cannot_delete_parent_traversal() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let backend = ws.get_backend().unwrap();
+    let traversal = backend.join_path(&workdir, "../../tmp/escape-delete-test");
+    let result = backend.delete_path(&traversal).await;
+    assert!(
+        result.is_err(),
+        "delete_path should reject path with `..` traversal"
+    );
+}
+
+/// The backend must refuse exec_shell with cwd outside workdir.
+#[tokio::test]
+async fn test_exec_shell_rejects_cwd_outside_workdir() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let backend = ws.get_backend().unwrap();
+    let result = backend.exec_shell(&["echo", "hello"], "/etc", None).await;
+    assert!(
+        result.is_err(),
+        "exec_shell should reject cwd outside workdir"
+    );
+}
+
+/// File operations within the workdir must still work after containment.
+#[tokio::test]
+async fn test_contained_operations_still_work() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let backend = ws.get_backend().unwrap();
+    let file_path = backend.join_path(&workdir, "test.txt");
+
+    // Write within workdir should work
+    backend.write_file(&file_path, b"hello").await.unwrap();
+    assert!(backend.file_exists(&file_path).await.unwrap());
+
+    // Read should work
+    let data = backend.read_file(&file_path).await.unwrap();
+    assert_eq!(data, b"hello");
+
+    // Delete should work
+    backend.delete_path(&file_path).await.unwrap();
+    assert!(!backend.file_exists(&file_path).await.unwrap());
+}

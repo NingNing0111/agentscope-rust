@@ -153,9 +153,7 @@ pub(crate) async fn run_react_loop(
             count_msgs.insert(0, system_msg);
         }
         let tool_schemas = ctx.toolkit.as_ref().map(|tk| tk.get_tool_schemas());
-        let token_count = ctx
-            .model
-            .count_tokens(&count_msgs, tool_schemas.as_deref());
+        let token_count = ctx.model.count_tokens(&count_msgs, tool_schemas.as_deref());
         let context_size = ctx.model.context_size();
         let trigger = (context_size as f64 * ctx.context_config.trigger_ratio) as usize;
 
@@ -234,9 +232,7 @@ pub(crate) async fn run_react_loop(
             .await;
 
         // Use select! to allow cancellation during the model call.
-        let call_future = ctx
-            .model
-            .call(&hook_messages, hook_tools.as_deref(), None);
+        let call_future = ctx.model.call(&hook_messages, hook_tools.as_deref(), None);
         let result = tokio::select! {
             r = call_future => r,
             _ = ctx.cancel_token.cancelled() => {
@@ -310,8 +306,12 @@ pub(crate) async fn run_react_loop(
                         }
                         Some(Err(e)) => return Err(e.into()),
                         None => {
-                            // Stream ended or cancelled — check which
-                            if ctx.interrupted.load(Ordering::SeqCst) {
+                            // Stream ended or cancelled — check which. Consume
+                            // `interrupted` so a stream-poll interrupt cannot
+                            // leak into the next reply.
+                            if ctx.cancel_token.is_cancelled()
+                                || ctx.interrupted.swap(false, Ordering::SeqCst)
+                            {
                                 let _ = event_tx
                                     .send(AgentEvent::UserInterrupt(UserInterruptEvent {
                                         base: base(),
@@ -422,7 +422,7 @@ pub(crate) async fn run_react_loop(
                 }
 
                 {
-                    let mut state_write = ctx.state.write().unwrap();
+                    let mut state_write = ctx.state.write().unwrap_or_else(|e| e.into_inner());
                     for msg in text_msgs {
                         state_write.context.push(msg.clone());
                     }
@@ -484,7 +484,7 @@ pub(crate) async fn run_react_loop(
                 // Without the assistant message, the model doesn't know which
                 // tool call the result corresponds to.
                 {
-                    let mut state_write = ctx.state.write().unwrap();
+                    let mut state_write = ctx.state.write().unwrap_or_else(|e| e.into_inner());
                     // Persist the accompanying text as its own assistant message
                     // so it survives compression / is visible to later turns.
                     for msg in &text_msgs {
@@ -511,6 +511,11 @@ pub(crate) async fn run_react_loop(
                     let mut tc_mut = tc.clone();
                     for mw in ctx.middlewares.iter() {
                         mw.pre_acting(ctx.agent_name, &mut tc_mut).await?;
+                    }
+                    if ctx.cancel_token.is_cancelled()
+                        || ctx.interrupted.swap(false, Ordering::SeqCst)
+                    {
+                        break;
                     }
 
                     let permission_input = serde_json::from_str(&tc_mut.input)
@@ -575,10 +580,17 @@ pub(crate) async fn run_react_loop(
                     // retrying. Mirrors the streaming path.
                     let retries = match &exec_result {
                         Ok(_) => {
-                            ctx.state.write().unwrap().record_tool_success(&tc_mut.name);
+                            ctx.state
+                                .write()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .record_tool_success(&tc_mut.name);
                             0
                         }
-                        Err(_) => ctx.state.write().unwrap().record_tool_failure(&tc_mut.name),
+                        Err(_) => ctx
+                            .state
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .record_tool_failure(&tc_mut.name),
                     };
 
                     let _ = event_tx
@@ -603,7 +615,11 @@ pub(crate) async fn run_react_loop(
                             let mut final_state = ToolResultState::Success;
                             let mut is_done = false;
                             while !is_done {
-                                match stream.next().await {
+                                let chunk_result = tokio::select! {
+                                    r = stream.next() => r,
+                                    _ = ctx.cancel_token.cancelled() => None,
+                                };
+                                match chunk_result {
                                     Some(Ok(chunk)) => {
                                         let txt = match &chunk.output {
                                             ToolOutput::Text(t) => t.clone(),
@@ -619,7 +635,12 @@ pub(crate) async fn run_react_loop(
                                         is_done = true;
                                     }
                                     None => {
-                                        // Stream ended without is_last — treat as success
+                                        if ctx.cancel_token.is_cancelled()
+                                            || ctx.interrupted.swap(false, Ordering::SeqCst)
+                                        {
+                                            final_state = ToolResultState::Interrupted;
+                                            collected.clear();
+                                        }
                                         is_done = true;
                                     }
                                 }
@@ -646,7 +667,7 @@ pub(crate) async fn run_react_loop(
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     tool_call_id: tc_mut.id.clone(),
-                                    state: final_state,
+                                    state: final_state.clone(),
                                     metadata: std::collections::HashMap::new(),
                                     output: Some(collected.clone()),
                                 }))
@@ -656,12 +677,17 @@ pub(crate) async fn run_react_loop(
                             // results, matching the streaming path.)
 
                             {
-                                let mut state_write = ctx.state.write().unwrap();
-                                let trb = ToolResultBlock::new(
+                                let mut state_write =
+                                    ctx.state.write().unwrap_or_else(|e| e.into_inner());
+                                let mut trb = ToolResultBlock::new(
                                     tc_mut.id.clone(),
                                     tc_mut.name.clone(),
                                     ToolOutput::Text(collected),
                                 );
+                                // Reflect the actual execution outcome so the
+                                // persisted context matches the emitted events
+                                // instead of always being `Running` (round-5 H2).
+                                trb.state = final_state.clone();
                                 if let Ok(msg) = Msg::new(
                                     ctx.agent_name.into(),
                                     vec![ContentBlock::ToolResult(trb)],
@@ -703,7 +729,7 @@ pub(crate) async fn run_react_loop(
                                     base: base(),
                                     reply_id: ctx.reply_id.into(),
                                     tool_call_id: tc_mut.id.clone(),
-                                    state: result_state,
+                                    state: result_state.clone(),
                                     metadata: std::collections::HashMap::new(),
                                     output,
                                 }))
@@ -715,12 +741,17 @@ pub(crate) async fn run_react_loop(
                             }
 
                             {
-                                let mut state_write = ctx.state.write().unwrap();
-                                let trb = ToolResultBlock::new(
+                                let mut state_write =
+                                    ctx.state.write().unwrap_or_else(|e| e.into_inner());
+                                let mut trb = ToolResultBlock::new(
                                     tc_mut.id.clone(),
                                     tc_mut.name.clone(),
                                     ToolOutput::Text(output_text),
                                 );
+                                // Persist the outcome reported by the tool
+                                // (`chunk.state`) rather than the hardcoded
+                                // `Running` default (round-5 H2).
+                                trb.state = result_state;
                                 if let Ok(msg) = Msg::new(
                                     ctx.agent_name.into(),
                                     vec![ContentBlock::ToolResult(trb)],
@@ -762,12 +793,17 @@ pub(crate) async fn run_react_loop(
                                 .await;
 
                             {
-                                let mut state_write = ctx.state.write().unwrap();
-                                let trb = ToolResultBlock::new(
+                                let mut state_write =
+                                    ctx.state.write().unwrap_or_else(|e| e.into_inner());
+                                let mut trb = ToolResultBlock::new(
                                     tc_mut.id.clone(),
                                     tc_mut.name.clone(),
                                     ToolOutput::Text(feedback),
                                 );
+                                // Error path: the event stream already reported
+                                // `Error`; persist the same state instead of the
+                                // `Running` default (round-5 H2 follow-up).
+                                trb.state = ToolResultState::Error;
                                 if let Ok(msg) = Msg::new(
                                     ctx.agent_name.into(),
                                     vec![ContentBlock::ToolResult(trb)],
@@ -848,17 +884,22 @@ async fn emit_permission_denied_result(
         }))
         .await;
 
-    let trb = ToolResultBlock::new(
+    let mut trb = ToolResultBlock::new(
         tool_call.id.clone(),
         tool_call.name.clone(),
         ToolOutput::Text(message.to_string()),
     );
+    trb.state = ToolResultState::Denied;
     if let Ok(msg) = Msg::new(
         agent_name.into(),
         vec![ContentBlock::ToolResult(trb)],
         Role::Assistant,
     ) {
-        state.write().unwrap().context.push(msg);
+        state
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .context
+            .push(msg);
     }
 }
 

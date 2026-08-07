@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use agent_scope_message::{ToolOutput, ToolResultState};
+use agent_scope_message::{ToolCallBlock, ToolOutput, ToolResultState};
 use agent_scope_tool::{SkillViewer, Tool, ToolExecOutput, ToolKit};
 use agent_scope_workspace::Skill;
 
@@ -145,6 +145,38 @@ async fn test_toolkit_add_skill_dir_registers_skill() {
     assert_eq!(skills.len(), 1);
     assert_eq!(skills[0].name, "my-skill");
     assert!(skills[0].markdown.contains("# My Skill"));
+
+    let instructions = tk.get_skill_instructions(None);
+    assert!(
+        instructions.contains("my-skill"),
+        "sync prompt must include add_skill_dir skills: {instructions}"
+    );
+    assert!(
+        instructions.contains("A test skill from dir"),
+        "sync prompt must include add_skill_dir descriptions: {instructions}"
+    );
+
+    let result = tk
+        .call_tool(&ToolCallBlock::new(
+            "call-skill".into(),
+            "Skill".into(),
+            r#"{"skill":"my-skill"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    match result {
+        ToolExecOutput::Complete(chunk) => {
+            assert_eq!(chunk.state, ToolResultState::Success);
+            match &chunk.output {
+                ToolOutput::Text(text) => assert!(
+                    text.contains("# My Skill"),
+                    "Skill tool must read the same add_skill_dir skill listed in prompt: {text}"
+                ),
+                _ => panic!("Expected Text output"),
+            }
+        }
+        _ => panic!("Expected Complete"),
+    }
 }
 
 #[tokio::test]
@@ -227,6 +259,8 @@ async fn test_toolkit_duplicate_skill_name_dedup() {
     let skills = tk.list_skills().await;
     assert_eq!(skills.len(), 1);
     assert_eq!(skills[0].description, "First"); // first wins
+    assert!(tk.get_skill_instructions(None).contains("First"));
+    assert!(!tk.get_skill_instructions(None).contains("Second"));
 }
 
 // ============================================================================

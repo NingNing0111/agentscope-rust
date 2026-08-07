@@ -138,7 +138,7 @@ impl Tool for TaskCreateTool {
                 reason: e.to_string(),
             })?;
 
-        let mut state = self.state.write().unwrap();
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         let id = state.tasks_context.next_sequential_id();
         let mut task = Task::new(
             params.subject.clone(),
@@ -190,7 +190,7 @@ impl Tool for TaskListTool {
     }
 
     async fn call(&self, _input: JsonValue) -> Result<ToolExecOutput, ToolError> {
-        let state = self.state.read().unwrap();
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner());
         if state.tasks_context.tasks.is_empty() {
             return Ok(text_chunk(
                 self.name(),
@@ -277,7 +277,7 @@ impl Tool for TaskGetTool {
                 reason: e.to_string(),
             })?;
 
-        let state = self.state.read().unwrap();
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner());
         let Some(task) = state.tasks_context.get_task(&params.task_id) else {
             return Ok(text_chunk(
                 self.name(),
@@ -404,7 +404,7 @@ impl Tool for TaskUpdateTool {
                 reason: e.to_string(),
             })?;
 
-        let mut state = self.state.write().unwrap();
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
 
         let Some(index) = state
             .tasks_context

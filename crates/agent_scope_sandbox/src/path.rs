@@ -80,7 +80,11 @@ impl SandboxPathResolver {
         must_exist: bool,
         operation: &str,
     ) -> SandboxResult<PathBuf> {
-        if has_parent_component(path) && !path.is_absolute() {
+        // Reject `..` unconditionally — including inside absolute paths. `resolve`
+        // already guards its own inputs, but this `pub` method is also reachable
+        // directly, so it must not silently accept `/tmp/../../etc/passwd`
+        // (round-5 H1). `ensure_contained` below is the fail-closed backstop.
+        if has_parent_component(path) {
             return Err(SandboxError::PermissionDenied {
                 path: Some(path.display().to_string()),
                 operation: operation.into(),
@@ -107,17 +111,17 @@ impl SandboxPathResolver {
             };
             let mut missing: Vec<std::ffi::OsString> = Vec::new();
             while !existing.exists() {
-                let Some(name) = existing.file_name() else { break };
+                let Some(name) = existing.file_name() else {
+                    break;
+                };
                 let Some(up) = existing.parent() else { break };
                 missing.push(name.to_os_string());
                 existing = up.to_path_buf();
             }
-            let mut current = existing
-                .canonicalize()
-                .map_err(|e| SandboxError::IoError {
-                    operation: format!("{operation}_resolve_parent"),
-                    message: e.to_string(),
-                })?;
+            let mut current = existing.canonicalize().map_err(|e| SandboxError::IoError {
+                operation: format!("{operation}_resolve_parent"),
+                message: e.to_string(),
+            })?;
             self.ensure_contained(current.clone(), operation)?;
             // Descend through the components that do not exist yet; any that
             // already exist (e.g. planted by a concurrent writer, or a symlink)
@@ -127,11 +131,10 @@ impl SandboxPathResolver {
                 if let Ok(meta) = std::fs::symlink_metadata(&current)
                     && meta.file_type().is_symlink()
                 {
-                    let canon =
-                        current.canonicalize().map_err(|e| SandboxError::IoError {
-                            operation: operation.into(),
-                            message: e.to_string(),
-                        })?;
+                    let canon = current.canonicalize().map_err(|e| SandboxError::IoError {
+                        operation: operation.into(),
+                        message: e.to_string(),
+                    })?;
                     self.ensure_contained(canon, operation)?;
                 }
             }
@@ -155,12 +158,12 @@ impl SandboxPathResolver {
             // workdir/evil.txt` then write) cannot escape the sandbox root.
             match std::fs::symlink_metadata(&candidate) {
                 Ok(meta) if meta.file_type().is_symlink() => {
-                    let canon = candidate.canonicalize().map_err(|e| {
-                        SandboxError::IoError {
+                    let canon = candidate
+                        .canonicalize()
+                        .map_err(|e| SandboxError::IoError {
                             operation: operation.into(),
                             message: e.to_string(),
-                        }
-                    })?;
+                        })?;
                     self.ensure_contained(canon, operation)
                 }
                 _ => Ok(candidate),

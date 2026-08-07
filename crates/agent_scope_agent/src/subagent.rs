@@ -137,6 +137,14 @@ impl SubAgentTemplate {
 }
 
 /// Registered in-process SubAgent collaborator.
+///
+/// `capability_scope` documents the target's intended permissions. At the
+/// current opaque `Arc<dyn Agent>` delegation boundary the runtime can enforce
+/// model access denial and fail closed for fully denied side effects before
+/// invocation. Fine-grained tools, memory, session, workspace, and sandbox
+/// restrictions must still be enforced cooperatively by the concrete child
+/// agent/tool providers because this wrapper cannot introspect or mediate their
+/// internal behavior.
 #[derive(Clone)]
 pub struct SubAgent {
     pub agent_id: String,

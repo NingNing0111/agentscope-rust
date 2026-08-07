@@ -107,7 +107,14 @@ pub(crate) async fn run_streaming_loop(
         // Snapshot the current context purely for the token count used by the
         // compression trigger and the first-iteration context-length dimension
         // (computed before compression/injection mutate the state).
-        let count_messages = { inner.state.read().unwrap_or_else(|e| e.into_inner()).context.clone() };
+        let count_messages = {
+            inner
+                .state
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .context
+                .clone()
+        };
         let mut count_msgs = count_messages;
         if !system_prompt.is_empty()
             && let Ok(system_msg) =
@@ -147,10 +154,7 @@ pub(crate) async fn run_streaming_loop(
                         error = %e,
                         "Context compression failed, falling back to truncation"
                     );
-                    let mut state_write = inner
-                        .state
-                        .write()
-                        .unwrap_or_else(|e| e.into_inner());
+                    let mut state_write = inner.state.write().unwrap_or_else(|e| e.into_inner());
                     let max_messages = (state_write.context.len() / 2).max(10);
                     crate::context_compression::truncate_context(
                         &mut state_write,
@@ -184,7 +188,14 @@ pub(crate) async fn run_streaming_loop(
         // Build the actual call messages from the NOW-updated state so the
         // current model call sees the compressed context and the injected
         // runtime hint (previously the pre-compression clone was sent).
-        let messages = { inner.state.read().unwrap_or_else(|e| e.into_inner()).context.clone() };
+        let messages = {
+            inner
+                .state
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .context
+                .clone()
+        };
         let mut hook_messages = messages;
         if !system_prompt.is_empty()
             && let Ok(system_msg) =
@@ -277,6 +288,17 @@ pub(crate) async fn run_streaming_loop(
                 return;
             }
             Ok(ModelCallResult::Complete(response)) => {
+                // Stream consumer may have dropped the EventStream while a
+                // non-streaming model call was in-flight. Re-check the handle
+                // before writing context or dispatching tools.
+                if stream_handle.is_cancelled() {
+                    inner.interrupted.store(false, Ordering::SeqCst);
+                    let result: Result<Msg, AgentError> = Err(AgentError::CancellationError {
+                        reply_id: reply_id.clone(),
+                    });
+                    invoke_post_reply(&inner, &result).await;
+                    return;
+                }
                 // Non-streaming path: emit text events → ModelCallEnd → tool events
                 // FR-003: Text content blocks go between ModelCallStart/End,
                 // tool call events go between ModelCallEnd and ReplyEnd.
@@ -286,9 +308,17 @@ pub(crate) async fn run_streaming_loop(
                     let _ = mw.post_reasoning(&inner.config.name, &response).await;
                 }
                 // Process the response: write text to context or execute tool calls
-                if process_response_and_continue(&inner, &response, &event_tx, &reply_id, base)
-                    .await
-                    .is_done()
+                if process_response_and_continue(
+                    &inner,
+                    &response,
+                    &event_tx,
+                    &reply_id,
+                    &stream_handle,
+                    &cancel_token,
+                    base,
+                )
+                .await
+                .is_done()
                 {
                     let result = {
                         let text = collect_context_text(&inner);
@@ -349,6 +379,7 @@ pub(crate) async fn run_streaming_loop(
                                 &event_tx,
                                 &reply_id,
                                 &stream_handle,
+                                &cancel_token,
                                 base,
                             )
                             .await;
@@ -874,6 +905,8 @@ async fn process_response_and_continue(
     response: &ChatResponse,
     event_tx: &mpsc::Sender<AgentEvent>,
     reply_id: &str,
+    stream_handle: &StreamHandle,
+    cancel_token: &CancellationToken,
     base: fn() -> EventBase,
 ) -> Outcome {
     // Check for tool calls
@@ -896,7 +929,6 @@ async fn process_response_and_continue(
         // OpenAI-compatible APIs require:
         //   assistant(tool_calls=[...])  →  tool(result, tool_call_id=...)
         add_tool_calls_to_context(inner, &tool_calls);
-        let dummy_handle = StreamHandle::new_dummy();
         for tc in &tool_calls {
             let _ = event_tx
                 .send(AgentEvent::ToolCallStart(ToolCallStartEvent {
@@ -923,7 +955,16 @@ async fn process_response_and_continue(
                 }))
                 .await;
         }
-        execute_tool_calls(inner, &tool_calls, event_tx, reply_id, &dummy_handle, base).await;
+        execute_tool_calls(
+            inner,
+            &tool_calls,
+            event_tx,
+            reply_id,
+            stream_handle,
+            cancel_token,
+            base,
+        )
+        .await;
         return Outcome::Continue;
     }
 
@@ -942,6 +983,7 @@ async fn execute_tool_calls(
     event_tx: &mpsc::Sender<AgentEvent>,
     reply_id: &str,
     stream_handle: &StreamHandle,
+    cancel_token: &CancellationToken,
     _base: fn() -> EventBase,
 ) {
     for tc in tool_calls {
@@ -952,6 +994,7 @@ async fn execute_tool_calls(
         // either signal (audit A4/A8).
         if stream_handle.is_cancelled()
             || inner.interrupted.load(std::sync::atomic::Ordering::SeqCst)
+            || cancel_token.is_cancelled()
         {
             break;
         }
@@ -969,6 +1012,12 @@ async fn execute_tool_calls(
                 .await;
                 continue;
             }
+        }
+        if stream_handle.is_cancelled()
+            || inner.interrupted.load(std::sync::atomic::Ordering::SeqCst)
+            || cancel_token.is_cancelled()
+        {
+            break;
         }
 
         let permission_input = serde_json::from_str(&tc_mut.input)
@@ -1048,15 +1097,17 @@ async fn execute_tool_calls(
             }
         }
 
-        // Emit tool result events and collect output text for context
-        let output_text = emit_tool_result_and_collect(
+        // Emit tool result events and collect output text for context. The
+        // returned state mirrors the emitted events so the persisted context no
+        // longer hardcodes `Running` (round-5 H2).
+        let (output_text, result_state) = emit_tool_result_and_collect(
             event_tx,
             reply_id,
             &tc_mut,
             exec_result,
             retries,
             stream_handle,
-            _base,
+            cancel_token,
         )
         .await;
 
@@ -1072,8 +1123,9 @@ async fn execute_tool_calls(
         // left as Running would pollute the next reply's context (audit A10).
         if !stream_handle.is_cancelled()
             && !inner.interrupted.load(std::sync::atomic::Ordering::SeqCst)
+            && !cancel_token.is_cancelled()
         {
-            add_tool_result_to_context(inner, &tc_mut, &output_text);
+            add_tool_result_to_context(inner, &tc_mut, &output_text, result_state);
         }
     }
 }
@@ -1127,21 +1179,32 @@ async fn emit_denied_tool_result(
             output: Some(message.to_string()),
         }))
         .await;
-    add_tool_result_to_context(inner, tool_call, message);
+    add_tool_result_to_context(inner, tool_call, message, ToolResultState::Denied);
 }
 
-fn add_tool_result_to_context(inner: &Arc<AgentInner>, tc: &ToolCallBlock, output_text: &str) {
-    let trb = ToolResultBlock::new(
+fn add_tool_result_to_context(
+    inner: &Arc<AgentInner>,
+    tc: &ToolCallBlock,
+    output_text: &str,
+    state: ToolResultState,
+) {
+    let mut trb = ToolResultBlock::new(
         tc.id.clone(),
         tc.name.clone(),
         ToolOutput::Text(output_text.to_string()),
     );
+    trb.state = state;
     if let Ok(msg) = Msg::new(
         inner.config.name.clone(),
         vec![ContentBlock::ToolResult(trb)],
         Role::Assistant,
     ) {
-        inner.state.write().unwrap().context.push(msg);
+        inner
+            .state
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .context
+            .push(msg);
     }
 }
 
@@ -1154,7 +1217,12 @@ fn add_text_to_context(inner: &Arc<AgentInner>, response: &ChatResponse) {
                 Role::Assistant,
             )
         {
-            inner.state.write().unwrap().context.push(msg);
+            inner
+                .state
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .context
+                .push(msg);
         }
     }
 }
@@ -1173,7 +1241,12 @@ fn add_tool_calls_to_context(inner: &Arc<AgentInner>, tool_calls: &[ToolCallBloc
         .map(|tc| ContentBlock::ToolCall(tc.clone()))
         .collect();
     if let Ok(msg) = Msg::new(inner.config.name.clone(), tc_blocks, Role::Assistant) {
-        inner.state.write().unwrap().context.push(msg);
+        inner
+            .state
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .context
+            .push(msg);
     }
 }
 
@@ -1184,7 +1257,7 @@ fn add_tool_calls_to_context(inner: &Arc<AgentInner>, tool_calls: &[ToolCallBloc
 /// Collect all text from the agent's context to build a result `Msg` for
 /// `post_reply` middleware hooks when the streaming reply completes normally.
 fn collect_context_text(inner: &Arc<AgentInner>) -> String {
-    let state = inner.state.read().unwrap();
+    let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
     let mut texts = Vec::new();
     for msg in &state.context {
         for block in &msg.content {
@@ -1460,8 +1533,8 @@ async fn emit_tool_result_and_collect(
     result: Result<ToolExecOutput, ToolError>,
     retries: u32,
     stream_handle: &StreamHandle,
-    _base: fn() -> EventBase,
-) -> String {
+    cancel_token: &CancellationToken,
+) -> (String, ToolResultState) {
     let b = EventBase::new;
     match result {
         Ok(ToolExecOutput::Complete(chunk)) => {
@@ -1498,13 +1571,13 @@ async fn emit_tool_result_and_collect(
                     base: b(),
                     reply_id: rid.into(),
                     tool_call_id: tc.id.clone(),
-                    state: st,
+                    state: st.clone(),
                     metadata: std::collections::HashMap::new(),
                     output,
                 }))
                 .await;
 
-            text
+            (text, st)
         }
         Ok(ToolExecOutput::Stream(mut stream)) => {
             let _ = tx
@@ -1522,7 +1595,7 @@ async fn emit_tool_result_and_collect(
 
             while !is_done {
                 // Check cancellation between chunks
-                if stream_handle.is_cancelled() {
+                if stream_handle.is_cancelled() || cancel_token.is_cancelled() {
                     let _ = tx
                         .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
                             base: b(),
@@ -1533,10 +1606,14 @@ async fn emit_tool_result_and_collect(
                             output: None,
                         }))
                         .await;
-                    return collected;
+                    return (collected, ToolResultState::Interrupted);
                 }
 
-                match stream.next().await {
+                let chunk_result = tokio::select! {
+                    r = stream.next() => r,
+                    _ = cancel_token.cancelled() => None,
+                };
+                match chunk_result {
                     Some(Ok(chunk)) => {
                         let txt = match &chunk.output {
                             ToolOutput::Text(t) => t.clone(),
@@ -1560,7 +1637,19 @@ async fn emit_tool_result_and_collect(
                         is_done = true;
                     }
                     None => {
-                        // Stream ended without is_last — treat as success
+                        if stream_handle.is_cancelled() || cancel_token.is_cancelled() {
+                            let _ = tx
+                                .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {
+                                    base: b(),
+                                    reply_id: rid.into(),
+                                    tool_call_id: tc.id.clone(),
+                                    state: ToolResultState::Interrupted,
+                                    metadata: std::collections::HashMap::new(),
+                                    output: None,
+                                }))
+                                .await;
+                            return (collected, ToolResultState::Interrupted);
+                        }
                         is_done = true;
                     }
                 }
@@ -1571,13 +1660,13 @@ async fn emit_tool_result_and_collect(
                     base: b(),
                     reply_id: rid.into(),
                     tool_call_id: tc.id.clone(),
-                    state: final_state,
+                    state: final_state.clone(),
                     metadata: std::collections::HashMap::new(),
                     output: Some(collected.clone()),
                 }))
                 .await;
 
-            collected
+            (collected, final_state)
         }
         Err(e) => {
             // Emit an actionable feedback delta so the failure is visible both
@@ -1609,7 +1698,7 @@ async fn emit_tool_result_and_collect(
                     output: Some(feedback.clone()),
                 }))
                 .await;
-            feedback
+            (feedback, ToolResultState::Error)
         }
     }
 }

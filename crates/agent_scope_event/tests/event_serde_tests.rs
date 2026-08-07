@@ -403,7 +403,8 @@ fn test_tool_result_end_metadata_round_trip() {
     use std::collections::HashMap;
 
     let mut base = make_base();
-    base.metadata.insert("base_key".into(), serde_json::json!("base_val"));
+    base.metadata
+        .insert("base_key".into(), serde_json::json!("base_val"));
     let mut own = HashMap::new();
     own.insert("own_key".into(), serde_json::json!("own_val"));
 
@@ -417,11 +418,20 @@ fn test_tool_result_end_metadata_round_trip() {
     };
     let json = serde_json::to_string(&event).unwrap();
     // Both keys must be present and distinct.
-    assert!(json.contains(r#""base_key":"base_val""#), "base.metadata lost: {json}");
-    assert!(json.contains(r#""own_key":"own_val""#), "struct metadata lost: {json}");
+    assert!(
+        json.contains(r#""base_key":"base_val""#),
+        "base.metadata lost: {json}"
+    );
+    assert!(
+        json.contains(r#""own_key":"own_val""#),
+        "struct metadata lost: {json}"
+    );
 
     let parsed: ToolResultEndEvent = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.base.metadata["base_key"], serde_json::json!("base_val"));
+    assert_eq!(
+        parsed.base.metadata["base_key"],
+        serde_json::json!("base_val")
+    );
     assert_eq!(parsed.metadata["own_key"], serde_json::json!("own_val"));
     assert_eq!(parsed.output.as_deref(), Some("1958910"));
 }

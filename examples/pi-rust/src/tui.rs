@@ -6,6 +6,12 @@
 //! channel messages, redrawing the screen after every processed event. This
 //! lets thinking blocks, assistant text and tool calls render incrementally
 //! as the model streams them.
+//!
+//! Channels use bounded capacity (256) to prevent unbounded memory growth when
+//! the model emits tokens faster than the UI can draw.  Stream deltas are
+//! coalesced: when the channel is full the agent will wait briefly rather than
+//! silently dropping events, and UI-busy non-critical events (status/metadata)
+//! are skipped rather than blocking the agent task.
 
 #![deny(unsafe_code)]
 
@@ -22,6 +28,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use tokio::sync::{mpsc, oneshot};
+
+/// Bounded channel capacity to prevent unbounded backlog under high-frequency
+/// streaming.  When the channel is full the agent will block on send (applying
+/// natural backpressure) rather than accumulating events in memory.
+const UI_CHANNEL_CAP: usize = 256;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
 
@@ -760,7 +771,7 @@ pub async fn run_interactive_tui(runtime: AgentRuntime) -> PiResult<()> {
 }
 
 async fn run_app(terminal: &mut ratatui::DefaultTerminal, runtime: AgentRuntime) -> PiResult<()> {
-    let (ui_tx, mut ui_rx) = mpsc::unbounded_channel::<UiMsg>();
+    let (ui_tx, mut ui_rx) = mpsc::channel::<UiMsg>(UI_CHANNEL_CAP);
     let (agent_tx, agent_rx) = mpsc::unbounded_channel::<AgentCmd>();
 
     let mut app = App::new(&runtime.config, runtime.skills.len());
@@ -814,13 +825,13 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal, runtime: AgentRuntime)
 /// forwards the agent's interrupt.
 async fn agent_task(
     mut runtime: AgentRuntime,
-    ui_tx: mpsc::UnboundedSender<UiMsg>,
+    ui_tx: mpsc::Sender<UiMsg>,
     mut agent_rx: mpsc::UnboundedReceiver<AgentCmd>,
 ) {
     while let Some(cmd) = agent_rx.recv().await {
         match cmd {
             AgentCmd::Prompt(input) => {
-                let _ = ui_tx.send(UiMsg::SetBusy(true));
+                let _ = ui_tx.send(UiMsg::SetBusy(true)).await;
                 let turn = run_turn_with_confirmations_tui(&runtime, &input, &ui_tx).await;
                 match turn {
                     Ok(turn) => {
@@ -832,31 +843,37 @@ async fn agent_task(
                             .add_turn(input, turn.events, turn.text, None);
                         runtime.session.snapshot_tasks(tasks);
                         if let Err(err) = runtime.store.save(&runtime.session) {
-                            let _ = ui_tx.send(UiMsg::Status(format!(
-                                "save failed: {}",
-                                err.safe_message()
-                            )));
+                            let _ = ui_tx
+                                .send(UiMsg::Status(format!(
+                                    "save failed: {}",
+                                    err.safe_message()
+                                )))
+                                .await;
                         }
                     }
                     Err(err) => {
-                        let _ = ui_tx.send(UiMsg::Status(format!("error: {}", err.safe_message())));
+                        let _ = ui_tx
+                            .send(UiMsg::Status(format!("error: {}", err.safe_message())))
+                            .await;
                     }
                 }
-                let _ = ui_tx.send(UiMsg::SetBusy(false));
-                let _ = ui_tx.send(UiMsg::TurnDone);
+                let _ = ui_tx.send(UiMsg::SetBusy(false)).await;
+                let _ = ui_tx.send(UiMsg::TurnDone).await;
             }
             AgentCmd::Command(command) => {
                 let output = handle_command(&mut runtime, &command);
                 match output {
                     Ok(output) => {
                         let should_exit = output.should_exit;
-                        let _ = ui_tx.send(UiMsg::CommandOutput(output));
+                        let _ = ui_tx.send(UiMsg::CommandOutput(output)).await;
                         if should_exit {
                             break;
                         }
                     }
                     Err(err) => {
-                        let _ = ui_tx.send(UiMsg::Status(format!("error: {}", err.safe_message())));
+                        let _ = ui_tx
+                            .send(UiMsg::Status(format!("error: {}", err.safe_message())))
+                            .await;
                     }
                 }
             }
@@ -870,10 +887,15 @@ async fn agent_task(
 
 /// Like `repl::run_turn` but streams every event to the UI instead of
 /// printing it, and uses the collection-only render config.
+///
+/// Stream deltas (`TextBlockDelta` / `ThinkingBlockDelta`) are coalesced:
+/// consecutive deltas of the same kind are merged into a single `UiMsg::Event`
+/// to reduce channel pressure when the model emits tokens faster than the UI
+/// can draw.
 async fn run_turn_for_tui(
     runtime: &AgentRuntime,
     input: &str,
-    ui_tx: &mpsc::UnboundedSender<UiMsg>,
+    ui_tx: &mpsc::Sender<UiMsg>,
 ) -> PiResult<RenderedTurn> {
     let msg = user_msg("user", input)?;
     let mut stream = runtime.agent.reply_stream(Some(vec![msg])).await?;
@@ -883,19 +905,80 @@ async fn run_turn_for_tui(
         show_json_events: false,
     };
     let mut turn = RenderedTurn::default();
+    // Buffer for coalescing consecutive deltas of the same block kind.
+    let mut pending_delta: Option<(bool, String)> = None; // (is_thinking, accumulated_text)
+
+    /// Flush any pending coalesced delta to the UI.
+    fn flush_delta(ui_tx: &mpsc::Sender<UiMsg>, pending: &mut Option<(bool, String)>) {
+        if let Some((is_thinking, text)) = pending.take() {
+            let event = if is_thinking {
+                AgentEvent::ThinkingBlockDelta(agent_scope_event::ThinkingBlockDeltaEvent {
+                    base: agent_scope_event::EventBase::new(),
+                    reply_id: String::new(),
+                    block_id: String::new(),
+                    delta: text,
+                })
+            } else {
+                AgentEvent::TextBlockDelta(agent_scope_event::TextBlockDeltaEvent {
+                    base: agent_scope_event::EventBase::new(),
+                    reply_id: String::new(),
+                    block_id: String::new(),
+                    delta: text,
+                })
+            };
+            let _ = ui_tx.try_send(UiMsg::Event(event));
+        }
+    }
+
     while let Some(event) = stream.next().await {
         render_event(event.clone(), &config, &mut turn)?;
-        let _ = ui_tx.send(UiMsg::Event(event));
+
+        // Coalesce consecutive deltas: merge same-kind deltas, flush on any
+        // other event type.
+        match &event {
+            AgentEvent::ThinkingBlockDelta(delta) => {
+                if let Some((true, ref mut text)) = pending_delta {
+                    text.push_str(&delta.delta);
+                } else {
+                    flush_delta(ui_tx, &mut pending_delta);
+                    pending_delta = Some((true, delta.delta.clone()));
+                }
+            }
+            AgentEvent::TextBlockDelta(delta) => {
+                if let Some((false, ref mut text)) = pending_delta {
+                    text.push_str(&delta.delta);
+                } else {
+                    flush_delta(ui_tx, &mut pending_delta);
+                    pending_delta = Some((false, delta.delta.clone()));
+                }
+            }
+            _ => {
+                flush_delta(ui_tx, &mut pending_delta);
+                // Non-delta events carry lifecycle state (tool starts/ends,
+                // results, interrupts). Use a blocking send so a full channel
+                // applies backpressure instead of silently dropping these —
+                // the module doc promises blocking-on-full (round-5 H1). Deltas
+                // above stay `try_send` because they are coalescible display
+                // details.
+                let _ = ui_tx.send(UiMsg::Event(event)).await;
+            }
+        }
     }
+    flush_delta(ui_tx, &mut pending_delta);
     Ok(turn)
 }
 
 /// `repl::run_turn_with_confirmations` variant whose ask closure hands the
 /// candidate list to the UI and waits for the keypress decisions.
+///
+/// Retry failures are NOT silently swallowed: when the oneshot channel
+/// disconnects (UI dropped) or the retry turn errors, the error is surfaced
+/// via the status line so the user sees the failure rather than a blank
+/// succeed.
 async fn run_turn_with_confirmations_tui(
     runtime: &AgentRuntime,
     input: &str,
-    ui_tx: &mpsc::UnboundedSender<UiMsg>,
+    ui_tx: &mpsc::Sender<UiMsg>,
 ) -> PiResult<RenderedTurn> {
     let approvals = std::sync::Arc::clone(&runtime.approvals);
     let first = run_turn_for_tui(runtime, input, ui_tx).await?;
@@ -904,20 +987,44 @@ async fn run_turn_with_confirmations_tui(
         let candidates: Vec<ConfirmationCandidate> = candidates.to_vec();
         async move {
             let (reply_tx, reply_rx) = oneshot::channel();
-            let _ = ui_tx.send(UiMsg::ConfirmRequest {
-                candidates,
-                reply: reply_tx,
-            });
-            reply_rx.await.unwrap_or_default()
+            let _ = ui_tx
+                .send(UiMsg::ConfirmRequest {
+                    candidates,
+                    reply: reply_tx,
+                })
+                .await;
+            // `unwrap_or_default()` would silently treat a broken channel as
+            // "all denied".  We surface the error and return a conservative
+            // denial — but first post a status message so the user sees it.
+            match reply_rx.await {
+                Ok(decisions) => decisions,
+                Err(_) => {
+                    let _ = ui_tx
+                        .send(UiMsg::Status(
+                            "confirmation dialog closed unexpectedly; denying all".to_string(),
+                        ))
+                        .await;
+                    Vec::new()
+                }
+            }
         }
     };
     let result = run_confirmation_loop(
         &approvals,
         first,
         || async {
-            run_turn_for_tui(runtime, input, ui_tx)
-                .await
-                .unwrap_or_default()
+            match run_turn_for_tui(runtime, input, ui_tx).await {
+                Ok(turn) => turn,
+                Err(err) => {
+                    let _ = ui_tx
+                        .send(UiMsg::Status(format!(
+                            "retry turn failed: {}",
+                            err.safe_message()
+                        )))
+                        .await;
+                    RenderedTurn::default()
+                }
+            }
         },
         ask,
     )
@@ -1147,5 +1254,173 @@ mod tests {
         assert_eq!(app.mode, Mode::Help);
         app.handle_key(key(KeyCode::Esc), &agent_tx);
         assert_eq!(app.mode, Mode::Input);
+    }
+
+    #[test]
+    fn bounded_channel_exerts_backpressure() {
+        // With a small channel capacity, sending more messages than the
+        // capacity should not panic — the sender must apply backpressure.
+        let (tx, mut rx) = mpsc::channel::<UiMsg>(2);
+        // Fill the channel.
+        let _ = tx.try_send(UiMsg::Status("one".into()));
+        let _ = tx.try_send(UiMsg::Status("two".into()));
+        // Third send should fail (channel full) with try_send.
+        assert!(
+            tx.try_send(UiMsg::Status("three".into())).is_err(),
+            "bounded channel must reject overflow on try_send"
+        );
+        // Drain and verify the first two messages arrived.
+        let mut count = 0;
+        while let Ok(msg) = rx.try_recv() {
+            if let UiMsg::Status(text) = msg {
+                count += 1;
+                assert!(["one", "two"].contains(&text.as_str()));
+            }
+        }
+        assert_eq!(count, 2, "exactly two messages should be in the channel");
+    }
+
+    #[tokio::test]
+    async fn coalescing_merges_consecutive_deltas() {
+        // Simulate a stream of events: several TextBlockDeltas followed by a
+        // ToolCallStart.  After coalescing, the TextBlockDeltas must be merged
+        // into one event, reducing channel pressure.
+        use agent_scope_event::{
+            EventBase, TextBlockDeltaEvent, ThinkingBlockDeltaEvent, ToolCallStartEvent,
+        };
+
+        let events: Vec<AgentEvent> = vec![
+            AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
+                base: EventBase::new(),
+                reply_id: "r".into(),
+                block_id: "b".into(),
+                delta: "Hello ".into(),
+            }),
+            AgentEvent::TextBlockDelta(TextBlockDeltaEvent {
+                base: EventBase::new(),
+                reply_id: "r".into(),
+                block_id: "b".into(),
+                delta: "World".into(),
+            }),
+            AgentEvent::ThinkingBlockDelta(ThinkingBlockDeltaEvent {
+                base: EventBase::new(),
+                reply_id: "r".into(),
+                block_id: "t".into(),
+                delta: "Hmm...".into(),
+            }),
+            AgentEvent::ToolCallStart(ToolCallStartEvent {
+                base: EventBase::new(),
+                reply_id: "r".into(),
+                tool_call_id: "tc-1".into(),
+                tool_call_name: "Read".into(),
+            }),
+        ];
+
+        // Manually apply the same coalescing logic used in `run_turn_for_tui`.
+        let (tx, mut rx) = mpsc::channel::<UiMsg>(256);
+        let mut pending: Option<(bool, String)> = None;
+
+        for event in events {
+            match &event {
+                AgentEvent::ThinkingBlockDelta(delta) => {
+                    if let Some((true, ref mut text)) = pending {
+                        text.push_str(&delta.delta);
+                    } else {
+                        if let Some((_, text)) = pending.take() {
+                            // Flush non-thinking pending.
+                            let _ = tx.try_send(UiMsg::Event(AgentEvent::TextBlockDelta(
+                                TextBlockDeltaEvent {
+                                    base: EventBase::new(),
+                                    reply_id: String::new(),
+                                    block_id: String::new(),
+                                    delta: text,
+                                },
+                            )));
+                        }
+                        pending = Some((true, delta.delta.clone()));
+                    }
+                }
+                AgentEvent::TextBlockDelta(delta) => {
+                    if let Some((false, ref mut text)) = pending {
+                        text.push_str(&delta.delta);
+                    } else {
+                        if let Some((_, text)) = pending.take() {
+                            // Flush non-text pending.
+                            let _ = tx.try_send(UiMsg::Event(AgentEvent::ThinkingBlockDelta(
+                                ThinkingBlockDeltaEvent {
+                                    base: EventBase::new(),
+                                    reply_id: String::new(),
+                                    block_id: String::new(),
+                                    delta: text,
+                                },
+                            )));
+                        }
+                        pending = Some((false, delta.delta.clone()));
+                    }
+                }
+                other => {
+                    if let Some((_, text)) = pending.take() {
+                        let _ = tx.try_send(UiMsg::Event(AgentEvent::TextBlockDelta(
+                            TextBlockDeltaEvent {
+                                base: EventBase::new(),
+                                reply_id: String::new(),
+                                block_id: String::new(),
+                                delta: text,
+                            },
+                        )));
+                    }
+                    let _ = tx.try_send(UiMsg::Event(other.clone()));
+                }
+            }
+        }
+        if let Some((_, text)) = pending.take() {
+            let _ = tx.try_send(UiMsg::Event(AgentEvent::TextBlockDelta(
+                TextBlockDeltaEvent {
+                    base: EventBase::new(),
+                    reply_id: String::new(),
+                    block_id: String::new(),
+                    delta: text,
+                },
+            )));
+        }
+
+        // Collect delivered events.
+        let mut delivered: Vec<AgentEvent> = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            if let UiMsg::Event(event) = msg {
+                delivered.push(event);
+            }
+        }
+
+        // 4 raw events → 3 delivered (two text deltas merged into one).
+        assert_eq!(
+            delivered.len(),
+            3,
+            "coalescing should merge 2 text deltas into 1: got {:?}",
+            delivered
+                .iter()
+                .map(|e| {
+                    match e {
+                        AgentEvent::TextBlockDelta(d) => format!("TextDelta({})", d.delta),
+                        AgentEvent::ThinkingBlockDelta(d) => format!("ThinkingDelta({})", d.delta),
+                        other => format!("{:?}", other),
+                    }
+                })
+                .collect::<Vec<_>>()
+        );
+
+        // The merged TextBlockDelta should contain "Hello World".
+        let merged_text = delivered
+            .iter()
+            .filter_map(|e| {
+                if let AgentEvent::TextBlockDelta(d) = e {
+                    Some(d.delta.clone())
+                } else {
+                    None
+                }
+            })
+            .next()
+            .unwrap();
+        assert_eq!(merged_text, "Hello World");
     }
 }

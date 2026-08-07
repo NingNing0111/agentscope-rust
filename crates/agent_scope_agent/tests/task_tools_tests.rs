@@ -355,7 +355,7 @@ async fn test_task_update_descriptions_match_reference() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_task_tools_always_allowed() {
+fn test_task_tools_bypass_restrictive_mode_defaults() {
     use agent_scope_agent::permission::{
         PermissionBehavior, PermissionContext, PermissionEngine, PermissionMode,
     };
@@ -367,11 +367,11 @@ fn test_task_tools_always_allowed() {
         assert_eq!(
             decision.behavior,
             PermissionBehavior::Allow,
-            "tool {name} must always be allowed"
+            "tool {name} must be allowed by restrictive mode defaults"
         );
         assert_eq!(
             decision.decision_reason.as_deref(),
-            Some(format!("{name} is always allowed to be called.").as_str())
+            Some(format!("{name} is allowed as a built-in task tool.").as_str())
         );
     }
 }

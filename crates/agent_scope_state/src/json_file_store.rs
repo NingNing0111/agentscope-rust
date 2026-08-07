@@ -93,10 +93,7 @@ async fn atomic_write(dir: &Path, id: &str, contents: &[u8]) -> Result<(), Sessi
     // truncate the other's temp file, causing lost updates or spurious errors).
     static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let tmp_path = dir.join(format!(
-        "{id}.{}.{unique}.json.tmp",
-        std::process::id()
-    ));
+    let tmp_path = dir.join(format!("{id}.{}.{unique}.json.tmp", std::process::id()));
 
     fs::write(&tmp_path, contents)
         .await
@@ -238,10 +235,10 @@ impl SessionStore for JsonFileSessionStore {
         // The file name is authoritative for the session id.
         let mut state = record.state;
         state.session_id = id.to_string();
-        Ok(SessionImpl::new(state).with_persisted_timestamps(
-            record.created_at,
-            record.last_active,
-        ))
+        Ok(
+            SessionImpl::new(state)
+                .with_persisted_timestamps(record.created_at, record.last_active),
+        )
     }
 
     async fn delete(&self, id: &str) -> Result<(), SessionError> {
@@ -319,9 +316,7 @@ impl SessionStore for JsonFileSessionStore {
             let meta: SessionMetaOnly = match serde_json::from_slice(&bytes) {
                 Ok(meta) => meta,
                 Err(e) => {
-                    eprintln!(
-                        "json_file_store: skipping corrupted session file '{id}': {e}"
-                    );
+                    eprintln!("json_file_store: skipping corrupted session file '{id}': {e}");
                     continue;
                 }
             };

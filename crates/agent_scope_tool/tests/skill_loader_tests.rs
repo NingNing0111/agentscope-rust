@@ -2,6 +2,24 @@
 
 use agent_scope_tool::{LocalSkillLoader, SkillLoader};
 
+#[test]
+fn test_local_loader_blocking_matches_async_loader_results() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let sub_a = dir.path().join("skill-a");
+    std::fs::create_dir(&sub_a).unwrap();
+    create_skill_md(&sub_a, "skill-a", "First skill", "# A Content");
+
+    let loader = LocalSkillLoader::new(dir.path().to_str().unwrap(), true);
+    let blocking = loader.list_skills_blocking();
+    let async_skills = futures::executor::block_on(loader.list_skills());
+
+    assert_eq!(blocking.len(), async_skills.len());
+    assert_eq!(blocking[0].name, async_skills[0].name);
+    assert_eq!(blocking[0].description, async_skills[0].description);
+    assert_eq!(blocking[0].markdown, async_skills[0].markdown);
+}
+
 /// Helper to create a SKILL.md file in a directory.
 fn create_skill_md(dir: &std::path::Path, name: &str, description: &str, body: &str) {
     let content = format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}");

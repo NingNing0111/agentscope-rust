@@ -44,6 +44,10 @@ pub enum PermissionResult {
     /// Reject execution with a reason.
     Deny { reason: String },
     /// Require external confirmation before execution.
+    ///
+    /// The engine never pauses or resumes tool execution internally. Callers must
+    /// emit a confirmation event, reject the current tool result, and retry the
+    /// tool call only after an upper layer has approved it.
     RequireConfirm,
 }
 
@@ -252,15 +256,6 @@ impl PermissionEngine {
 
     /// Check whether a tool call is permitted.
     pub fn check_decision(&self, tool_name: &str, input: &JsonValue) -> PermissionDecision {
-        // Built-in task planning tools only read/write the agent's own task
-        // state and are always allowed, mirroring Python `_TaskToolBase`.
-        if crate::task_tools::TASK_TOOL_NAMES.contains(&tool_name) {
-            return PermissionDecision::allow(
-                tool_name,
-                format!("{tool_name} is always allowed to be called."),
-            );
-        }
-
         let input_text = input.to_string();
 
         if let Some(rule) = find_matching_rule(&self.context.deny_rules, tool_name, &input_text) {
@@ -287,6 +282,16 @@ impl PermissionEngine {
             return PermissionDecision::allow(
                 tool_name,
                 format!("allow rule from {}", rule.source),
+            );
+        }
+
+        // Built-in task planning tools only read/write the agent's own task
+        // state. They bypass restrictive mode defaults, but explicit rules above
+        // still apply; in particular, explicit deny remains the highest priority.
+        if crate::task_tools::TASK_TOOL_NAMES.contains(&tool_name) {
+            return PermissionDecision::allow(
+                tool_name,
+                format!("{tool_name} is allowed as a built-in task tool."),
             );
         }
 
@@ -448,5 +453,41 @@ mod tests {
             PermissionEngine::with_context(PermissionContext::new(PermissionMode::Explore));
         let decision = engine.check_decision("write", &serde_json::json!({}));
         assert_eq!(decision.behavior, PermissionBehavior::Deny);
+    }
+
+    #[test]
+    fn test_deny_rule_overrides_task_tool_auto_allow() {
+        let mut context = PermissionContext::new(PermissionMode::Default);
+        context.add_rule(PermissionRule::deny("TaskCreate"));
+        let engine = PermissionEngine::with_context(context);
+
+        let decision = engine.check_decision("TaskCreate", &serde_json::json!({}));
+        assert_eq!(decision.behavior, PermissionBehavior::Deny);
+    }
+
+    #[test]
+    fn test_task_tools_bypass_mode_defaults_but_not_explicit_rules() {
+        for mode in [PermissionMode::Explore, PermissionMode::DontAsk] {
+            let engine = PermissionEngine::with_context(PermissionContext::new(mode));
+            let decision = engine.check_decision("TaskList", &serde_json::json!({}));
+            assert_eq!(
+                decision.behavior,
+                PermissionBehavior::Allow,
+                "mode {mode:?}"
+            );
+        }
+
+        let mut context = PermissionContext::new(PermissionMode::Explore);
+        context.add_rule(PermissionRule::ask("TaskList"));
+        let engine = PermissionEngine::with_context(context);
+        let decision = engine.check_decision("TaskList", &serde_json::json!({}));
+        assert_eq!(decision.behavior, PermissionBehavior::Ask);
+
+        let mut context = PermissionContext::new(PermissionMode::DontAsk);
+        context.add_rule(PermissionRule::ask("TaskList"));
+        let engine = PermissionEngine::with_context(context);
+        let decision = engine.check_decision("TaskList", &serde_json::json!({}));
+        assert_eq!(decision.behavior, PermissionBehavior::Deny);
+        assert!(decision.message.contains("dont_ask"));
     }
 }

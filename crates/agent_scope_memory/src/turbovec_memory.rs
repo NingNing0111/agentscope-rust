@@ -535,10 +535,7 @@ impl TurbovecMemory {
             // `has_collection` check and this call; treat that as success rather
             // than failing the write (audit M2).
             if let Err(e) = result {
-                let already_exists = e
-                    .to_string()
-                    .to_lowercase()
-                    .contains("already exists");
+                let already_exists = e.to_string().to_lowercase().contains("already exists");
                 if !already_exists {
                     return Err(MemoryError::SemanticIndexError { reason: e });
                 }

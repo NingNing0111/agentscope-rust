@@ -365,10 +365,7 @@ impl VectorStore for TurbovecVectorStore {
             // removed the old chunk on first collision and only then surfaced a
             // dimension mismatch on a later record, leaving the collection half
             // deleted (audit M11).
-            if let Some(bad) = records
-                .iter()
-                .find(|r| r.vector.len() != dim)
-            {
+            if let Some(bad) = records.iter().find(|r| r.vector.len() != dim) {
                 return Err(VectorStoreError::DimensionMismatch {
                     expected: dim as u32,
                     got: bad.vector.len(),
@@ -641,8 +638,12 @@ fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), VectorS
         .map_err(|e| VectorStoreError::BackendError(format!("json serialize error: {e}")))?;
     let tmp_path = tmp_path(path);
     fs::write(&tmp_path, bytes).map_err(io_error)?;
+    // Open read+write for `sync_all`: fsync on a read-only fd is rejected on
+    // some platforms (e.g. Linux can return EBADF), so request write access
+    // even though we only flush (round-5 M1).
     let file = fs::OpenOptions::new()
         .read(true)
+        .write(true)
         .open(&tmp_path)
         .map_err(io_error)?;
     file.sync_all().map_err(io_error)?;

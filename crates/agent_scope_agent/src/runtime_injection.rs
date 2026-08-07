@@ -152,7 +152,10 @@ pub fn maybe_inject_runtime_state(
         }
     };
     if inject_time {
-        injections.push(("current-time", local_now.format(&config.time_format).to_string()));
+        injections.push((
+            "current-time",
+            local_now.format(&config.time_format).to_string(),
+        ));
         injections.push(("timezone", timezone_text));
     }
 
@@ -201,7 +204,7 @@ pub fn maybe_inject_runtime_state(
         .map(|(k, v)| format!("<{k}>{v}</{k}>"))
         .collect();
     for (k, v) in &config.extra_fields {
-        joined.push(format!("<{k}>{v}</{k}>"));
+        joined.push(format!("<{k}>{}</{k}>", escape_xml(v)));
     }
     let runtime_state = joined.join("\n");
 
@@ -292,6 +295,21 @@ fn resolve_timezone(tz_name: &str) -> chrono_tz::Tz {
             chrono_tz::UTC
         }
     }
+}
+
+fn escape_xml(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 /// Extract the inner text of the first `<tag>...</tag>` occurrence.

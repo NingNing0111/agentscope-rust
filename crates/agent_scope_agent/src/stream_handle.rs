@@ -37,29 +37,16 @@ impl StreamHandle {
     }
 
     /// Create a dummy StreamHandle that is never cancelled.
-    /// Used in the Complete (non-streaming) response path where no
-    /// EventStream exists to provide a real cancellation signal.
-    ///
-    /// The dummy holds its own sender so the channel stays open and
-    /// `is_cancelled()` always returns `false` (previously the sender was
-    /// dropped immediately, making the dummy report as cancelled and silently
-    /// truncating streaming tool outputs in the non-streaming path).
-    pub(crate) fn new_dummy() -> Self {
-        let (tx, rx) = oneshot::channel();
-        Self {
-            cancel_rx: Mutex::new(rx),
-            is_streaming: Arc::new(AtomicBool::new(false)),
-            _cancel_keep_alive: Some(tx),
-        }
-    }
-
     /// Check if the stream has been dropped (cancellation requested).
     ///
     /// Returns `true` only when the oneshot sender has been dropped
     /// (i.e., `EventStream` was dropped, closing the cancel channel).
     pub(crate) fn is_cancelled(&self) -> bool {
         matches!(
-            self.cancel_rx.lock().unwrap().try_recv(),
+            self.cancel_rx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .try_recv(),
             Err(tokio::sync::oneshot::error::TryRecvError::Closed)
         )
     }

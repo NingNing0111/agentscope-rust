@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::backend::{LocalBackend, WorkspaceBackend};
+use crate::backend::{ContainedBackend, LocalBackend, WorkspaceBackend};
 use crate::base::{ToolInfo, WorkspaceBase};
 use crate::error::WorkspaceError;
 use crate::instructions::DEFAULT_WORKSPACE_INSTRUCTIONS;
@@ -53,7 +53,14 @@ impl LocalWorkspace {
             .instructions
             .unwrap_or_else(|| DEFAULT_WORKSPACE_INSTRUCTIONS.to_string());
 
-        let backend: Arc<dyn WorkspaceBackend> = Arc::new(LocalBackend::new());
+        // Wrap LocalBackend in ContainedBackend to enforce workdir containment
+        // (defect 1 fix). All path operations through get_backend() are now
+        // automatically confined to the workspace workdir.
+        let raw_backend: Arc<dyn WorkspaceBackend> = Arc::new(LocalBackend::new());
+        let backend: Arc<dyn WorkspaceBackend> = Arc::new(ContainedBackend::new(
+            Arc::clone(&raw_backend),
+            std::path::PathBuf::from(&workdir),
+        ));
 
         let skills_dir = backend.join_path(&workdir, "skills");
         let skill_mgr = SkillManager::new(skills_dir, Arc::clone(&backend));
@@ -275,7 +282,10 @@ impl WorkspaceBase for LocalWorkspace {
     }
 
     async fn list_mcps(&self) -> Result<Vec<McpClientConfig>, WorkspaceError> {
-        Ok(self._mcps.clone())
+        // Scrub sensitive headers from the in-memory copy before returning
+        // (defect 3 fix). The persisted .mcp is also scrubbed at save time,
+        // but we also filter here for defense-in-depth.
+        Ok(self._mcps.iter().map(|m| m.scrubbed()).collect())
     }
 
     async fn add_mcp(&mut self, mcp: McpClientConfig) -> Result<(), WorkspaceError> {
@@ -284,6 +294,15 @@ impl WorkspaceBase for LocalWorkspace {
             return Err(WorkspaceError::McpAlreadyExists {
                 name: mcp.name.clone(),
             });
+        }
+        // Warn about sensitive headers (defect 3 fix)
+        let sensitive = mcp.transport.sensitive_headers_present();
+        if !sensitive.is_empty() {
+            tracing::warn!(
+                "MCP '{}': contains sensitive headers ({:?}) — they will be scrubbed from .mcp persistence and list_mcps output",
+                mcp.name,
+                sensitive
+            );
         }
         self._mcps.push(mcp);
         let mcp_path = self.mcp_path();

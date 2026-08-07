@@ -1,4 +1,6 @@
 use std::fs;
+
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 
 use agent_scope_sandbox::{
@@ -29,7 +31,10 @@ async fn sandbox_delete_path_refuses_root() {
     // recursively wipe the entire sandbox, so it must be refused (audit S9).
     let mut session = LocalSandboxSession::new(LocalSandboxConfig::default()).unwrap();
     session.initialize().await.unwrap();
-    session.write_file("notes/result.txt", b"hello").await.unwrap();
+    session
+        .write_file("notes/result.txt", b"hello")
+        .await
+        .unwrap();
     assert!(session.delete_path("/").await.is_err());
     // The sandbox is still usable afterwards.
     assert_eq!(
@@ -38,6 +43,7 @@ async fn sandbox_delete_path_refuses_root() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn sandbox_path_policy_rejects_traversal_and_symlink_escape() {
     let outside = tempfile::tempdir().unwrap();

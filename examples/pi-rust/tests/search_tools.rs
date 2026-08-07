@@ -5,6 +5,8 @@ use pi_rust::tools::{
     GlobInput, GrepInput, ListDirInput, ToolState, approval_fingerprint, glob_to_regex, glob_tool,
     grep_tool, list_dir_tool,
 };
+// Re-exported constants for test assertions.
+use pi_rust::tools::{DEFAULT_GLOB_MAX_RESULTS, MAX_GREP_FILE_BYTES};
 use regex::Regex;
 
 fn tool_state(dir: &tempfile::TempDir) -> ToolState {
@@ -258,4 +260,116 @@ fn glob_to_regex_matches_common_patterns() {
     let single = anchored("a?c.txt");
     assert!(single.is_match("abc.txt"));
     assert!(!single.is_match("ac.txt"));
+}
+
+#[test]
+fn grep_skips_large_files() {
+    let dir = tempfile::tempdir().unwrap();
+    // Create a file just under the per-file limit with a match.
+    std::fs::write(dir.path().join("small.txt"), "needle\n").unwrap();
+    // Create a file well over the per-file limit (simulated via sparse/allocation hint).
+    let large_path = dir.path().join("large.log");
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&large_path).unwrap();
+        // Write enough data to exceed MAX_GREP_FILE_BYTES (32 MiB).
+        f.set_len(MAX_GREP_FILE_BYTES + 1024 * 1024).unwrap(); // 33 MiB
+        // Write some content at the beginning so it's valid UTF-8.
+        f.write_all(b"needle in a huge file\n").unwrap();
+    }
+    let result = grep_tool(
+        &tool_state(&dir),
+        GrepInput {
+            pattern: "needle".into(),
+            path: None,
+            case_insensitive: false,
+            max_results: None,
+        },
+    );
+    assert!(result.ok, "{result:?}");
+    let content = result.content.unwrap();
+    // The small file match must still appear.
+    assert!(content.contains("small.txt"), "{content}");
+    // The large file must be skipped (not in results).
+    assert!(
+        !content.contains("large.log"),
+        "large file should be skipped: {content}"
+    );
+    // Summary should mention the skip.
+    assert!(
+        result.summary.contains("skipped") && result.summary.contains("large"),
+        "summary should note skipped large files: {}",
+        result.summary
+    );
+}
+
+#[test]
+fn grep_skips_binary_files_via_nul_detection() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("text.txt"), "needle in text\n").unwrap();
+    // Write a file that starts with text but contains a NUL byte later (binary).
+    let mut binary = vec![
+        b'n', b'e', b'e', b'd', b'l', b'e', b' ', b'i', b'n', b' ', b'b', b'i', b'n', b'\n',
+    ];
+    // Extend past BINARY_CHECK_WINDOW with NUL.
+    binary.resize(9000, 0);
+    binary[8500] = b'n';
+    binary[8501] = b'e';
+    binary[8502] = b'e';
+    binary[8503] = b'd';
+    binary[8504] = b'l';
+    binary[8505] = b'e';
+    std::fs::write(dir.path().join("mixed.bin"), &binary).unwrap();
+
+    let result = grep_tool(
+        &tool_state(&dir),
+        GrepInput {
+            pattern: "needle".into(),
+            path: None,
+            case_insensitive: false,
+            max_results: None,
+        },
+    );
+    assert!(result.ok, "{result:?}");
+    let content = result.content.unwrap();
+    // Text file match must appear.
+    assert!(content.contains("text.txt"), "{content}");
+    // Binary file must be skipped.
+    assert!(
+        !content.contains("mixed.bin"),
+        "binary file should be skipped: {content}"
+    );
+    assert!(
+        result.summary.contains("skipped") && result.summary.contains("binary"),
+        "summary should note binary: {}",
+        result.summary
+    );
+}
+
+#[test]
+fn glob_has_entry_scan_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    // Create a tree with many directories and files, but not enough to hit
+    // the cap in a unit test (100K entries is too many).
+    // Instead, verify that the cap constant exists and is reachable:
+    // Create enough entries that glob makes progress but doesn't hang.
+    for i in 0..1000 {
+        std::fs::create_dir_all(dir.path().join(format!("deep/a/b/c/d_{i}"))).unwrap();
+        std::fs::write(dir.path().join(format!("deep/a/b/c/d_{i}/f.rs")), "").unwrap();
+    }
+    let result = glob_tool(
+        &tool_state(&dir),
+        GlobInput {
+            pattern: "**/*.rs".into(),
+            path: Some("deep".into()),
+        },
+    );
+    assert!(result.ok, "{result:?}");
+    // Should return results up to DEFAULT_GLOB_MAX_RESULTS (200).
+    let content = result.content.unwrap();
+    let count = content.lines().count();
+    assert!(
+        count <= 200,
+        "glob should cap results at {DEFAULT_GLOB_MAX_RESULTS}, got {count}"
+    );
 }

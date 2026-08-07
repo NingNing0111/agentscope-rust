@@ -268,17 +268,27 @@ impl SkillManager {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn parse_skill_md(content: &str) -> Result<(String, String, String), WorkspaceError> {
+    // Mirror `agent_scope_tool::skill_loader::parse_skill_md` exactly. A naive
+    // `find("---")` here would treat three dashes *inside* a value (e.g. a name
+    // like `foo---bar`) as the closing delimiter and mangle the frontmatter
+    // (round-5 H2). Require the delimiter on its own line.
     let trimmed = content.trim();
-    if !trimmed.starts_with("---") {
+    let Some(rest) = trimmed.strip_prefix("---\n") else {
         return Ok((String::new(), String::new(), content.to_string()));
-    }
-    let rest = &trimmed[3..];
-    let end = rest.find("---").unwrap_or(rest.len());
+    };
+    let Some(end) = rest
+        .find("\n---\n")
+        .or_else(|| rest.strip_suffix("\n---").map(|prefix| prefix.len()))
+    else {
+        return Ok((String::new(), String::new(), content.to_string()));
+    };
     let frontmatter = &rest[..end];
-    // An unclosed frontmatter (no trailing `---`) leaves `rest[end + 3..]`
-    // out of range; `get` returns None instead of panicking, yielding an empty
-    // body (matching the tool crate's `skill_loader.rs` handling).
-    let body = rest.get(end + 3..).unwrap_or("").trim().to_string();
+    let body_start = if rest[end..].starts_with("\n---\n") {
+        end + "\n---\n".len()
+    } else {
+        rest.len()
+    };
+    let body = rest[body_start..].trim().to_string();
 
     let mut name = String::new();
     let mut description = String::new();

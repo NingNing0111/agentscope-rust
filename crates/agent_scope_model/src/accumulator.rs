@@ -115,20 +115,30 @@ struct AccBase64Source {
     media_type: String,
 }
 
+/// Decode base64, surfacing decode failures instead of silently producing
+/// empty data. The SSE provider path reports these as errors; the accumulator
+/// keeps its infallible signature but must at least warn so data loss is
+/// observable (round-5 M1).
+fn decode_base64_lenient(data: &str) -> Vec<u8> {
+    match base64::engine::general_purpose::STANDARD.decode(data) {
+        Ok(decoded) => decoded,
+        Err(e) => {
+            eprintln!("WARNING: failed to decode base64 data block: {e}");
+            Vec::new()
+        }
+    }
+}
+
 impl AccBase64Source {
     fn from_source(source: &Base64Source) -> Self {
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(&source.data)
-            .unwrap_or_default();
+        let decoded = decode_base64_lenient(&source.data);
         Self {
             data: vec![decoded],
             media_type: source.media_type.clone(),
         }
     }
     fn append(&mut self, source: &Base64Source) {
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(&source.data)
-            .unwrap_or_default();
+        let decoded = decode_base64_lenient(&source.data);
         self.data.push(decoded);
     }
     fn build(self) -> Base64Source {
@@ -234,6 +244,10 @@ pub struct StreamAccumulator {
     id: Option<String>,
     usage: Option<ChatUsage>,
     finished_reason: FinishedReason,
+    /// Maps internal accumulation keys (`tc_{idx}`) to provider-assigned
+    /// tool-call ids. Populated from SSE delta chunks and applied when the
+    /// final response is built.
+    tool_call_id_map: HashMap<String, String>,
 }
 
 impl StreamAccumulator {
@@ -250,6 +264,15 @@ impl StreamAccumulator {
         }
         if delta.finished_reason != FinishedReason::Completed {
             self.finished_reason = delta.finished_reason.clone();
+        }
+
+        // Merge tool-call id map from each streaming chunk so that the
+        // provider-assigned ids accumulated across deltas are available
+        // when the final response is built.
+        for (k, v) in &delta.tool_call_id_map {
+            self.tool_call_id_map
+                .entry(k.clone())
+                .or_insert_with(|| v.clone());
         }
 
         for block in &delta.content {
@@ -285,10 +308,8 @@ impl StreamAccumulator {
                                 existing.type_name(),
                                 acc.type_name()
                             );
-                            if let Some(slot) = self
-                                .blocks
-                                .iter_mut()
-                                .find(|(bid2, _)| *bid2 == bid)
+                            if let Some(slot) =
+                                self.blocks.iter_mut().find(|(bid2, _)| *bid2 == bid)
                             {
                                 slot.1 = acc;
                             }
@@ -311,7 +332,7 @@ impl StreamAccumulator {
     }
 
     pub fn build(self) -> ChatResponse {
-        let content: Vec<ContentBlock> = self
+        let mut content: Vec<ContentBlock> = self
             .blocks
             .into_iter()
             .map(|(_, acc)| match acc {
@@ -322,6 +343,18 @@ impl StreamAccumulator {
             })
             .collect();
 
+        // Apply provider-assigned tool-call ids: rewrite ToolCallBlock.id
+        // from the synthetic `tc_{idx}` accumulation key to the real provider
+        // id, so downstream consumers (formatter, tool result routing) use the
+        // correct identifier.
+        for block in &mut content {
+            if let ContentBlock::ToolCall(tc) = block
+                && let Some(provider_id) = self.tool_call_id_map.get(&tc.id)
+            {
+                tc.id = provider_id.clone();
+            }
+        }
+
         ChatResponse {
             content,
             is_last: true,
@@ -331,6 +364,7 @@ impl StreamAccumulator {
             usage: self.usage,
             finished_reason: self.finished_reason,
             metadata: HashMap::new(),
+            tool_call_id_map: self.tool_call_id_map,
         }
     }
 }

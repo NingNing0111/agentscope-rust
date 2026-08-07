@@ -8,7 +8,9 @@ use regex::Regex;
 use crate::MemoryEntry;
 
 pub fn parse_frontmatter_fields(content: &str) -> HashMap<String, String> {
-    let Ok(block_re) = Regex::new(r"(?s)\A---\r?\n(.*?)\r?\n---") else {
+    // The closing delimiter must be `---` on its own line (or at EOF); a suffix
+    // like `---suffix` must NOT terminate the frontmatter.
+    let Ok(block_re) = Regex::new(r"(?s)\A---\r?\n(.*?)\r?\n---(?:\r?\n|\z)") else {
         return HashMap::new();
     };
     let Some(captures) = block_re.captures(content) else {
@@ -71,6 +73,9 @@ fn yaml_quote(s: &str) -> String {
             '"' => out.push_str("\\\""),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
+            // YAML double-quoted scalars require tab to be escaped; a literal
+            // tab produces invalid YAML for strict parsers (round-5 M2).
+            '\t' => out.push_str("\\t"),
             _ => out.push(c),
         }
     }
@@ -87,6 +92,7 @@ fn yaml_unescape(s: &str) -> String {
             match chars.next() {
                 Some('n') => out.push('\n'),
                 Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
                 Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
                 Some(other) => {
@@ -108,8 +114,15 @@ pub(crate) fn body_after_frontmatter(content: &str) -> Option<String> {
         return None;
     }
     let rest = &normalized[4..];
-    let end = rest.find("\n---")?;
-    let after = &rest[end + 4..];
+    // Closing delimiter must be `---` on its own line (or at EOF).
+    let end = rest
+        .find("\n---\n")
+        .or_else(|| rest.strip_suffix("\n---").map(|prefix| prefix.len()))?;
+    let after = if rest[end..].starts_with("\n---\n") {
+        &rest[end + "\n---\n".len()..]
+    } else {
+        ""
+    };
     Some(after.trim_start_matches('\n').to_string())
 }
 
@@ -131,6 +144,13 @@ mod tests {
     #[test]
     fn missing_delimiters_returns_empty_fields() {
         assert!(parse_frontmatter_fields("name: nope\n---").is_empty());
+    }
+
+    #[test]
+    fn rejects_delimiters_with_suffix() {
+        assert!(parse_frontmatter_fields("---suffix\nname: n\n---\nbody").is_empty());
+        assert!(parse_frontmatter_fields("---\nname: n\n---suffix\nbody").is_empty());
+        assert!(body_after_frontmatter("---\nname: n\n---suffix\nbody").is_none());
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! [`SkillOrLoader`] enum for registering skills with [`ToolKit`](crate::ToolKit).
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use agent_scope_workspace::Skill;
 
@@ -74,13 +75,21 @@ pub enum SkillOrLoader {
 /// results in empty strings for name/description.
 pub(crate) fn parse_skill_md(content: &str) -> (String, String, String) {
     let trimmed = content.trim();
-    if !trimmed.starts_with("---") {
+    let Some(rest) = trimmed.strip_prefix("---\n") else {
         return (String::new(), String::new(), content.to_string());
-    }
-    let rest = &trimmed[3..];
-    let end = rest.find("---").unwrap_or(rest.len());
+    };
+    let Some(end) = rest
+        .find("\n---\n")
+        .or_else(|| rest.strip_suffix("\n---").map(|prefix| prefix.len()))
+    else {
+        return (String::new(), String::new(), content.to_string());
+    };
     let frontmatter = &rest[..end];
-    let body_start = std::cmp::min(end + 3, rest.len());
+    let body_start = if rest[end..].starts_with("\n---\n") {
+        end + "\n---\n".len()
+    } else {
+        rest.len()
+    };
     let body = rest[body_start..].trim().to_string();
 
     let mut name = String::new();
@@ -136,12 +145,15 @@ impl LocalSkillLoader {
             _cache: std::sync::Mutex::new(HashMap::new()),
         }
     }
-}
 
-#[async_trait::async_trait]
-impl SkillLoader for LocalSkillLoader {
-    async fn list_skills(&self) -> Vec<Skill> {
-        let dir_path = std::path::Path::new(&self.directory);
+    /// Synchronously list skills from this loader's local filesystem directory.
+    ///
+    /// This is intentionally non-async because it performs only local filesystem
+    /// reads and lets sync prompt construction reuse the exact same discovery,
+    /// parsing, validation, and cache semantics as [`SkillLoader::list_skills`].
+    /// Missing/unreadable paths degrade to an empty list.
+    pub fn list_skills_blocking(&self) -> Vec<Skill> {
+        let dir_path = Path::new(&self.directory);
 
         // Directory doesn't exist → empty result (T008 edge case)
         if !dir_path.exists() {
@@ -229,8 +241,15 @@ impl SkillLoader for LocalSkillLoader {
     }
 }
 
+#[async_trait::async_trait]
+impl SkillLoader for LocalSkillLoader {
+    async fn list_skills(&self) -> Vec<Skill> {
+        self.list_skills_blocking()
+    }
+}
+
 /// Discover directories containing a `SKILL.md` file.
-fn discover_skill_dirs(root: &std::path::Path, scan_subdir: bool) -> Vec<std::path::PathBuf> {
+fn discover_skill_dirs(root: &Path, scan_subdir: bool) -> Vec<PathBuf> {
     let mut result = Vec::new();
 
     // Check root first
@@ -286,12 +305,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_skill_md_missing_end_delimiter() {
+    fn test_parse_skill_md_closing_delimiter_at_eof() {
         let content = "---\nname: foo\ndescription: bar\n---";
         let (name, desc, body) = parse_skill_md(content);
         assert_eq!(name, "foo");
         assert_eq!(desc, "bar");
         assert!(body.is_empty());
+    }
+
+    #[test]
+    fn test_parse_skill_md_rejects_closing_delimiter_with_suffix() {
+        let content = "---\nname: foo\ndescription: bar\n---suffix\nbody";
+        let (name, desc, body) = parse_skill_md(content);
+        assert!(name.is_empty());
+        assert!(desc.is_empty());
+        assert_eq!(body, content);
     }
 
     #[test]

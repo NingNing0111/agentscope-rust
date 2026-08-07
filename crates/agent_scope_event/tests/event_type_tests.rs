@@ -1,11 +1,11 @@
-//! Integration tests for EventType full enumeration (28 variants).
+//! Integration tests for EventType full enumeration (33 variants).
 //! T105
 
 use agent_scope_event::EventType;
 
 #[test]
-fn test_event_type_has_exactly_28_variants() {
-    let all_variants: [EventType; 28] = [
+fn test_event_type_has_exactly_33_variants() {
+    let all_variants: [EventType; 33] = [
         EventType::ReplyStart,
         EventType::ReplyEnd,
         EventType::ModelCallStart,
@@ -34,9 +34,14 @@ fn test_event_type_has_exactly_28_variants() {
         EventType::RequireExternalExecution,
         EventType::ExternalExecutionResult,
         EventType::Custom,
+        EventType::SessionCreated,
+        EventType::SessionClosed,
+        EventType::SessionSaved,
+        EventType::SessionLoaded,
+        EventType::SessionTrimmed,
     ];
-    // This compiles only if we have exactly 28 elements
-    assert_eq!(all_variants.len(), 28);
+    // This compiles only if we have exactly 33 elements
+    assert_eq!(all_variants.len(), 33);
 }
 
 #[test]
@@ -76,8 +81,13 @@ fn test_all_event_types_serialize_to_screaming_snake_case() {
             "EXTERNAL_EXECUTION_RESULT",
         ),
         (EventType::Custom, "CUSTOM"),
+        (EventType::SessionCreated, "SESSION_CREATED"),
+        (EventType::SessionClosed, "SESSION_CLOSED"),
+        (EventType::SessionSaved, "SESSION_SAVED"),
+        (EventType::SessionLoaded, "SESSION_LOADED"),
+        (EventType::SessionTrimmed, "SESSION_TRIMMED"),
     ];
-    assert_eq!(cases.len(), 28, "must cover all 28 event types");
+    assert_eq!(cases.len(), 33, "must cover all 33 event types");
 
     for (variant, expected) in cases {
         let json = serde_json::to_string(&variant).unwrap();
@@ -93,7 +103,7 @@ fn test_all_event_types_serialize_to_screaming_snake_case() {
 
 #[test]
 fn test_all_event_types_roundtrip() {
-    let variants: [EventType; 28] = [
+    let variants: [EventType; 33] = [
         EventType::ReplyStart,
         EventType::ReplyEnd,
         EventType::ModelCallStart,
@@ -122,6 +132,11 @@ fn test_all_event_types_roundtrip() {
         EventType::RequireExternalExecution,
         EventType::ExternalExecutionResult,
         EventType::Custom,
+        EventType::SessionCreated,
+        EventType::SessionClosed,
+        EventType::SessionSaved,
+        EventType::SessionLoaded,
+        EventType::SessionTrimmed,
     ];
 
     for v in &variants {

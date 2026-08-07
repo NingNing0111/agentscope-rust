@@ -39,7 +39,7 @@ const TASK_REMINDER_TEMPLATE: &str = "<system-reminder>Treat the following as th
 /// append happen under a single write lock so concurrent tool execution cannot
 /// interleave a duplicate injection.
 pub fn maybe_inject_task_reminder(state: &RwLock<AgentState>, agent_name: &str) -> bool {
-    let mut state = state.write().unwrap();
+    let mut state = state.write().unwrap_or_else(|e| e.into_inner());
 
     let mut in_progress = 0usize;
     let mut pending = 0usize;

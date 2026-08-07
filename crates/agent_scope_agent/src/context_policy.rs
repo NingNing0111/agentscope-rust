@@ -258,6 +258,87 @@ impl ContextSharingPolicy {
         }
         Ok(ctx)
     }
+
+    /// Sanitize caller-supplied context so it cannot exceed this SubAgent's
+    /// sharing policy. Delegation accepts `SharedContext` for compatibility, but
+    /// callers must not be able to bypass `message_policy` by constructing it
+    /// directly.
+    pub fn sanitize_shared_context(
+        &self,
+        context: &SharedContext,
+    ) -> Result<SharedContext, SubAgentError> {
+        let mut sanitized = SharedContext::empty();
+        sanitized.summary = context.summary.clone();
+        sanitized.memory_refs = sanitize_refs("memory", &self.memory_policy, &context.memory_refs)?;
+        sanitized.session_refs =
+            sanitize_refs("session", &self.session_policy, &context.session_refs)?;
+        sanitized.workspace_refs =
+            sanitize_refs("workspace", &self.workspace_policy, &context.workspace_refs)?;
+        sanitized.redaction_notes = context.redaction_notes.clone();
+
+        match &self.message_policy {
+            MessageContextPolicy::None => {
+                if !context.messages.is_empty() {
+                    sanitized
+                        .redaction_notes
+                        .push("message context removed by policy:none".to_string());
+                }
+            }
+            MessageContextPolicy::SummaryOnly => {
+                if let Some(summary) = &context.summary {
+                    sanitized.messages.push(summary_msg(summary));
+                }
+                if !context.messages.is_empty() {
+                    sanitized
+                        .redaction_notes
+                        .push("raw messages removed by policy:summary_only".to_string());
+                }
+            }
+            MessageContextPolicy::Selected { message_ids } => {
+                sanitized.messages = context
+                    .messages
+                    .iter()
+                    .filter(|message| message_ids.contains(&message.id))
+                    .cloned()
+                    .collect();
+            }
+            MessageContextPolicy::Full { explicit } => {
+                if !explicit {
+                    return Err(SubAgentError::PermissionDenied {
+                        capability: "message_context:full".to_string(),
+                        reason: "full context sharing requires explicit opt-in".to_string(),
+                    });
+                }
+                sanitized.messages = context.messages.clone();
+            }
+        }
+
+        Ok(sanitized)
+    }
+}
+
+fn sanitize_refs(
+    resource: &str,
+    policy: &ResourceSharingPolicy,
+    refs: &[String],
+) -> Result<Vec<String>, SubAgentError> {
+    match policy {
+        ResourceSharingPolicy::None => Ok(Vec::new()),
+        ResourceSharingPolicy::ReadOnly | ResourceSharingPolicy::Inherited { explicit: true } => {
+            Ok(refs.to_vec())
+        }
+        ResourceSharingPolicy::Scoped { refs: allowed } => Ok(refs
+            .iter()
+            .filter(|reference| allowed.contains(*reference))
+            .cloned()
+            .collect()),
+        ResourceSharingPolicy::Inherited { explicit: false } => {
+            Err(SubAgentError::PermissionDenied {
+                capability: resource.to_string(),
+                reason: "inherited context sharing requires explicit opt-in".to_string(),
+            })
+        }
+    }
 }
 
 fn summary_msg(text: &str) -> Msg {

@@ -73,9 +73,7 @@ fn extract_text(block: &agent_scope_message::ContentBlock) -> Option<String> {
 /// Approximate character length of a content block, used to bound the summary
 /// size across both `SummaryContent` variants.
 fn text_len(block: &agent_scope_message::ContentBlock) -> usize {
-    extract_text(block)
-        .map(|t| t.len())
-        .unwrap_or(0)
+    extract_text(block).map(|t| t.len()).unwrap_or(0)
 }
 
 /// Check if a message contains a ToolCall block.
@@ -166,8 +164,12 @@ pub fn trim_context(
         *item = true;
     }
 
-    // Ensure tool-call/tool-result adjacency is not split:
-    // if a ToolResult is kept and the preceding message has a ToolCall, keep it too.
+    // Ensure tool-call/tool-result adjacency is not split in either direction:
+    // if a ToolResult is kept and the preceding message has a ToolCall, keep it
+    // (backward); and if a ToolCall is kept but the following ToolResult was
+    // trimmed (e.g. it fell just outside `keep_recent`), keep the result too
+    // (forward) — an orphan tool call is just as invalid as an orphan result
+    // (round-5 M2).
     let mut changed = true;
     while changed {
         changed = false;
@@ -178,6 +180,15 @@ pub fn trim_context(
                 // message with a ToolCall (they form a pair).
                 if has_tool_result(&state.context[i]) && has_tool_call(&state.context[i - 1]) {
                     keep[i - 1] = true;
+                    changed = true;
+                }
+            }
+            if keep[i - 1] && !keep[i] {
+                // Message i-1 is kept, message i is not. If the kept message has
+                // a ToolCall and the following message carries its ToolResult,
+                // keep the result too.
+                if has_tool_call(&state.context[i - 1]) && has_tool_result(&state.context[i]) {
+                    keep[i] = true;
                     changed = true;
                 }
             }

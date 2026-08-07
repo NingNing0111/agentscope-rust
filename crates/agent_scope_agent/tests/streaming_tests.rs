@@ -4,14 +4,35 @@
 //! streaming tool execution, backpressure.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use agent_scope_agent::{Agent, AgentConfig, ContextConfig, ReActAgent, ReActConfig};
+use agent_scope_agent::{
+    Agent, AgentConfig, AgentError, ContextConfig, Middleware, ReActAgent, ReActConfig,
+};
 use agent_scope_message::factory::user_msg;
-use agent_scope_message::{Role, ToolOutput, ToolResultBlock, ToolResultState};
-use agent_scope_model::ChatModel;
-use agent_scope_tool::ToolKit;
+use agent_scope_message::{
+    ContentBlock, Msg, Role, TextBlock, ToolCallBlock, ToolOutput, ToolResultBlock, ToolResultState,
+};
+use agent_scope_model::{ChatModel, ChatResponse, ModelCallResult, ModelError, ToolChoice};
+use agent_scope_tool::{Tool, ToolExecOutput, ToolKit};
 use futures::StreamExt;
+use serde_json::Value as JsonValue;
+use tokio::sync::Notify;
+
+async fn wait_until_reusable(agent: &ReActAgent) {
+    for _ in 0..100 {
+        match agent
+            .reply(Some(vec![user_msg("user", "after cancel").unwrap()]))
+            .await
+        {
+            Ok(_) => return,
+            Err(AgentError::AlreadyStreaming) => tokio::task::yield_now().await,
+            Err(e) => panic!("unexpected reply error while waiting for reuse: {e}"),
+        }
+    }
+    panic!("agent did not become reusable after cancellation");
+}
 
 mod mocks;
 use mocks::{MockModel, MockStreamingModel, MockStreamingTool};
@@ -1077,13 +1098,12 @@ async fn test_streaming_max_iters_reply_end_is_exceed_max_iters() {
 
     let chunks = vec![tool_call_chunk("tc1", "stream_echo", r#"{}"#)];
     let model = Arc::new(MockStreamingModel::new("mock", chunks));
-    let tool_chunks: Vec<Result<ToolResultBlock, agent_scope_tool::ToolError>> = vec![Ok(
-        ToolResultBlock::new(
+    let tool_chunks: Vec<Result<ToolResultBlock, agent_scope_tool::ToolError>> =
+        vec![Ok(ToolResultBlock::new(
             "tc1".into(),
             "stream_echo".into(),
             ToolOutput::Text("done".into()),
-        ),
-    )];
+        ))];
     let stream_tool = MockStreamingTool::new("stream_echo", tool_chunks);
 
     let mut tk = ToolKit::new();
@@ -1098,13 +1118,7 @@ async fn test_streaming_max_iters_reply_end_is_exceed_max_iters() {
         max_iters: 1,
         ..ReActConfig::default()
     };
-    let agent = ReActAgent::new(
-        config,
-        react_config,
-        ContextConfig::default(),
-        vec![],
-    )
-    .unwrap();
+    let agent = ReActAgent::new(config, react_config, ContextConfig::default(), vec![]).unwrap();
 
     let mut stream = agent
         .reply_stream(Some(vec![user_msg("user", "hi").unwrap()]))
@@ -1134,4 +1148,180 @@ async fn test_streaming_max_iters_reply_end_is_exceed_max_iters() {
         ReplyFinishedReason::ExceedMaxIters,
         "streaming ReplyEnd must report ExceedMaxIters, not Completed"
     );
+}
+
+struct FirstCallCompleteToolModel {
+    call_started: Arc<Notify>,
+    allow_return: Arc<Notify>,
+    calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl ChatModel for FirstCallCompleteToolModel {
+    fn model_name(&self) -> &str {
+        "complete-tool-model"
+    }
+
+    fn stream_enabled(&self) -> bool {
+        false
+    }
+
+    async fn call_api(
+        &self,
+        _model: &str,
+        _messages: &[Msg],
+        _tools: Option<&[JsonValue]>,
+        _tool_choice: Option<&ToolChoice>,
+    ) -> Result<ModelCallResult, ModelError> {
+        let call_idx = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call_idx == 0 {
+            self.call_started.notify_one();
+            self.allow_return.notified().await;
+            let mut resp = ChatResponse::default();
+            resp.content.push(ContentBlock::ToolCall(ToolCallBlock::new(
+                "tc1".into(),
+                "side_effect".into(),
+                r#"{}"#.into(),
+            )));
+            Ok(ModelCallResult::Complete(resp))
+        } else {
+            let mut resp = ChatResponse::default();
+            resp.content
+                .push(ContentBlock::Text(TextBlock::new("done".into())));
+            Ok(ModelCallResult::Complete(resp))
+        }
+    }
+}
+
+struct CountingTool {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl Tool for CountingTool {
+    fn name(&self) -> &str {
+        "side_effect"
+    }
+
+    fn description(&self) -> &str {
+        "counts invocations"
+    }
+
+    fn input_schema(&self) -> JsonValue {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn call(&self, _input: JsonValue) -> Result<ToolExecOutput, agent_scope_tool::ToolError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolExecOutput::Complete(ToolResultBlock::new(
+            "tc1".into(),
+            "side_effect".into(),
+            ToolOutput::Text("ran".into()),
+        )))
+    }
+}
+
+struct GatedPreActingMw {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl Middleware for GatedPreActingMw {
+    async fn pre_acting(
+        &self,
+        _agent_name: &str,
+        _tool_call: &mut ToolCallBlock,
+    ) -> Result<(), AgentError> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        Ok(())
+    }
+}
+
+/// Regression: if an EventStream is dropped while the initial Complete model
+/// call is in-flight, the reactor must notice StreamHandle cancellation before
+/// it writes assistant/tool state or executes side-effectful tools.
+#[tokio::test]
+async fn test_drop_stream_during_initial_complete_model_call_cancels_before_tools() {
+    let call_started = Arc::new(Notify::new());
+    let allow_return = Arc::new(Notify::new());
+    let tool_calls = Arc::new(AtomicUsize::new(0));
+    let model = Arc::new(FirstCallCompleteToolModel {
+        call_started: Arc::clone(&call_started),
+        allow_return: Arc::clone(&allow_return),
+        calls: AtomicUsize::new(0),
+    });
+    let mut tk = ToolKit::new();
+    tk.register(CountingTool {
+        calls: Arc::clone(&tool_calls),
+    });
+    let config = AgentConfig::builder()
+        .name("agent")
+        .model(model)
+        .toolkit(tk)
+        .build()
+        .unwrap();
+    let agent = ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![],
+    )
+    .unwrap();
+
+    let stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run").unwrap()]))
+        .await
+        .unwrap();
+    call_started.notified().await;
+    drop(stream);
+    allow_return.notify_one();
+
+    wait_until_reusable(&agent).await;
+
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
+}
+
+/// Regression: cancellation after `pre_acting.await` but before dispatching the
+/// tool must be re-checked so side effects are not executed.
+#[tokio::test]
+async fn test_streaming_cancellation_after_pre_acting_prevents_tool_dispatch() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let tool_calls = Arc::new(AtomicUsize::new(0));
+    let chunks = vec![tool_call_chunk("tc1", "side_effect", r#"{}"#)];
+    let model = Arc::new(MockStreamingModel::new("mock", chunks));
+    let mut tk = ToolKit::new();
+    tk.register(CountingTool {
+        calls: Arc::clone(&tool_calls),
+    });
+    let config = AgentConfig::builder()
+        .name("agent")
+        .model(model)
+        .toolkit(tk)
+        .build()
+        .unwrap();
+    let agent = ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![Arc::new(GatedPreActingMw {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        })],
+    )
+    .unwrap();
+
+    let stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run").unwrap()]))
+        .await
+        .unwrap();
+    entered.notified().await;
+    drop(stream);
+    release.notify_one();
+
+    wait_until_reusable(&agent).await;
+
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
 }

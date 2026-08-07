@@ -16,7 +16,7 @@ use agent_scope_model::json_repair::json_repair;
 use agent_scope_model::model_error::{ModelError, ModelErrorKind};
 use agent_scope_model::model_trait::{ChatModel, ModelCallResult};
 use agent_scope_model::response::{ChatResponse, FinishedReason, StructuredResponse};
-use agent_scope_model::schema_flat::flatten_json_schema_with_defs;
+use agent_scope_model::schema_flat::flatten_json_schema_with_defs_checked;
 use agent_scope_model::tool_choice::ToolChoice;
 use agent_scope_model::usage::ChatUsage;
 
@@ -168,20 +168,23 @@ impl DashScopeChatModel {
             // never called from the request path, so a caller that restricted
             // the model to a subset of tools silently received every tool.
             let (effective, _tc_json) = self.format_tools(Some(tools), tool_choice)?;
-            let formatted_tools: Vec<JsonValue> = effective
-                .unwrap_or_default()
-                .iter()
-                .map(|t| {
-                    let mut tool = t.clone();
-                    if let Some(func) = tool.get_mut("function")
-                        && let Some(params) = func.get("parameters")
-                    {
-                        let flattened = flatten_json_schema_with_defs(params);
-                        func["parameters"] = flattened;
-                    }
-                    tool
-                })
-                .collect();
+            let tools_iter = effective.unwrap_or_default();
+            let mut formatted_tools: Vec<JsonValue> = Vec::with_capacity(tools_iter.len());
+            for t in &tools_iter {
+                let mut tool = t.clone();
+                if let Some(func) = tool.get_mut("function")
+                    && let Some(params) = func.get("parameters")
+                {
+                    let flattened = flatten_json_schema_with_defs_checked(params).map_err(|e| {
+                        ModelError::FormatError {
+                            context: "dashscope".to_string(),
+                            source: agent_scope_model::FormatError::InvalidMessage(e.reason),
+                        }
+                    })?;
+                    func["parameters"] = flattened;
+                }
+                formatted_tools.push(tool);
+            }
             body.insert("tools".to_string(), JsonValue::Array(formatted_tools));
         }
 
@@ -315,7 +318,19 @@ impl DashScopeChatModel {
                 if let Some(data) = audio.get("data").and_then(|v| v.as_str()) {
                     let raw = base64::engine::general_purpose::STANDARD
                         .decode(data)
-                        .unwrap_or_default();
+                        .map_err(|e| ModelError::SerializationError {
+                            context: "dashscope audio data base64 decode".to_string(),
+                            source: serde_json::Error::io(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                e,
+                            )),
+                        })?;
+                    if raw.is_empty() {
+                        return Err(ModelError::ValidationError {
+                            field: "audio.data".to_string(),
+                            message: "base64-encoded audio data decoded to empty bytes".to_string(),
+                        });
+                    }
                     resp.append_data_block("audio_1", &raw, "audio/pcm16", None);
                 }
                 if let Some(transcript) = audio.get("transcript").and_then(|v| v.as_str()) {
@@ -395,11 +410,30 @@ impl DashScopeChatModel {
                             if tail.is_empty() {
                                 return None;
                             }
-                            let line = String::from_utf8_lossy(&tail).to_string();
+                            // Strict UTF-8: valid SSE payloads are always
+                            // valid UTF-8; replacing invalid bytes with
+                            // U+FFFD would silently corrupt tool-call ids
+                            // or other structured data.
+                            let line = match std::str::from_utf8(&tail) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    return Some((
+                                        stream::iter(vec![Err(ModelError::SerializationError {
+                                            context: "dashscope SSE tail is not valid UTF-8"
+                                                .to_string(),
+                                            source: serde_json::Error::io(std::io::Error::new(
+                                                std::io::ErrorKind::InvalidData,
+                                                e,
+                                            )),
+                                        })]),
+                                        (byte_stream, buf),
+                                    ));
+                                }
+                            };
                             let out = if line.trim().is_empty() {
                                 Vec::new()
                             } else {
-                                match Self::parse_sse_line(&line) {
+                                match Self::parse_sse_line(line) {
                                     Some(item) => vec![item],
                                     None => Vec::new(),
                                 }
@@ -574,12 +608,23 @@ impl DashScopeChatModel {
                         {
                             for tc in tool_calls {
                                 let idx = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-                                // Use index-only block_id for stable streaming
-                                // accumulation. The tool_call `id` field may
-                                // arrive in a later SSE chunk, which would
-                                // cause StreamAccumulator to treat them as
-                                // separate tool calls if we included it here.
+                                // Use index-based block_id for stable streaming
+                                // accumulation across chunks. The block_id is
+                                // the internal accumulation key; the provider's
+                                // tool-call `id`, when present, is recorded in
+                                // `resp.tool_call_id_map` and applied after the
+                                // stream is fully accumulated.
                                 let block_id = format!("tc_{idx}");
+
+                                // Record the provider-assigned tool-call id for
+                                // final application. It may arrive in the first
+                                // delta, a later delta, or not at all.
+                                if let Some(provider_id) = tc.get("id").and_then(|v| v.as_str())
+                                    && !provider_id.is_empty()
+                                {
+                                    resp.tool_call_id_map
+                                        .insert(block_id.clone(), provider_id.to_string());
+                                }
 
                                 let func = tc.get("function");
                                 let name = func
@@ -598,9 +643,28 @@ impl DashScopeChatModel {
                         // Audio delta
                         if let Some(audio) = delta.and_then(|d| d.get("audio")) {
                             if let Some(data) = audio.get("data").and_then(|v| v.as_str()) {
-                                let raw = base64::engine::general_purpose::STANDARD
-                                    .decode(data)
-                                    .unwrap_or_default();
+                                let raw =
+                                    match base64::engine::general_purpose::STANDARD.decode(data) {
+                                        Ok(bytes) if !bytes.is_empty() => bytes,
+                                        Ok(_) => {
+                                            return Some(Err(ModelError::ValidationError {
+                                            field: "audio.data".to_string(),
+                                            message:
+                                                "base64-encoded audio delta decoded to empty bytes"
+                                                    .to_string(),
+                                        }));
+                                        }
+                                        Err(e) => {
+                                            return Some(Err(ModelError::SerializationError {
+                                                context: "dashscope SSE audio base64 decode"
+                                                    .to_string(),
+                                                source: serde_json::Error::io(std::io::Error::new(
+                                                    std::io::ErrorKind::InvalidData,
+                                                    e,
+                                                )),
+                                            }));
+                                        }
+                                    };
                                 resp.append_data_block("audio_0", &raw, "audio/pcm16", None);
                             }
                             if let Some(transcript) =
@@ -779,7 +843,12 @@ impl ChatModel for DashScopeChatModel {
             });
         }
 
-        let json_schema = flatten_json_schema_with_defs(structured_model);
+        let json_schema = flatten_json_schema_with_defs_checked(structured_model).map_err(|e| {
+            ModelError::FormatError {
+                context: "dashscope".to_string(),
+                source: agent_scope_model::FormatError::InvalidMessage(e.reason),
+            }
+        })?;
         let tool_schema = serde_json::json!({
             "type": "function",
             "function": {
@@ -1151,5 +1220,180 @@ mod tests {
         let usage = resp.usage.as_ref().expect("usage present");
         assert_eq!(usage.input_tokens, 10);
         assert_eq!(usage.output_tokens, 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Defect 1: Tool-call ID preservation tests
+    // -----------------------------------------------------------------------
+
+    /// Provider sends tool-call `id` in the first delta — it must be preserved
+    /// as the final ToolCallBlock.id.
+    #[test]
+    fn sse_tool_call_provider_id_preserved_in_first_delta() {
+        let mut buf = Vec::new();
+        let out = DashScopeChatModel::ingest_sse_bytes(
+            &mut buf,
+            b"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_abc123\",\"type\":\"function\",\"function\":{\"name\":\"search\",\"arguments\":\"{\\\"q\\\":\"}}]}}]}\n",
+        );
+        assert_eq!(out.len(), 1, "should emit one event");
+        let resp = out[0].as_ref().unwrap();
+        // Check that the tool_call_id_map records the provider id
+        let mapped_id = resp
+            .tool_call_id_map
+            .get("tc_0")
+            .expect("provider id should be recorded for tc_0");
+        assert_eq!(mapped_id, "call_abc123");
+    }
+
+    /// Provider sends tool-call `id` in a LATER delta (not the first) —
+    /// it must still be recorded and used.
+    #[test]
+    fn sse_tool_call_late_provider_id_is_recorded() {
+        let mut buf = Vec::new();
+
+        // First chunk: no id, just function name and partial args
+        let out1 = DashScopeChatModel::ingest_sse_bytes(
+            &mut buf,
+            b"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"search\",\"arguments\":\"{\\\"q\\\":\"}}]}}]}\n",
+        );
+        assert_eq!(out1.len(), 1);
+        let resp1 = out1[0].as_ref().unwrap();
+        assert!(
+            !resp1.tool_call_id_map.contains_key("tc_0"),
+            "no provider id in first chunk"
+        );
+
+        // Second chunk: id arrives with more args
+        let out2 = DashScopeChatModel::ingest_sse_bytes(
+            &mut buf,
+            b"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_late_xyz\",\"function\":{\"arguments\":\"\\\"test\\\"}\"}}]}}]}\n",
+        );
+        assert_eq!(out2.len(), 1);
+        let resp2 = out2[0].as_ref().unwrap();
+        let mapped_id = resp2
+            .tool_call_id_map
+            .get("tc_0")
+            .expect("late provider id should be recorded for tc_0");
+        assert_eq!(mapped_id, "call_late_xyz");
+    }
+
+    /// Two tool calls interleaved in streaming — each must get its correct
+    /// provider id preserved separately.
+    #[test]
+    fn sse_interleaved_tool_calls_preserve_distinct_ids() {
+        // Build the SSE payload programmatically to avoid JSON escaping errors
+        let payload = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_A",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\"city\":\""
+                            }
+                        },
+                        {
+                            "index": 1,
+                            "id": "call_B",
+                            "type": "function",
+                            "function": {
+                                "name": "get_time",
+                                "arguments": "{\"tz\":\""
+                            }
+                        }
+                    ]
+                }
+            }]
+        });
+        let line = format!("data: {}\n", serde_json::to_string(&payload).unwrap());
+        let mut buf = Vec::new();
+        let out = DashScopeChatModel::ingest_sse_bytes(&mut buf, line.as_bytes());
+        assert_eq!(out.len(), 1);
+        let resp = out[0].as_ref().unwrap();
+        assert_eq!(
+            resp.tool_call_id_map.get("tc_0"),
+            Some(&"call_A".to_string())
+        );
+        assert_eq!(
+            resp.tool_call_id_map.get("tc_1"),
+            Some(&"call_B".to_string())
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Defect 2: EOF tail flush invalid UTF-8 → SerializationError
+    // -----------------------------------------------------------------------
+
+    /// Trailing bytes after SSE stream ends that are not valid UTF-8 must
+    /// produce a SerializationError, not silently replace with .
+    #[test]
+    fn sse_eof_tail_invalid_utf8_returns_error() {
+        // 0xFF is never valid in UTF-8
+        let invalid = vec![b'd', b'a', b't', b'a', b':', b' ', b'{', 0xFF, b'}'];
+        let mut buf = Vec::new();
+        // Feed partial data without a newline, then simulate EOF by ingesting nothing
+        let _out = DashScopeChatModel::ingest_sse_bytes(&mut buf, &invalid);
+        // The buffer still has the malformed bytes since no newline was consumed
+        let tail = std::mem::take(&mut buf);
+        assert!(
+            !tail.is_empty(),
+            "tail buffer should have the invalid bytes"
+        );
+        let result = std::str::from_utf8(&tail);
+        assert!(result.is_err(), "invalid UTF-8 must be rejected strictly");
+        // Verify it contains 0xFF which is invalid
+        assert!(tail.contains(&0xFF));
+    }
+
+    // -----------------------------------------------------------------------
+    // Defect 3: Invalid base64 audio → ModelError (non-streaming + streaming)
+    // -----------------------------------------------------------------------
+
+    /// Non-streaming: invalid base64 audio data must return an error,
+    /// not silently produce an empty DataBlock.
+    #[test]
+    fn parse_completion_invalid_audio_base64_returns_error() {
+        let model = make_model();
+        let json = serde_json::json!({
+            "id": "chatcmpl-123",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "audio": {
+                        "data": "!!!not-valid-base64!!!",
+                        "transcript": "hello"
+                    }
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let result = model.parse_completion_response(&json);
+        assert!(
+            result.is_err(),
+            "invalid base64 audio data should produce an error, not silent empty block"
+        );
+    }
+
+    /// Streaming: invalid base64 audio delta must return an error,
+    /// not silently produce an empty DataBlock.
+    #[test]
+    fn sse_invalid_audio_base64_returns_error() {
+        let mut buf = Vec::new();
+        let out = DashScopeChatModel::ingest_sse_bytes(
+            &mut buf,
+            b"data: {\"choices\":[{\"delta\":{\"audio\":{\"data\":\"!!!bad-base64!!!\",\"transcript\":\"hi\"}}}]}\n",
+        );
+        assert_eq!(out.len(), 1, "should emit one event");
+        let result = &out[0];
+        assert!(
+            result.is_err(),
+            "invalid base64 audio delta should produce an error, not silent empty block"
+        );
     }
 }

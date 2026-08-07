@@ -47,7 +47,7 @@ pub use append_event::{AppendEvent, AppendEventError};
 
 use serde::{Deserialize, Serialize};
 
-/// Tagged union of all 27 event types.
+/// Tagged union of all 33 event types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AgentEvent {

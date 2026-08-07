@@ -198,12 +198,21 @@ where
     let approvals = Arc::clone(&runtime.approvals);
     let first = run_turn(runtime, input).await?;
     // A failure in a *retry* turn is tolerated: return whatever was accumulated
-    // so far instead of throwing away the whole turn. The first turn's error is
-    // still propagated via `?` above.
+    // so far instead of throwing away the whole turn, but surface the error so
+    // the user knows the retry did not succeed silently.  The first turn's error
+    // is still propagated via `?` above.
     let result = run_confirmation_loop(
         &approvals,
         first,
-        || async { run_turn(runtime, input).await.unwrap_or_default() },
+        || async {
+            match run_turn(runtime, input).await {
+                Ok(turn) => turn,
+                Err(err) => {
+                    eprintln!("warning: retry turn failed: {}", err.safe_message());
+                    RenderedTurn::default()
+                }
+            }
+        },
         &mut ask,
     )
     .await;
@@ -402,7 +411,7 @@ pub fn handle_command(runtime: &mut AgentRuntime, input: &str) -> PiResult<Comma
             }
         }
         LocalCommand::Approvals => {
-            let approvals = runtime.approvals.lock().unwrap();
+            let approvals = runtime.approvals.lock().unwrap_or_else(|e| e.into_inner());
             if approvals.is_empty() {
                 out.messages.push("no approved operations".to_string());
             } else {

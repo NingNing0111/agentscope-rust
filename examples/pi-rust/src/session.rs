@@ -137,7 +137,11 @@ impl SessionStore {
             .dir
             .join(format!(".{safe_id}.tmp-{}-{unique}", std::process::id()));
         fs::write(&tmp, json).map_err(|err| PiError::io("write session tmp", err))?;
-        fs::rename(&tmp, path).map_err(|err| PiError::io("commit session", err))
+        fs::rename(&tmp, path).map_err(|err| {
+            // Don't leak the temp file on a failed commit (round-5 L2).
+            let _ = fs::remove_file(&tmp);
+            PiError::io("commit session", err)
+        })
     }
 
     pub fn load(&self, id: &str) -> PiResult<SessionRecord> {

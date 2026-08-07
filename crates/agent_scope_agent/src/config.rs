@@ -338,6 +338,16 @@ impl InjectionConfig {
                 message: "context_buffer_ratio must be in [0, 1]".into(),
             });
         }
+        for key in self.extra_fields.keys() {
+            if !is_valid_extra_field_key(key) {
+                return Err(AgentError::InvalidConfig {
+                    field: "injection_config.extra_fields".into(),
+                    message: format!(
+                        "extra_fields key '{key}' must be non-empty ASCII [A-Za-z0-9_-] and must not be a reserved runtime-state key"
+                    ),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -360,6 +370,15 @@ impl InjectionConfig {
 /// Whether `time_format` can round-trip a full timestamp (format → parse back
 /// to a time carrying the date part). A time-only format such as `%H:%M:%S`
 /// fails because the parsed time falls back to year 1900.
+fn is_valid_extra_field_key(key: &str) -> bool {
+    const RESERVED: [&str; 4] = ["current-time", "timezone", "tasks", "context-length"];
+    !key.is_empty()
+        && !RESERVED.contains(&key)
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 fn time_format_round_trips(time_format: &str) -> bool {
     use chrono::{NaiveDate, NaiveDateTime};
     // Pick a fixed instant that exercises date + time fields.
@@ -506,6 +525,24 @@ mod tests {
     }
 
     /// T014: Empty name rejected.
+    #[test]
+    fn test_injection_config_rejects_invalid_extra_field_keys() {
+        for key in ["", "tasks", "current-time", "bad key", "bad<tag>", "ключ"] {
+            let mut config = InjectionConfig::default();
+            config.extra_fields.insert(key.into(), "value".into());
+            assert!(
+                config.validate().is_err(),
+                "key should be rejected: {key:?}"
+            );
+        }
+
+        let mut config = InjectionConfig::default();
+        config
+            .extra_fields
+            .insert("valid_key-1".into(), "value".into());
+        assert!(config.validate().is_ok());
+    }
+
     #[test]
     fn test_agent_config_empty_name_rejected() {
         let result = AgentConfig::builder().name("").build();

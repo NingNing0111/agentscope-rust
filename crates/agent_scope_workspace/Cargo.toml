@@ -12,6 +12,10 @@ async-trait = "0.1"
 base64.workspace = true
 chrono.workspace = true
 mime_guess = "2"
+# Safe wrapper around the Unix process-group syscalls; used to reap a child
+# *and* any grandchildren on timeout / output overflow (defect 2 fix).
+# Kept behind `cfg(unix)` in backend.rs.
+nix = { version = "0.29", default-features = false, features = ["signal", "process"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

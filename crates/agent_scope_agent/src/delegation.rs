@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use agent_scope_message::{ContentBlock, Msg, Role, TextBlock};
 
 use crate::agent_trait::Agent;
-use crate::context_policy::SharedContext;
+use crate::context_policy::{ModelAccessPolicy, SharedContext, SideEffectPolicy};
 use crate::delegation_trace::{DelegationEventType, DelegationTrace};
 use crate::subagent::SubAgentRegistry;
 use crate::subagent_error::{SubAgentError, SubAgentErrorInfo};
@@ -108,7 +108,7 @@ impl DelegationRequest {
         }
     }
 
-    pub fn validate(&self) -> Result<(), SubAgentError> {
+    fn validate_common(&self) -> Result<(), SubAgentError> {
         if self.parent_agent_name.trim().is_empty() {
             return Err(SubAgentError::InvalidDelegation {
                 reason: "parent_agent_name must not be empty".to_string(),
@@ -124,13 +124,18 @@ impl DelegationRequest {
                 reason: "task must not be empty".to_string(),
             });
         }
+        self.budget.validate()
+    }
+
+    pub fn validate(&self) -> Result<(), SubAgentError> {
+        self.validate_common()?;
         if self.context.messages.len() > self.budget.max_context_messages {
             return Err(SubAgentError::BudgetExceeded {
                 limit: "max_context_messages".to_string(),
                 value: self.context.messages.len().to_string(),
             });
         }
-        self.budget.validate()
+        Ok(())
     }
 }
 
@@ -296,12 +301,20 @@ pub async fn delegate_once(
 }
 
 /// Execute one delegation with optional parent cancellation propagation.
+///
+/// The registered target's `default_budget`, `context_policy`, and the
+/// delegation-enforceable parts of `capability_scope` are applied after lookup.
+/// Budget fields use the stricter target/request combination, so callers cannot
+/// relax target defaults. For opaque `Arc<dyn Agent>` children, cancellation and
+/// timeout cancel only the awaited reply future; the API cannot guarantee that a
+/// child that detached its own background work will stop. Children are expected
+/// to implement cooperative cancellation for side work.
 pub async fn delegate_once_with_cancel(
     registry: &SubAgentRegistry,
-    request: DelegationRequest,
+    mut request: DelegationRequest,
     cancellation: Option<CancellationToken>,
 ) -> Result<CollaborationResult, SubAgentError> {
-    request.validate()?;
+    request.validate_common()?;
     if request.reply_mode != DelegationReplyMode::FinalOnly {
         return Err(SubAgentError::unsupported(
             "delegate_stream",
@@ -322,6 +335,24 @@ pub async fn delegate_once_with_cancel(
     );
 
     let target = registry.get(&request.target_subagent_name)?;
+    // Apply the registered target's policy after lookup. Strategy rejections
+    // (tighter budget, context sanitization, capability scope) are surfaced as a
+    // `CollaborationResult` — consistent with timeout/cancellation handling —
+    // rather than propagating as `Err`, so callers observe the SubAgent's
+    // decision as a completed collaboration.
+    let policy_result = (|| -> Result<(), SubAgentError> {
+        request.budget = effective_budget(&request.budget, &target.default_budget);
+        request.context = target
+            .context_policy
+            .sanitize_shared_context(&request.context)?;
+        request.validate()?;
+        enforce_delegation_capabilities(target)?;
+        Ok(())
+    })();
+    if let Err(error) = policy_result {
+        return Ok(CollaborationResult::failed(&request, error, trace));
+    }
+
     let agent = target.agent.clone();
     trace.append(
         DelegationEventType::SubAgentSelected,
@@ -478,6 +509,39 @@ pub fn unsupported_app_service_dispatch() -> SubAgentError {
         "app_service_dispatch",
         "full Python app-service dispatch compatibility is deferred",
     )
+}
+
+fn effective_budget(request: &DelegationBudget, target: &DelegationBudget) -> DelegationBudget {
+    DelegationBudget {
+        max_depth: request.max_depth.min(target.max_depth),
+        max_calls: request.max_calls.min(target.max_calls),
+        timeout_ms: request.timeout_ms.min(target.timeout_ms),
+        max_context_messages: request
+            .max_context_messages
+            .min(target.max_context_messages),
+        allow_concurrent: request.allow_concurrent && target.allow_concurrent,
+    }
+}
+
+fn enforce_delegation_capabilities(
+    target: &crate::subagent::SubAgent,
+) -> Result<(), SubAgentError> {
+    if target.capability_scope.model_access == ModelAccessPolicy::Denied {
+        return Err(SubAgentError::PermissionDenied {
+            capability: "model".to_string(),
+            reason: "model access is denied for this SubAgent".to_string(),
+        });
+    }
+
+    if target.capability_scope.side_effects == SideEffectPolicy::Denied {
+        return Err(SubAgentError::PermissionDenied {
+            capability: "side_effects".to_string(),
+            reason: "opaque SubAgent execution may perform side effects and is denied by scope"
+                .to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 fn task_msg(parent_agent_name: &str, task: &str) -> Msg {

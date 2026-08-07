@@ -54,8 +54,28 @@ impl FileEmbeddingCache {
     }
 
     /// Generate the file path for a given cache key.
+    ///
+    /// Keys come from the public [`EmbeddingCache`] trait, so a caller could
+    /// pass an arbitrary string. Sanitize to a single safe path component so a
+    /// key like `"../../../etc/passwd"` cannot escape the cache directory
+    /// (round-5 M4). Non-path-safe characters are replaced with `_`.
     fn key_path(&self, key: &str) -> PathBuf {
-        self.cache_dir.join(format!("{key}.json"))
+        let safe: String = key
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let safe = if safe.is_empty() {
+            "_".to_string()
+        } else {
+            safe
+        };
+        self.cache_dir.join(format!("{safe}.json"))
     }
 }
 

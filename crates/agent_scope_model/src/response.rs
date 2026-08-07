@@ -34,6 +34,11 @@ pub struct ChatResponse {
     pub finished_reason: FinishedReason,
     #[serde(default)]
     pub metadata: HashMap<String, JsonValue>,
+    /// Map from internal accumulation key (`tc_{idx}`) to the provider-assigned
+    /// tool-call id. Populated during SSE parsing and applied when the
+    /// accumulated response is built.
+    #[serde(default, skip)]
+    pub tool_call_id_map: HashMap<String, String>,
 }
 
 impl Default for ChatResponse {
@@ -48,6 +53,7 @@ impl Default for ChatResponse {
             usage: None,
             finished_reason: FinishedReason::default(),
             metadata: HashMap::new(),
+            tool_call_id_map: HashMap::new(),
         }
     }
 }
@@ -171,9 +177,14 @@ impl ChatResponse {
             {
                 if is_audio {
                     if let DataSource::Base64(bs) = &db.source {
-                        let existing_bytes = base64::engine::general_purpose::STANDARD
-                            .decode(&bs.data)
-                            .unwrap_or_default();
+                        let existing_bytes =
+                            match base64::engine::general_purpose::STANDARD.decode(&bs.data) {
+                                Ok(decoded) => decoded,
+                                Err(e) => {
+                                    eprintln!("WARNING: failed to decode base64 audio chunk: {e}");
+                                    Vec::new()
+                                }
+                            };
                         let mut combined = existing_bytes;
                         combined.extend_from_slice(data);
                         if let DataSource::Base64(bs_mut) = &mut db.source {
@@ -237,6 +248,11 @@ impl ChatResponse {
                         (ContentBlock::ToolCall(st), ContentBlock::ToolCall(ot)) => {
                             if st.id == *bid {
                                 st.input.push_str(&ot.input);
+                                // Mirror `append_tool_call`: adopt the name when
+                                // it arrives in a later chunk (round-5 H3).
+                                if !ot.name.is_empty() && st.name.is_empty() {
+                                    st.name = ot.name.clone();
+                                }
                                 matched = true;
                                 break;
                             }
@@ -284,6 +300,14 @@ impl ChatResponse {
             // would double-count the tokens (the StreamAccumulator path never
             // sees this because it overwrites, but direct callers do).
             self.usage = Some(o_usage.clone());
+        }
+
+        // Merge tool-call id maps: later chunks may carry the provider-assigned
+        // id that was missing from earlier chunks.
+        for (k, v) in &other.tool_call_id_map {
+            self.tool_call_id_map
+                .entry(k.clone())
+                .or_insert_with(|| v.clone());
         }
 
         self

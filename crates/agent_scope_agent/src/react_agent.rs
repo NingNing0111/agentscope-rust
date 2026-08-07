@@ -9,6 +9,7 @@ use agent_scope_message::Msg;
 use agent_scope_state::{
     AgentState, JsonFileSessionStore, Session, SessionError, SessionImpl, SessionStore,
 };
+use agent_scope_tool::{Tool, ToolKit};
 use futures::Stream;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 
@@ -163,10 +164,10 @@ impl ReActAgent {
         // `AgentConfig::task_tools_enabled`).
         if config.task_tools_enabled {
             let mut toolkit = config.toolkit.take().unwrap_or_default();
-            toolkit.register(TaskCreateTool::new(Arc::clone(&state)));
-            toolkit.register(TaskListTool::new(Arc::clone(&state)));
-            toolkit.register(TaskGetTool::new(Arc::clone(&state)));
-            toolkit.register(TaskUpdateTool::new(Arc::clone(&state)));
+            register_builtin_task_tool(&mut toolkit, TaskCreateTool::new(Arc::clone(&state)))?;
+            register_builtin_task_tool(&mut toolkit, TaskListTool::new(Arc::clone(&state)))?;
+            register_builtin_task_tool(&mut toolkit, TaskGetTool::new(Arc::clone(&state)))?;
+            register_builtin_task_tool(&mut toolkit, TaskUpdateTool::new(Arc::clone(&state)))?;
             config.toolkit = Some(toolkit);
         }
 
@@ -196,13 +197,32 @@ impl ReActAgent {
     /// Safe to call from any thread.
     pub fn interrupt(&self) {
         self.inner.interrupted.store(true, Ordering::SeqCst);
-        self.inner.cancel_token.lock().unwrap().cancel();
+        self.inner
+            .cancel_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cancel();
     }
 
     /// Lock-aware state accessor.
     pub fn try_state(&self) -> std::sync::RwLockReadGuard<'_, AgentState> {
-        self.inner.state.read().unwrap()
+        self.inner.state.read().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+fn register_builtin_task_tool(
+    toolkit: &mut ToolKit,
+    tool: impl Tool + 'static,
+) -> Result<(), AgentError> {
+    let name = tool.name().to_string();
+    toolkit
+        .try_register(tool)
+        .map_err(|_| AgentError::InvalidConfig {
+            field: "toolkit".into(),
+            message: format!(
+                "reserved built-in task tool name '{name}' is already registered; rename the custom tool or disable task tools"
+            ),
+        })
 }
 
 /// Consumer-facing event stream returned by `reply_stream()`.
@@ -282,7 +302,7 @@ impl Agent for ReActAgent {
             mw.pre_observe(&self.inner.config.name, &mut input).await?;
         }
         if let Some(msgs) = input {
-            let mut state = self.inner.state.write().unwrap();
+            let mut state = self.inner.state.write().unwrap_or_else(|e| e.into_inner());
             state.context.extend(msgs);
         }
         Ok(())
@@ -293,7 +313,7 @@ impl Agent for ReActAgent {
     }
 
     fn state(&self) -> std::sync::RwLockReadGuard<'_, AgentState> {
-        self.inner.state.read().unwrap()
+        self.inner.state.read().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -311,7 +331,7 @@ impl Drop for StreamingGuard {
 /// previous token has been cancelled we replace it with a fresh one so the
 /// next `reply()` / `reply_stream()` can run normally.
 fn fresh_cancel_token(inner: &Arc<AgentInner>) -> CancellationToken {
-    let mut guard = inner.cancel_token.lock().unwrap();
+    let mut guard = inner.cancel_token.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_cancelled() {
         *guard = CancellationToken::new();
     }
@@ -348,7 +368,11 @@ pub(crate) async fn persist_after_reply(inner: &Arc<AgentInner>) {
     // reply (audit round-4 M5). The lock serializes saves, so the last save
     // always carries the newest state.
     let _guard = inner.persist_lock.lock().await;
-    let state = inner.state.read().unwrap().clone();
+    let state = inner
+        .state
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let session = build_session_for_persist(inner, state);
 
     if let Err(e) = store.save(&session).await {
@@ -380,7 +404,11 @@ pub(crate) fn spawn_persist_after_reply(inner: &Arc<AgentInner>) {
         // Snapshot AFTER acquiring the lock so an older snapshot cannot be
         // written over a newer save from a following reply (audit round-4 M5).
         let _guard = inner.persist_lock.lock().await;
-        let state = inner.state.read().unwrap().clone();
+        let state = inner
+            .state
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let session = build_session_for_persist(&inner, state);
         if let Err(e) = store.save(&session).await {
             tracing::warn!(
@@ -395,10 +423,7 @@ pub(crate) fn spawn_persist_after_reply(inner: &Arc<AgentInner>) {
 /// Construct the `SessionImpl` for an auto-save, preserving the original
 /// session creation time (round-4 F3) instead of letting `SessionImpl::new`
 /// stamp it with the current time on every save.
-fn build_session_for_persist(
-    inner: &Arc<AgentInner>,
-    state: AgentState,
-) -> SessionImpl {
+fn build_session_for_persist(inner: &Arc<AgentInner>, state: AgentState) -> SessionImpl {
     if let Some(created_at) = inner.session_created_at {
         SessionImpl::new(state).with_persisted_timestamps(created_at, chrono::Utc::now())
     } else {
@@ -420,13 +445,13 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
     }
 
     let session_id = {
-        let state = inner.state.read().unwrap();
+        let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
         state.session_id.clone()
     };
     let reply_id = uuid::Uuid::new_v4().as_simple().to_string();
 
     {
-        let mut state = inner.state.write().unwrap();
+        let mut state = inner.state.write().unwrap_or_else(|e| e.into_inner());
         state.reply_context.reply_id = reply_id.clone();
         state.reply_context.cur_iter = 0;
         state.reply_context.structured_schema = None;
@@ -440,14 +465,14 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
     }
 
     if input.is_none() {
-        let state = inner.state.read().unwrap();
+        let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
         if state.context.is_empty() {
             return Err(AgentError::NoContentToReply);
         }
     }
 
     if let Some(ref msgs) = input {
-        let mut state = inner.state.write().unwrap();
+        let mut state = inner.state.write().unwrap_or_else(|e| e.into_inner());
         state.context.extend(msgs.clone());
     }
 
@@ -530,13 +555,13 @@ async fn do_reply_stream(
     }
 
     let session_id = {
-        let state = inner.state.read().unwrap();
+        let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
         state.session_id.clone()
     };
     let reply_id = uuid::Uuid::new_v4().as_simple().to_string();
 
     {
-        let mut state = inner.state.write().unwrap();
+        let mut state = inner.state.write().unwrap_or_else(|e| e.into_inner());
         state.reply_context.reply_id = reply_id.clone();
         state.reply_context.cur_iter = 0;
         state.reply_context.structured_schema = None;
@@ -550,14 +575,14 @@ async fn do_reply_stream(
     }
 
     if input.is_none() {
-        let state = inner.state.read().unwrap();
+        let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
         if state.context.is_empty() {
             return Err(AgentError::NoContentToReply);
         }
     }
 
     if let Some(ref msgs) = input {
-        let mut state = inner.state.write().unwrap();
+        let mut state = inner.state.write().unwrap_or_else(|e| e.into_inner());
         state.context.extend(msgs.clone());
     }
 

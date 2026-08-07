@@ -99,5 +99,11 @@ async fn index_generation_for_hundred_entries_is_fast() {
             .unwrap();
     }
     let elapsed = start.elapsed();
-    assert!(elapsed < std::time::Duration::from_millis(500));
+    // A 500ms cap is flaky under CI/io contention (atomic temp write + rename
+    // per entry on slow machines); 2000ms still catches pathological regressions
+    // without failing on loaded runners (round-5 L7).
+    assert!(
+        elapsed < std::time::Duration::from_millis(2000),
+        "100 index writes took {elapsed:?} (expected < 2s)"
+    );
 }

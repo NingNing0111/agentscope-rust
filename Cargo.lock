@@ -239,6 +239,7 @@ dependencies = [
  "base64",
  "chrono",
  "mime_guess",
+ "nix",
  "serde",
  "serde_json",
  "sha2",

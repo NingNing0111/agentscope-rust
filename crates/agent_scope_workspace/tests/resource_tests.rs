@@ -118,6 +118,214 @@ async fn test_mcp_persist_to_file() {
     assert!(text.contains("persisted"));
 }
 
+// ============================================================================
+// Defect 3: MCP header scrubbing tests (FAILING before scrubbing fix)
+// ============================================================================
+
+/// Bearer tokens in SSE transport headers must not be persisted to .mcp.
+#[tokio::test]
+async fn test_mcp_headers_bearer_not_persisted() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let mut headers = std::collections::HashMap::new();
+    headers.insert(
+        "Authorization".to_string(),
+        "Bearer sk-abc123secret".to_string(),
+    );
+    headers.insert("Content-Type".to_string(), "application/json".to_string());
+
+    let mcp = McpClientConfig {
+        name: "bearer-mcp".into(),
+        transport: McpTransportConfig::Sse {
+            url: "https://api.example.com/sse".into(),
+            headers,
+        },
+        is_stateful: false,
+    };
+    ws.add_mcp(mcp).await.unwrap();
+
+    // Check .mcp file does NOT contain the secret
+    let backend = ws.get_backend().unwrap();
+    let mcp_path = backend.join_path(ws.workdir(), ".mcp");
+    let data = backend.read_file(&mcp_path).await.unwrap();
+    let text = String::from_utf8_lossy(&data);
+    assert!(
+        !text.contains("sk-abc123secret"),
+        "Bearer token leaked to .mcp file"
+    );
+    // The header key should be preserved (or redacted), but value must not leak
+    assert!(
+        text.contains("bearer-mcp"),
+        "MCP entry should still be present"
+    );
+}
+
+/// Bearer tokens in StreamableHttp transport headers must not be persisted.
+#[tokio::test]
+async fn test_mcp_headers_bearer_not_persisted_streamable_http() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let mut headers = std::collections::HashMap::new();
+    headers.insert("x-api-key".to_string(), "key-12345-secret".to_string());
+    headers.insert("Accept".to_string(), "application/json".to_string());
+
+    let mcp = McpClientConfig {
+        name: "api-key-mcp".into(),
+        transport: McpTransportConfig::StreamableHttp {
+            url: "https://api.example.com/mcp".into(),
+            headers,
+        },
+        is_stateful: false,
+    };
+    ws.add_mcp(mcp).await.unwrap();
+
+    // Check .mcp file does NOT contain the API key value
+    let backend = ws.get_backend().unwrap();
+    let mcp_path = backend.join_path(ws.workdir(), ".mcp");
+    let data = backend.read_file(&mcp_path).await.unwrap();
+    let text = String::from_utf8_lossy(&data);
+    assert!(
+        !text.contains("key-12345-secret"),
+        "API key leaked to .mcp file"
+    );
+    // Non-sensitive header values should be preserved
+    assert!(
+        text.contains("application/json"),
+        "Non-sensitive header should persist"
+    );
+}
+
+/// list_mcps() must not return sensitive header values in-memory either.
+#[tokio::test]
+async fn test_mcp_list_mcps_scrubs_headers() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let mut headers = std::collections::HashMap::new();
+    headers.insert(
+        "Authorization".to_string(),
+        "Bearer top-secret-token".to_string(),
+    );
+    headers.insert(
+        "Cookie".to_string(),
+        "session=abc123; token=xyz".to_string(),
+    );
+    headers.insert("User-Agent".to_string(), "test-agent".to_string());
+
+    let mcp = McpClientConfig {
+        name: "sensitive-headers".into(),
+        transport: McpTransportConfig::Sse {
+            url: "https://api.example.com/sse".into(),
+            headers,
+        },
+        is_stateful: false,
+    };
+    ws.add_mcp(mcp).await.unwrap();
+
+    let mcps = ws.list_mcps().await.unwrap();
+    assert_eq!(mcps.len(), 1);
+
+    // Get the headers from the listed MCP
+    let listed_headers = match &mcps[0].transport {
+        McpTransportConfig::Sse { headers, .. } => headers,
+        _ => panic!("expected SSE transport"),
+    };
+
+    // Sensitive values must be scrubbed
+    for (key, value) in listed_headers {
+        let key_lower = key.to_lowercase();
+        if key_lower == "authorization" || key_lower == "cookie" {
+            assert!(
+                !value.contains("top-secret-token") && !value.contains("abc123"),
+                "Sensitive header '{key}' value leaked in list_mcps: {value}"
+            );
+        }
+    }
+
+    // Non-sensitive header should be intact
+    assert_eq!(
+        listed_headers.get("User-Agent").map(|s| s.as_str()),
+        Some("test-agent")
+    );
+}
+
+/// After re-initialize, sensitive headers loaded from .mcp must still be scrubbed.
+#[tokio::test]
+async fn test_mcp_headers_scrubbed_on_reinit() {
+    let (_td, workdir) = temp_workdir();
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.clone(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    let mut headers = std::collections::HashMap::new();
+    headers.insert(
+        "Authorization".to_string(),
+        "Bearer reinit-secret".to_string(),
+    );
+
+    let mcp = McpClientConfig {
+        name: "reinit-mcp".into(),
+        transport: McpTransportConfig::Sse {
+            url: "https://api.example.com/sse".into(),
+            headers,
+        },
+        is_stateful: false,
+    };
+    ws.add_mcp(mcp).await.unwrap();
+    ws.close().await.unwrap();
+
+    // Re-initialize — headers must be scrubbed from loaded config
+    ws.initialize().await.unwrap();
+    let mcps = ws.list_mcps().await.unwrap();
+    assert_eq!(mcps.len(), 1);
+
+    let listed_headers = match &mcps[0].transport {
+        McpTransportConfig::Sse { headers, .. } => headers,
+        _ => panic!("expected SSE transport"),
+    };
+
+    let auth_value = listed_headers
+        .get("Authorization")
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    assert!(
+        !auth_value.contains("reinit-secret"),
+        "Bearer token survived reinit in list_mcps: {auth_value}"
+    );
+}
+
 #[tokio::test]
 async fn test_mcp_restore_on_reinit() {
     let (_td, workdir) = temp_workdir();

@@ -22,6 +22,19 @@ const MAX_TOOL_OUTPUT_CHARS: usize = 16_000;
 /// memory wholesale and stall/OOM the host.
 const MAX_READ_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 
+/// Per-file byte cap for Grep so a single huge file (e.g. a multi-GB log)
+/// cannot stall the host.  We check the file size before reading; if the file
+/// exceeds this limit, grep skips it with a note rather than loading its
+/// contents.
+pub const MAX_GREP_FILE_BYTES: u64 = 32 * 1024 * 1024; // 32 MiB
+
+/// Maximum entries scanned by Glob before stopping, to prevent a deep tree
+/// from stalling the host.
+pub const MAX_GLOB_SCAN_ENTRIES: usize = 100_000;
+
+/// Binary-signature check: look for a NUL byte in the first 8 KiB.
+const BINARY_CHECK_WINDOW: usize = 8192;
+
 /// Default result cap for Grep matches.
 const DEFAULT_GREP_MAX_RESULTS: usize = 50;
 /// Hard upper bound on Grep matches regardless of the requested `max_results`.
@@ -31,7 +44,7 @@ const MAX_GREP_LINE_CHARS: usize = 200;
 /// Stop scanning after this many files so Grep over a huge tree cannot stall the host.
 const MAX_GREP_SCAN_FILES: usize = 50_000;
 /// Default cap on Glob results.
-const DEFAULT_GLOB_MAX_RESULTS: usize = 200;
+pub const DEFAULT_GLOB_MAX_RESULTS: usize = 200;
 /// Default cap on ListDir entries.
 const DEFAULT_LISTDIR_MAX_ENTRIES: usize = 500;
 
@@ -757,22 +770,139 @@ async fn run_shell_command(state: &ToolState, command: &str, timeout: Duration) 
     }
 }
 
+/// Heuristic classifier for potentially destructive shell commands.
+///
+/// **This is a risk-hint, not a sandbox.**  The corpus covers common dangerous
+/// patterns but is inherently incomplete — a determined adversary (or an
+/// unthinking agent) could still cause harm through un-listed commands,
+/// obfuscation, or side-effects via intermediary scripts.  The true safety
+/// boundary is the filesystem isolation (workspace containment, no `sudo`
+/// without password, `kill_on_drop` for subprocesses).  This function gates
+/// the "ask the host before executing" UX; it should err on the side of
+/// caution (classifying potentially risky operations as destructive).
 pub fn is_destructive_command(command: &str) -> bool {
-    let lowered = command.to_ascii_lowercase();
+    let lowered = command.to_ascii_lowercase().trim().to_string();
     let tokens: Vec<&str> = lowered.split_whitespace().collect();
-    matches!(tokens.first().copied(), Some("rm" | "unlink" | "rmdir"))
-        || lowered.contains("git reset")
+
+    // Commands whose *first token* is inherently dangerous, even without flags.
+    let destructive_first_token = matches!(
+        tokens.first().copied(),
+        Some(
+            "rm" | "unlink"
+                | "rmdir"
+                | "dd"
+                | "truncate"
+                | "shred"
+                | "chmod"
+                | "chown"
+                | "chgrp"
+                | "kill"
+                | "pkill"
+                | "killall"
+                | "reboot"
+                | "shutdown"
+                | "halt"
+                | "poweroff"
+                | "sudo"
+                | "su"
+        )
+    ) || tokens
+        .first()
+        .is_some_and(|t| t.starts_with("mkfs") || t.starts_with("mkswap"));
+
+    // `tee` is dangerous when it redirects, overwrites, or appends.
+    let tee_dangerous = tokens.first() == Some(&"tee") && lowered.contains(">");
+
+    // Commands that *can* be destructive in certain argument configurations
+    // (checked below via substrings / multi-token patterns).
+    let find_delete =
+        lowered.contains("find") && (lowered.contains("-delete") || lowered.contains("-exec rm"));
+    let git_destructive = lowered.contains("git reset")
         || lowered.contains("git clean")
         || lowered.contains("git checkout .")
-        || lowered.contains("git stash")
-        || lowered.contains("cargo install")
-        || lowered.contains("npm install")
+        || lowered.contains("git stash drop")
+        || lowered.contains("git push --force")
+        || lowered.contains("git push -f")
+        || lowered.contains("git branch -d")
+        || lowered.contains("git branch -D");
+    let cargo_install = lowered.contains("cargo install");
+    let package_install = lowered.contains("npm install")
         || lowered.contains("pnpm install")
         || lowered.contains("yarn install")
-        || lowered.contains("curl ") && lowered.contains("| sh")
-        || lowered.contains("wget ") && lowered.contains("| sh")
-        || lowered.contains(">")
-        || lowered.contains(">>")
+        || lowered.contains("pip install")
+        || lowered.contains("pip3 install")
+        || lowered.contains("gem install");
+    let piped_to_shell =
+        (lowered.contains("curl ") || lowered.contains("wget ")) && lowered.contains("| sh");
+    let redirect = lowered.contains('>') || lowered.contains(">>");
+    let python_exec = tokens.first() == Some(&"python")
+        || tokens.first() == Some(&"python3")
+        || tokens.first() == Some(&"python2");
+    let python_c_eval = python_exec && (lowered.contains("-c") || lowered.contains("-m"));
+    let node_eval = tokens.first() == Some(&"node") && lowered.contains("-e");
+    let perl_eval = tokens.first() == Some(&"perl")
+        && (lowered.contains("-e") || lowered.contains("-ne") || lowered.contains("-pe"));
+    let ruby_eval = tokens.first() == Some(&"ruby")
+        && (lowered.contains("-e") || lowered.contains("-ne") || lowered.contains("-pe"));
+    let mv_danger = tokens.first() == Some(&"mv");
+    let cp_r = tokens.first() == Some(&"cp") && lowered.contains("-r");
+    let mount_umount = matches!(tokens.first().copied(), Some("mount" | "umount"));
+    let systemctl_danger = tokens.first() == Some(&"systemctl")
+        && (lowered.contains("stop")
+            || lowered.contains("disable")
+            || lowered.contains("mask")
+            || lowered.contains("halt")
+            || lowered.contains("poweroff")
+            || lowered.contains("reboot"));
+    let docker_danger = tokens.first() == Some(&"docker")
+        && (lowered.contains("rm ")
+            || lowered.contains("rmi ")
+            || lowered.contains("prune")
+            || lowered.contains("system prune"));
+    let fdisk = tokens.first() == Some(&"fdisk") || tokens.first() == Some(&"parted");
+    // `eval` re-interprets an arbitrary string as shell source — the classic
+    // `eval "$(curl ...)"` bypass (round-5 H2). Flag on first token.
+    let eval_danger = tokens.first() == Some(&"eval");
+    // `source` / bare `.` execute a script in the current shell. A lone `.`
+    // token (whitespace-delimited) is the POSIX source shorthand.
+    let source_danger = tokens.first() == Some(&"source") || tokens.first() == Some(&".");
+    // `xargs` feeds stdin to another command as arguments; a destructive
+    // downstream command (e.g. `find ... | xargs rm`) is not caught by
+    // first-token matching alone. xargs may appear mid-pipeline, so match on
+    // its presence + a destructive downstream verb, not the first token
+    // (round-5 H2).
+    let xargs_danger = lowered.contains("xargs")
+        && (lowered.contains(" rm")
+            || lowered.contains("shred")
+            || lowered.contains("chmod")
+            || lowered.contains("chown")
+            || lowered.contains("chgrp")
+            || lowered.contains("kill")
+            || lowered.contains("dd ")
+            || lowered.contains(" mv")
+            || lowered.contains("truncate"));
+
+    destructive_first_token
+        || tee_dangerous
+        || find_delete
+        || git_destructive
+        || cargo_install
+        || package_install
+        || piped_to_shell
+        || redirect
+        || python_c_eval
+        || node_eval
+        || perl_eval
+        || ruby_eval
+        || mv_danger
+        || cp_r
+        || mount_umount
+        || systemctl_danger
+        || docker_danger
+        || fdisk
+        || eval_danger
+        || source_danger
+        || xargs_danger
 }
 
 pub fn truncate_output(text: &str) -> String {
@@ -851,6 +981,8 @@ pub fn grep_tool(state: &ToolState, input: GrepInput) -> ToolResultShape {
     let mut matches: Vec<String> = Vec::new();
     let mut matched_files: HashSet<String> = HashSet::new();
     let mut files_scanned = 0usize;
+    let mut files_skipped_large = 0usize;
+    let mut files_skipped_binary = 0usize;
     let mut scan_limit_hit = false;
     let mut stack = vec![base];
     while let Some(dir) = stack.pop() {
@@ -881,9 +1013,25 @@ pub fn grep_tool(state: &ToolState, input: GrepInput) -> ToolResultShape {
                 continue;
             }
             files_scanned += 1;
-            let Ok(text) = fs::read_to_string(entry.path()) else {
+
+            // Per-file size guard: skip files larger than MAX_GREP_FILE_BYTES
+            // so a single huge file (e.g. multi-GB log) cannot stall the host.
+            let file_path = entry.path();
+            let file_size = fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+            if file_size > MAX_GREP_FILE_BYTES {
+                files_skipped_large += 1;
                 continue;
-            }; // skip binary/non-UTF8
+            }
+
+            // Binary guard: peek at the first 8 KiB for a NUL byte.
+            if is_binary_file(&file_path) {
+                files_skipped_binary += 1;
+                continue;
+            }
+
+            let Ok(text) = fs::read_to_string(&file_path) else {
+                continue;
+            }; // skip non-UTF8
             for (idx, line) in text.lines().enumerate() {
                 let hay = if input.case_insensitive {
                     line.to_lowercase()
@@ -891,7 +1039,7 @@ pub fn grep_tool(state: &ToolState, input: GrepInput) -> ToolResultShape {
                     line.to_string()
                 };
                 if hay.contains(&needle) {
-                    let rel = display_rel(&state.cwd, &entry.path());
+                    let rel = display_rel(&state.cwd, &file_path);
                     matched_files.insert(rel.clone());
                     let line_capped: String = line.chars().take(MAX_GREP_LINE_CHARS).collect();
                     matches.push(format!("{rel}:{}:{line_capped}", idx + 1));
@@ -903,16 +1051,32 @@ pub fn grep_tool(state: &ToolState, input: GrepInput) -> ToolResultShape {
         }
     }
     if matches.is_empty() {
-        return ToolResultShape::ok(format!("no matches for {pattern:?}"), None);
+        let mut skip_note = String::new();
+        if files_skipped_large > 0 {
+            skip_note.push_str(&format!(
+                "; skipped {files_skipped_large} file(s) exceeding {MAX_GREP_FILE_BYTES} byte limit"
+            ));
+        }
+        if files_skipped_binary > 0 {
+            skip_note.push_str(&format!("; skipped {files_skipped_binary} binary file(s)"));
+        }
+        return ToolResultShape::ok(format!("no matches for {pattern:?}{skip_note}"), None);
     }
     let limit_note = if scan_limit_hit {
         "; scan hit the file cap, results may be incomplete"
     } else {
         ""
     };
+    let mut skip_note = String::new();
+    if files_skipped_large > 0 {
+        skip_note.push_str(&format!("; skipped {files_skipped_large} large file(s)"));
+    }
+    if files_skipped_binary > 0 {
+        skip_note.push_str(&format!("; skipped {files_skipped_binary} binary file(s)"));
+    }
     ToolResultShape::ok(
         format!(
-            "{} match(es) in {} file(s){limit_note}",
+            "{} match(es) in {} file(s){limit_note}{skip_note}",
             matches.len(),
             matched_files.len()
         ),
@@ -951,6 +1115,8 @@ pub fn glob_tool(state: &ToolState, input: GlobInput) -> ToolResultShape {
     };
 
     let mut files: Vec<String> = Vec::new();
+    let mut entries_scanned = 0usize;
+    let mut scan_cap_hit = false;
     let mut stack = vec![base.clone()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -958,6 +1124,11 @@ pub fn glob_tool(state: &ToolState, input: GlobInput) -> ToolResultShape {
         };
         for entry in entries.flatten() {
             if files.len() >= DEFAULT_GLOB_MAX_RESULTS {
+                break;
+            }
+            entries_scanned += 1;
+            if entries_scanned > MAX_GLOB_SCAN_ENTRIES {
+                scan_cap_hit = true;
                 break;
             }
             let name = entry.file_name();
@@ -979,13 +1150,26 @@ pub fn glob_tool(state: &ToolState, input: GlobInput) -> ToolResultShape {
                 }
             }
         }
+        if scan_cap_hit {
+            break;
+        }
     }
     if files.is_empty() {
-        return ToolResultShape::ok(format!("no files match {pattern:?}"), None);
+        let cap_note = if scan_cap_hit {
+            format!(" (scan stopped at {MAX_GLOB_SCAN_ENTRIES} entries)")
+        } else {
+            String::new()
+        };
+        return ToolResultShape::ok(format!("no files match {pattern:?}{cap_note}"), None);
     }
     files.sort();
+    let cap_note = if scan_cap_hit {
+        format!("; scan stopped at {MAX_GLOB_SCAN_ENTRIES} entries, results may be incomplete")
+    } else {
+        String::new()
+    };
     ToolResultShape::ok(
-        format!("{} file(s) match {pattern:?}", files.len()),
+        format!("{} file(s) match {pattern:?}{cap_note}", files.len()),
         Some(truncate_output(&files.join("\n"))),
     )
 }
@@ -1158,4 +1342,16 @@ fn short_hash(input: &str) -> String {
     input.hash(&mut hasher);
     let full = format!("{:x}", hasher.finish());
     full[..8.min(full.len())].to_string()
+}
+
+/// Quick binary-signature check: peek at the first `BINARY_CHECK_WINDOW` bytes
+/// and look for a NUL byte.  Returns true when the file is likely binary.
+fn is_binary_file(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = vec![0u8; BINARY_CHECK_WINDOW];
+    let n = file.read(&mut buf).unwrap_or(0);
+    buf[..n].contains(&0)
 }

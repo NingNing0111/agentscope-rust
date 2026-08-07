@@ -1,6 +1,7 @@
 //! Workspace backend trait + LocalBackend implementation.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use crate::error::WorkspaceError;
 
@@ -89,10 +90,257 @@ pub trait WorkspaceBackend: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
+// ContainedBackend — enforces workdir containment for any inner backend
+// ---------------------------------------------------------------------------
+
+/// A backend wrapper that restricts all file/shell operations to a root
+/// directory. Absolute paths, `..` traversals, and symlink escapes are
+/// rejected.
+///
+/// Path-only helpers (join, basename, dirname, normpath, is_absolute) are
+/// forwarded to the inner backend unchanged.
+pub struct ContainedBackend {
+    inner: Arc<dyn WorkspaceBackend>,
+    root: PathBuf,
+}
+
+impl ContainedBackend {
+    /// Wrap `inner` so every path operation is confined within `root`.
+    #[must_use]
+    pub fn new(inner: Arc<dyn WorkspaceBackend>, root: PathBuf) -> Self {
+        Self { inner, root }
+    }
+
+    /// Canonicalize `path` (joining with root if relative), then check it
+    /// starts with `self.root`. Returns the contained path or an error.
+    fn contain(&self, path: &str) -> Result<String, WorkspaceError> {
+        self.contain_path(path, true)
+    }
+
+    /// Same as `contain` but allows paths that don't yet exist by resolving
+    /// through the nearest existing ancestor.
+    fn contain_for_write(&self, path: &str) -> Result<String, WorkspaceError> {
+        self.contain_path(path, false)
+    }
+
+    /// Internal implementation.
+    fn contain_path(&self, path: &str, must_exist: bool) -> Result<String, WorkspaceError> {
+        // 1. Reject paths with `..` components before any resolution
+        if path_has_parent_component(path) {
+            return Err(WorkspaceError::PathTraversal {
+                path: path.to_string(),
+            });
+        }
+
+        let p = Path::new(path);
+        let joined = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.root.join(p)
+        };
+
+        if must_exist {
+            // Path must exist (e.g. read, is_dir) — canonicalize whole path
+            let canon = joined
+                .canonicalize()
+                .map_err(|e| WorkspaceError::BackendError {
+                    message: format!("path containment canonicalize '{path}': {e}"),
+                })?;
+            if !canon.starts_with(&self.root) {
+                return Err(WorkspaceError::PathTraversal {
+                    path: canon.display().to_string(),
+                });
+            }
+            Ok(canon.to_string_lossy().to_string())
+        } else {
+            // Path may not exist yet (e.g. write, exec_shell cwd) — walk up
+            // to the nearest existing ancestor, canonicalize that, then
+            // re-join the non-existent tail.
+            let mut existing = joined.clone();
+            let mut missing: Vec<std::ffi::OsString> = Vec::new();
+            while !existing.exists() {
+                let Some(name) = existing.file_name() else {
+                    break;
+                };
+                missing.push(name.to_os_string());
+                let Some(up) = existing.parent() else {
+                    break;
+                };
+                existing = up.to_path_buf();
+            }
+            let canon_existing =
+                existing
+                    .canonicalize()
+                    .map_err(|e| WorkspaceError::BackendError {
+                        message: format!("path containment canonicalize parent of '{path}': {e}"),
+                    })?;
+            if !canon_existing.starts_with(&self.root) {
+                return Err(WorkspaceError::PathTraversal {
+                    path: canon_existing.display().to_string(),
+                });
+            }
+            let mut result = canon_existing.clone();
+            for comp in missing.iter().rev() {
+                result = result.join(comp);
+            }
+            // Final symlink check: if the resolved leaf exists as a symlink,
+            // resolve and verify containment
+            if let Ok(meta) = std::fs::symlink_metadata(&result)
+                && meta.file_type().is_symlink()
+            {
+                let canon = result
+                    .canonicalize()
+                    .map_err(|e| WorkspaceError::BackendError {
+                        message: format!("path containment symlink resolve '{path}': {e}"),
+                    })?;
+                if !canon.starts_with(&self.root) {
+                    return Err(WorkspaceError::PathTraversal {
+                        path: canon.display().to_string(),
+                    });
+                }
+                return Ok(canon.to_string_lossy().to_string());
+            }
+            // Verify no component in the missing tail is a symlink escape
+            let start = canon_existing.clone();
+            let mut walk = start;
+            for comp in missing.iter().rev() {
+                walk = walk.join(comp);
+                if walk.exists()
+                    && let Ok(meta) = std::fs::symlink_metadata(&walk)
+                    && meta.file_type().is_symlink()
+                {
+                    let resolved =
+                        walk.canonicalize()
+                            .map_err(|e| WorkspaceError::BackendError {
+                                message: format!("path containment symlink in path '{path}': {e}"),
+                            })?;
+                    if !resolved.starts_with(&self.root) {
+                        return Err(WorkspaceError::PathTraversal {
+                            path: resolved.display().to_string(),
+                        });
+                    }
+                }
+            }
+            Ok(result.to_string_lossy().to_string())
+        }
+    }
+}
+
+fn path_has_parent_component(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+}
+
+#[async_trait::async_trait]
+impl WorkspaceBackend for ContainedBackend {
+    async fn exec_shell(
+        &self,
+        cmd: &[&str],
+        cwd: &str,
+        timeout_secs: Option<f64>,
+    ) -> Result<ExecOutput, WorkspaceError> {
+        // cwd must exist (we're about to run a command there)
+        let contained_cwd = self.contain(cwd)?;
+        self.inner
+            .exec_shell(cmd, &contained_cwd, timeout_secs)
+            .await
+    }
+
+    async fn read_file(&self, path: &str) -> Result<Vec<u8>, WorkspaceError> {
+        let contained = self.contain(path)?;
+        self.inner.read_file(&contained).await
+    }
+
+    async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), WorkspaceError> {
+        let contained = self.contain_for_write(path)?;
+        self.inner.write_file(&contained, data).await
+    }
+
+    async fn is_dir(&self, path: &str) -> Result<bool, WorkspaceError> {
+        // is_dir must work for non-existent paths (returns false)
+        let contained = self.contain_for_write(path)?;
+        self.inner.is_dir(&contained).await
+    }
+
+    async fn list_dir(&self, path: &str, recursive: bool) -> Result<Vec<String>, WorkspaceError> {
+        // list_dir on a non-existent path should return empty vec
+        let contained = self.contain_for_write(path)?;
+        self.inner.list_dir(&contained, recursive).await
+    }
+
+    async fn delete_path(&self, path: &str) -> Result<(), WorkspaceError> {
+        // Check containment first — if the caller tries to escape, reject.
+        // If the path doesn't exist but is within root, the inner backend
+        // handles idempotency. Use contain (must_exist=false implicitly via
+        // contain_for_write since we permit deleting non-existent paths).
+        let contained = self.contain_for_write(path)?;
+        self.inner.delete_path(&contained).await
+    }
+
+    async fn file_exists(&self, path: &str) -> Result<bool, WorkspaceError> {
+        // file_exists must work for non-existent paths (returns false).
+        let contained = self.contain_for_write(path)?;
+        self.inner.file_exists(&contained).await
+    }
+
+    async fn stat_mtime(&self, path: &str) -> Result<Option<f64>, WorkspaceError> {
+        let contained = self.contain_for_write(path)?;
+        self.inner.stat_mtime(&contained).await
+    }
+
+    // Pure path helpers — forwarded unchanged
+    fn join_path(&self, a: &str, b: &str) -> String {
+        self.inner.join_path(a, b)
+    }
+    fn basename(&self, path: &str) -> String {
+        self.inner.basename(path)
+    }
+    fn dirname(&self, path: &str) -> String {
+        self.inner.dirname(path)
+    }
+    fn normpath(&self, path: &str) -> String {
+        self.inner.normpath(path)
+    }
+    fn is_absolute(&self, path: &str) -> bool {
+        self.inner.is_absolute(path)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Process group helpers (defect 2 fix)
+// ---------------------------------------------------------------------------
+
+/// Kill the process group led by `child_pid`. The child is spawned with
+/// `setsid()` so it becomes the session leader; signalling the negative pid
+/// reaps the direct child *and* any grandchildren that inherited its
+/// stdout/stderr pipes (e.g. `sh -c 'sleep 1000 &'`), which would otherwise
+/// survive the direct child, keep the pipes open, and leak.
+/// Best-effort: a missing/unknown pid or a group that no longer exists is
+/// silently ignored.
+#[cfg(unix)]
+fn kill_process_group(child_pid: Option<u32>) {
+    if let Some(pid) = child_pid {
+        use nix::sys::signal::{Signal, killpg};
+        use nix::unistd::Pid;
+        let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_child_pid: Option<u32>) {}
+
+// ---------------------------------------------------------------------------
 // LocalBackend
 // ---------------------------------------------------------------------------
 
 /// Filesystem backend that delegates to `tokio::fs` and `tokio::process`.
+///
+/// NOTE: `LocalBackend` itself does **not** enforce workdir containment.
+/// For a contained execution environment use `ContainedBackend` wrapping a
+/// `LocalBackend` — this is what `LocalWorkspace` does internally so that
+/// all `WorkspaceBase::get_backend()` callers automatically benefit from
+/// path isolation.
 #[derive(Debug, Clone)]
 pub struct LocalBackend;
 
@@ -123,13 +371,11 @@ impl WorkspaceBackend for LocalBackend {
                 message: "exec_shell: cmd must not be empty".into(),
             });
         }
-        let mut child = tokio::process::Command::new(cmd[0])
+
+        let mut command = tokio::process::Command::new(cmd[0]);
+        command
             .args(&cmd[1..])
             .current_dir(cwd)
-            // Do not leak the host environment (API keys etc.) into commands the
-            // agent can run, like the sandbox backend. Inherit PATH so commands
-            // that need host tooling (/usr/local/bin, brew, node) still resolve
-            // — clearing it outright breaks legitimate agent workflows.
             .env_clear()
             .env(
                 "PATH",
@@ -139,18 +385,26 @@ impl WorkspaceBackend for LocalBackend {
             .env("TMPDIR", std::env::temp_dir())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| WorkspaceError::BackendError {
-                message: format!("failed to spawn command '{}': {e}", cmd[0]),
-            })?;
+            .kill_on_drop(true);
 
-        // Read stdout/stderr from dedicated tasks so we can wait on the child
-        // with a timeout and still collect the pipes afterwards. Reads are
-        // bounded so an unbounded producer cannot exhaust memory.
+        // Put the child in its own process group so we can later reap
+        // grandchildren via killpg (defect 2 fix).
+        #[cfg(unix)]
+        {
+            command.process_group(0);
+        }
+
+        let mut child = command.spawn().map_err(|e| WorkspaceError::BackendError {
+            message: format!("failed to spawn command '{}': {e}", cmd[0]),
+        })?;
+
+        let child_pid = child.id();
+
+        // Spawn stdout/stderr read tasks. Reads are bounded so an unbounded
+        // producer cannot exhaust memory.
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
-        let mut stdout_task = tokio::spawn(async move {
+        let stdout_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
             if let Some(s) = stdout_pipe {
                 use tokio::io::AsyncReadExt;
@@ -160,7 +414,7 @@ impl WorkspaceBackend for LocalBackend {
             }
             Ok::<Vec<u8>, std::io::Error>(bytes)
         });
-        let mut stderr_task = tokio::spawn(async move {
+        let stderr_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
             if let Some(s) = stderr_pipe {
                 use tokio::io::AsyncReadExt;
@@ -171,78 +425,113 @@ impl WorkspaceBackend for LocalBackend {
             Ok::<Vec<u8>, std::io::Error>(bytes)
         });
 
-        let wait_fut = child.wait();
-        let mut exit_code = match timeout_secs {
-            Some(secs) if secs > 0.0 => {
-                match tokio::time::timeout(std::time::Duration::from_secs_f64(secs), wait_fut)
-                    .await
-                {
-                    Ok(res) => res
-                        .map_err(|e| WorkspaceError::BackendError {
-                            message: format!("failed to wait on command '{}': {e}", cmd[0]),
-                        })?
-                        .code()
-                        .unwrap_or(-1),
-                    Err(_) => {
-                        // Honor the timeout like the sandbox backend does:
-                        // kill the child and report a timeout exit code.
-                        let _ = child.kill().await;
-                        let _ = child.wait().await;
-                        124 // matches the `timeout` command
+        // Bundle reads into a single future so we never hold `&mut JoinHandle`
+        // across a `tokio::select!` boundary (which can cause the dreaded
+        // "JoinHandle polled after completion" panic when a branch wins).
+        // The inner function flattens errors to Option<Vec<u8>> for simplicity.
+        let mut reads_done = tokio::spawn(async move {
+            let out = match stdout_task.await {
+                Ok(Ok(data)) => data,
+                _ => Vec::new(),
+            };
+            let err = match stderr_task.await {
+                Ok(Ok(data)) => data,
+                _ => Vec::new(),
+            };
+            (out, err)
+        });
+
+        // Build optional timeout future.
+        let explicit_timeout = timeout_secs.filter(|s| *s > 0.0);
+
+        // RACE: child.wait() vs reads-completion vs timeout.
+        //
+        // This fixes two defect-2 problems:
+        //   (a) `yes` overflow: reads finish at 1 MiB cap, child blocks
+        //       writing to full pipe — child.wait() hangs forever.
+        //   (b) Timeout: kill the entire session, not just the direct child.
+        let exit_code: i32;
+        let stdout: Vec<u8>;
+        let stderr: Vec<u8>;
+
+        tokio::select! {
+            // Case 1: Child exited on its own (normal completion)
+            status = child.wait() => {
+                exit_code = status
+                    .map_err(|e| WorkspaceError::BackendError {
+                        message: format!("failed to wait on command '{}': {e}", cmd[0]),
+                    })?
+                    .code()
+                    .unwrap_or(-1);
+                // Child has exited, so its pipes are closed. Join reads with a
+                // generous timeout (reads should complete quickly now).
+                let read_timeout = explicit_timeout
+                    .map(std::time::Duration::from_secs_f64)
+                    .unwrap_or(std::time::Duration::from_secs(300));
+                let read_result = tokio::time::timeout(read_timeout, &mut reads_done).await;
+                match read_result {
+                    Ok(Ok((out, err))) => {
+                        stdout = out;
+                        stderr = err;
+                    }
+                    _ => {
+                        // Reads timed out after child exit — unusual, capture nothing
+                        reads_done.abort();
+                        stdout = Vec::new();
+                        stderr = Vec::new();
                     }
                 }
             }
-            _ => wait_fut
-                .await
-                .map_err(|e| WorkspaceError::BackendError {
-                    message: format!("failed to wait on command '{}': {e}", cmd[0]),
-                })?
-                .code()
-                .unwrap_or(-1),
-        };
 
-        // A grandchild that inherited the pipe keeps it open, so the read task
-        // would never reach EOF. Bound the joins with the same deadline so a
-        // command like `sh -c 'sleep 1000 &'` cannot hang the caller. When no
-        // timeout was requested, use a generous backstop (5 minutes) instead of
-        // an arbitrary 30s that would kill legitimate long-running reads.
-        let read_timeout = timeout_secs
-            .filter(|s| *s > 0.0)
-            .map(std::time::Duration::from_secs_f64)
-            .unwrap_or(std::time::Duration::from_secs(300));
-        // `tokio::select!` with a `&mut` handle (rather than `timeout`) keeps the
-        // JoinHandle alive so the timeout branch can abort the detached read
-        // task instead of letting it hold the pipe forever (audit S3).
-        let stdout = tokio::select! {
-            joined = &mut stdout_task => joined
-                .map_err(|e| WorkspaceError::BackendError {
-                    message: format!("stdout task join failed: {e}"),
-                })?
-                .map_err(|e| WorkspaceError::BackendError {
-                    message: format!("stdout read failed: {e}"),
-                })?,
-            _ = tokio::time::sleep(read_timeout) => {
+            // Case 2: Explicit timeout fired
+            _ = async {
+                if let Some(secs) = explicit_timeout {
+                    tokio::time::sleep(std::time::Duration::from_secs_f64(secs)).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
+                kill_process_group(child_pid);
                 let _ = child.kill().await;
+                let _ = child.wait().await;
                 exit_code = 124;
-                stdout_task.abort();
-                Vec::new()
+                reads_done.abort();
+                stdout = Vec::new();
+                stderr = Vec::new();
             }
-        };
-        let stderr = tokio::select! {
-            joined = &mut stderr_task => joined
-                .map_err(|e| WorkspaceError::BackendError {
-                    message: format!("stderr task join failed: {e}"),
-                })?
-                .map_err(|e| WorkspaceError::BackendError {
-                    message: format!("stderr read failed: {e}"),
-                })?,
-            _ = tokio::time::sleep(read_timeout) => {
-                let _ = child.kill().await;
-                exit_code = 124;
-                stderr_task.abort();
-                Vec::new()
+
+            // Case 3: Reads completed before child exited (output overflow)
+            read_result = &mut reads_done => {
+                // Reads finished — get the output
+                let (out, err) = match read_result {
+                    Ok((out, err)) => (out, err),
+                    Err(_) => (Vec::new(), Vec::new()),
+                };
+                stdout = out;
+                stderr = err;
+
+                // Did the child also exit?
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Child exited normally (reads just caught up)
+                        exit_code = status.code().unwrap_or(-1);
+                    }
+                    Ok(None) => {
+                        // Child still running, blocked on pipe — overflow kill
+                        kill_process_group(child_pid);
+                        let _ = child.kill().await;
+                        if let Ok(status) = child.wait().await {
+                            exit_code = status.code().unwrap_or(-1);
+                        } else {
+                            exit_code = -1;
+                        }
+                    }
+                    Err(_) => {
+                        exit_code = -1;
+                    }
+                }
             }
-        };
+        }
 
         Ok(ExecOutput {
             stdout,
@@ -252,16 +541,17 @@ impl WorkspaceBackend for LocalBackend {
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, WorkspaceError> {
-        let file = tokio::fs::File::open(path).await.map_err(|e| {
-            WorkspaceError::BackendError {
+        let file = tokio::fs::File::open(path)
+            .await
+            .map_err(|e| WorkspaceError::BackendError {
                 message: format!("read_file '{path}': {e}"),
-            }
-        })?;
-        let meta = file.metadata().await.map_err(|e| {
-            WorkspaceError::BackendError {
+            })?;
+        let meta = file
+            .metadata()
+            .await
+            .map_err(|e| WorkspaceError::BackendError {
                 message: format!("read_file '{path}': {e}"),
-            }
-        })?;
+            })?;
         // Cap the read so an agent-created giant file cannot be loaded wholly
         // into memory (OOM) — mirrors the sandbox `read_file` cap (round-4 M29).
         if meta.len() > MAX_READ_FILE_BYTES as u64 {

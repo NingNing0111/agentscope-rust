@@ -10,7 +10,7 @@ use crate::card::ModelCard;
 use crate::json_repair::json_repair;
 use crate::model_error::{ModelError, ModelErrorKind};
 use crate::response::{ChatResponse, StructuredResponse};
-use crate::schema_flat::flatten_json_schema_with_defs;
+use crate::schema_flat::flatten_json_schema_with_defs_checked;
 use crate::tool_choice::ToolChoice;
 
 /// Result type for `ChatModel::call()`.
@@ -258,7 +258,12 @@ pub trait ChatModel: Send + Sync {
         messages: &[Msg],
         structured_model: &JsonValue,
     ) -> Result<StructuredResponse, ModelError> {
-        let json_schema = flatten_json_schema_with_defs(structured_model);
+        let json_schema = flatten_json_schema_with_defs_checked(structured_model).map_err(|e| {
+            ModelError::FormatError {
+                context: "structured_output".to_string(),
+                source: crate::formatter::FormatError::InvalidMessage(e.reason),
+            }
+        })?;
 
         let tool_schema = serde_json::json!({
             "type": "function",

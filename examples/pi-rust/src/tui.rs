@@ -127,7 +127,6 @@ enum UiMsg {
 
 /// 集中定义的语义配色,替换散落在渲染方法里的字面色值。
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 struct Theme {
     accent: Color,   // 主色:logo、工具名、输入提示符 `>`、主面板边框
     success: Color,  // 成功:工具 `→ success`、`you` 前缀、idle 状态点
@@ -572,15 +571,15 @@ impl App {
 
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let busy_style = if self.busy {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(self.theme.warn)
         } else {
-            Style::default().fg(Color::Green)
+            Style::default().fg(self.theme.success)
         };
         let state = if self.busy { " running " } else { " idle " };
         let line = Line::from(vec![
             Span::styled(
                 " pi-rust ",
-                Style::default().fg(Color::Black).bg(Color::Cyan),
+                Style::default().fg(Color::Black).bg(self.theme.accent),
             ),
             Span::raw(format!(
                 " {} · {} · mode {} · cwd {} · skills {} ",
@@ -628,16 +627,13 @@ impl App {
             frame.render_widget(block, area);
             return;
         }
-        let lines = self.items_to_lines();
-        let total = lines.len();
-        let offset = if self.follow_bottom {
-            total.saturating_sub(inner.height as usize)
-        } else {
-            (self.scroll as usize).min(total.saturating_sub(inner.height as usize))
-        };
-        self.scroll = offset as u16;
-        let paragraph = Paragraph::new(Text::from(lines))
-            .scroll((offset as u16, 0))
+        let text = Text::from(self.items_to_lines());
+        // wrap 后的物理总高(长段落被 wrap 拆成多物理行,逻辑行数会低估)
+        let total = wrapped_height(&text, inner.width);
+        let offset = scroll_offset(total, inner.height, self.follow_bottom, self.scroll);
+        self.scroll = offset;
+        let paragraph = Paragraph::new(text)
+            .scroll((offset, 0))
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner);
         frame.render_widget(block, area);
@@ -671,15 +667,13 @@ impl App {
         if area.height == 0 {
             return;
         }
-        let lines = self.items_to_lines();
-        let total = lines.len();
-        let offset = if self.follow_bottom {
-            total.saturating_sub(area.height as usize)
-        } else {
-            (self.scroll as usize).min(total.saturating_sub(area.height as usize))
-        };
-        self.scroll = offset as u16;
-        let paragraph = Paragraph::new(Text::from(lines)).scroll((offset as u16, 0));
+        let text = Text::from(self.items_to_lines());
+        let total = wrapped_height(&text, area.width);
+        let offset = scroll_offset(total, area.height, self.follow_bottom, self.scroll);
+        self.scroll = offset;
+        let paragraph = Paragraph::new(text)
+            .scroll((offset, 0))
+            .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 
@@ -722,7 +716,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" {title} "))
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_style(Style::default().fg(self.theme.accent));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
         frame.render_widget(
@@ -739,7 +733,7 @@ impl App {
                     for sub in text.split('\n') {
                         lines.push(Line::from(Span::styled(
                             sub.to_string(),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(self.theme.muted),
                         )));
                     }
                 }
@@ -867,6 +861,39 @@ impl App {
             })
             .collect()
     }
+}
+
+/// Estimate the number of physical (wrapped) lines for a `Text` in a given
+/// column width.  ratatui `WordWrapper` breaks at word boundaries, so
+/// `line.width().div_ceil(width)` gives a reasonable upper-bound that is
+/// tighter than naive line-count.
+fn wrapped_height(text: &Text<'_>, area_width: u16) -> usize {
+    if area_width < 1 {
+        return text.lines.len();
+    }
+    let width = area_width as usize;
+    let mut total = 0usize;
+    for line in &text.lines {
+        let line_width = line.width();
+        let wrapped = if line_width == 0 {
+            1
+        } else {
+            line_width.div_ceil(width)
+        };
+        total += wrapped;
+    }
+    total
+}
+
+/// Calculate a scroll offset — pure function, testable independently.
+fn scroll_offset(total: usize, viewport: u16, follow_bottom: bool, scroll: u16) -> u16 {
+    let threshold = total.saturating_sub(viewport as usize);
+    let offset = if follow_bottom {
+        threshold
+    } else {
+        (scroll as usize).min(threshold)
+    };
+    offset as u16
 }
 
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
@@ -1758,5 +1785,55 @@ mod tests {
         // 语义:accent 主色、success/error/warn 为可辨识色。
         assert_ne!(theme.success, theme.error);
         assert_ne!(theme.accent, theme.muted);
+    }
+
+    #[test]
+    fn scroll_offset_follow_bottom() {
+        // total > viewport: offset = total - viewport
+        assert_eq!(scroll_offset(100, 10, true, 5), 90);
+        // total == viewport: offset = 0
+        assert_eq!(scroll_offset(10, 10, true, 5), 0);
+        // total < viewport: offset = 0 (saturating)
+        assert_eq!(scroll_offset(5, 10, true, 5), 0);
+    }
+
+    #[test]
+    fn scroll_offset_manual_scroll() {
+        // scroll within bounds
+        assert_eq!(scroll_offset(100, 10, false, 5), 5);
+        // scroll clamped to threshold
+        assert_eq!(scroll_offset(100, 10, false, 95), 90);
+        // zero scroll
+        assert_eq!(scroll_offset(100, 10, false, 0), 0);
+    }
+
+    #[test]
+    fn wrapped_height_single_line() {
+        let line = Line::from("1234567890");
+        let text = Text::from(line);
+        // 10-char line in 5-wide viewport → 2 physical lines
+        assert_eq!(wrapped_height(&text, 5), 2);
+        // 10-char line in 20-wide viewport → 1 physical line
+        assert_eq!(wrapped_height(&text, 20), 1);
+    }
+
+    #[test]
+    fn wrapped_height_multi_line() {
+        let lines = vec![
+            Line::from("short"),
+            Line::from("a very long line that wraps"),
+            Line::from("x"),
+        ];
+        let text = Text::from(lines);
+        let h = wrapped_height(&text, 10);
+        // short(5)+very long(29→3)+x(1) = 5 lines
+        assert_eq!(h, 5);
+    }
+
+    #[test]
+    fn wrapped_height_zero_width_falls_back_to_logical() {
+        let lines = vec![Line::from("hello"), Line::from("world")];
+        let text = Text::from(lines);
+        assert_eq!(wrapped_height(&text, 0), 2);
     }
 }

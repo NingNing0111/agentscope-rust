@@ -1238,9 +1238,9 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_updates_latest_open_tool_call() {
+    fn tool_result_binds_by_tool_call_id() {
         let mut app = App::new(&config(), 0);
-        // 两个并行工具调用(事件流允许交错),结果必须按 id 精确绑定。
+        // 两个并行工具调用(事件流允许交错),结果按 tool_call_id 精确绑定而非看顺序。
         for (id, name, input) in [
             ("tc-a", "Bash", r#"{"command":"ls"}"#),
             ("tc-b", "Read", r#"{"path":"a.txt"}"#),

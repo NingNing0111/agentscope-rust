@@ -15,7 +15,7 @@
 
 #![deny(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 
 use agent_scope_agent::Agent;
@@ -159,6 +159,9 @@ pub struct App {
     follow_bottom: bool,
     mode: Mode,
     confirm: Option<ConfirmUi>,
+    /// 确认完成后到 `TurnDone` 之间,抑制重跑 turn 的工具调用进入消息流:
+    /// 已批准的工具操作已在确认面板中呈现,无需在输入框上方重复展示。
+    suppress_tool_items: bool,
     busy: bool,
     status: String,
     help_text: String,
@@ -186,6 +189,7 @@ impl App {
             follow_bottom: true,
             mode: Mode::Input,
             confirm: None,
+            suppress_tool_items: false,
             busy: false,
             status: String::new(),
             help_text,
@@ -337,6 +341,9 @@ impl App {
             }
             self.mode = Mode::Input;
             self.status = "Ready".to_string();
+            // 批准(或拒绝)的操作已通过确认面板呈现;后续重跑 turn 的工具
+            // 调用不再进入消息流,避免在输入框上方重复展示。
+            self.suppress_tool_items = true;
         }
     }
 
@@ -350,6 +357,16 @@ impl App {
                 false
             }
             UiMsg::ConfirmRequest { candidates, reply } => {
+                // 待确认的工具操作已进入确认面板,将其调用行从消息流移除,
+                // 避免确认完成后仍残留在输入框上方。
+                let confirming: HashSet<String> = candidates
+                    .iter()
+                    .map(|candidate| candidate.tool_call_id.clone())
+                    .collect();
+                self.items.retain(|item| match item {
+                    UiItem::ToolCall { tool_call_id, .. } => !confirming.contains(tool_call_id),
+                    _ => true,
+                });
                 self.mode = Mode::Confirm;
                 self.confirm = Some(ConfirmUi {
                     candidates,
@@ -378,6 +395,7 @@ impl App {
             }
             UiMsg::TurnDone => {
                 self.busy = false;
+                self.suppress_tool_items = false;
                 self.status = "Ready".to_string();
                 self.follow_bottom = true;
                 false
@@ -394,7 +412,9 @@ impl App {
                 self.tool_call_names
                     .insert(start.tool_call_id.clone(), start.tool_call_name.clone());
             }
-            AgentEvent::ToolCallEnd(end) => {
+            // 确认完成后的重跑 turn 抑制工具行:已批准的操作在确认面板中
+            // 呈现,这里不再进入消息流,避免在输入框上方重复展示。
+            AgentEvent::ToolCallEnd(end) if !self.suppress_tool_items => {
                 let name = self
                     .tool_call_names
                     .get(&end.tool_call_id)
@@ -409,7 +429,7 @@ impl App {
                 });
                 self.follow_bottom = true;
             }
-            AgentEvent::ToolResultTextDelta(delta) => {
+            AgentEvent::ToolResultTextDelta(delta) if !self.suppress_tool_items => {
                 let entry = self
                     .tool_outputs
                     .entry(delta.tool_call_id.clone())
@@ -418,7 +438,7 @@ impl App {
                     entry.push_str(&delta.delta);
                 }
             }
-            AgentEvent::ToolResultEnd(end) => {
+            AgentEvent::ToolResultEnd(end) if !self.suppress_tool_items => {
                 let line = tool_result_line(&self.tool_outputs, end);
                 // 按 tool_call_id 精确匹配,原地绑定结果到对应调用项。
                 let tool_call_id = end.tool_call_id.clone();
@@ -563,7 +583,7 @@ impl App {
         self.render_input(frame, input);
 
         match self.mode {
-            Mode::Confirm => self.render_overlay(frame, "confirm", self.confirm_lines()),
+            Mode::Confirm => self.render_confirm_panel(frame, main),
             Mode::Help => self.render_overlay(frame, "help", self.help_lines()),
             Mode::Input => {}
         }
@@ -719,6 +739,34 @@ impl App {
             .border_style(Style::default().fg(self.theme.accent));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
+        frame.render_widget(
+            Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+            inner,
+        );
+    }
+
+    /// Draw the confirmation panel anchored to the bottom of the message area,
+    /// directly above the input line — never centered over the conversation.
+    fn render_confirm_panel(&self, frame: &mut Frame, area: Rect) {
+        let lines = self.confirm_lines();
+        if area.height == 0 {
+            return;
+        }
+        // 内容行 + 上下边框。
+        let height = (lines.len() as u16 + 2).min(area.height);
+        let panel = Rect {
+            x: area.x,
+            y: area.y + area.height.saturating_sub(height),
+            width: area.width,
+            height,
+        };
+        frame.render_widget(ratatui::widgets::Clear, panel);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" confirm ")
+            .border_style(Style::default().fg(self.theme.warn));
+        let inner = block.inner(panel);
+        frame.render_widget(block, panel);
         frame.render_widget(
             Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
             inner,
@@ -1457,11 +1505,13 @@ mod tests {
         app.handle_ui_msg(UiMsg::ConfirmRequest {
             candidates: vec![
                 ConfirmationCandidate {
+                    tool_call_id: "tc-1".into(),
                     tool_name: "Bash".into(),
                     fingerprint: "bash:rm a".into(),
                     description: "[Bash] $ rm a".into(),
                 },
                 ConfirmationCandidate {
+                    tool_call_id: "tc-2".into(),
                     tool_name: "Bash".into(),
                     fingerprint: "bash:rm b".into(),
                     description: "[Bash] $ rm b".into(),
@@ -1486,16 +1536,19 @@ mod tests {
         app.handle_ui_msg(UiMsg::ConfirmRequest {
             candidates: vec![
                 ConfirmationCandidate {
+                    tool_call_id: "tc-3".into(),
                     tool_name: "Bash".into(),
                     fingerprint: "bash:rm a".into(),
                     description: "[Bash] $ rm a".into(),
                 },
                 ConfirmationCandidate {
+                    tool_call_id: "tc-4".into(),
                     tool_name: "Bash".into(),
                     fingerprint: "bash:rm b".into(),
                     description: "[Bash] $ rm b".into(),
                 },
                 ConfirmationCandidate {
+                    tool_call_id: "tc-5".into(),
                     tool_name: "Bash".into(),
                     fingerprint: "bash:rm c".into(),
                     description: "[Bash] $ rm c".into(),
@@ -1506,6 +1559,102 @@ mod tests {
         app.handle_key(key(KeyCode::Char('d')), &agent_tx);
         assert_eq!(app.mode, Mode::Input);
         assert_eq!(reply_rx.try_recv().unwrap(), vec![false, false, false]);
+    }
+
+    #[test]
+    fn confirm_request_removes_pending_tool_items() {
+        let (_agent_tx, _agent_rx) = mpsc::unbounded_channel::<AgentCmd>();
+        let mut app = App::new(&config(), 0);
+        // 消息流中已有两条待确认的工具调用行 + 一条无关系统行。
+        app.items.push(UiItem::ToolCall {
+            name: "Bash".into(),
+            summary: "[Bash] $ rm a".into(),
+            tool_call_id: "tc-a".into(),
+            result: None,
+        });
+        app.items.push(UiItem::ToolCall {
+            name: "Bash".into(),
+            summary: "[Bash] $ rm b".into(),
+            tool_call_id: "tc-b".into(),
+            result: None,
+        });
+        app.items.push(UiItem::System("keep me".into()));
+
+        let (reply_tx, _reply_rx) = oneshot::channel();
+        app.handle_ui_msg(UiMsg::ConfirmRequest {
+            candidates: vec![
+                ConfirmationCandidate {
+                    tool_call_id: "tc-a".into(),
+                    tool_name: "Bash".into(),
+                    fingerprint: "bash:rm a".into(),
+                    description: "[Bash] $ rm a".into(),
+                },
+                ConfirmationCandidate {
+                    tool_call_id: "tc-b".into(),
+                    tool_name: "Bash".into(),
+                    fingerprint: "bash:rm b".into(),
+                    description: "[Bash] $ rm b".into(),
+                },
+            ],
+            reply: reply_tx,
+        });
+
+        assert_eq!(app.mode, Mode::Confirm);
+        assert_eq!(app.items.len(), 1, "待确认工具行应从消息流移除,只留无关行");
+        assert!(matches!(app.items[0], UiItem::System(_)));
+    }
+
+    #[test]
+    fn retry_tool_items_suppressed_until_turn_done() {
+        let (agent_tx, _agent_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(&config(), 0);
+        let (reply_tx, _reply_rx) = oneshot::channel();
+        app.handle_ui_msg(UiMsg::ConfirmRequest {
+            candidates: vec![ConfirmationCandidate {
+                tool_call_id: "tc-a".into(),
+                tool_name: "Bash".into(),
+                fingerprint: "bash:rm a".into(),
+                description: "[Bash] $ rm a".into(),
+            }],
+            reply: reply_tx,
+        });
+        // 批准 → 确认完成,进入抑制期(重跑 turn 的工具不再展示)。
+        app.handle_key(key(KeyCode::Char('y')), &agent_tx);
+        assert!(app.suppress_tool_items, "确认完成后应进入抑制期");
+
+        // 重跑 turn 的工具事件:调用行与结果行都不应进入消息流。
+        app.consume_event(AgentEvent::ToolCallEnd(
+            agent_scope_event::ToolCallEndEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                tool_call_id: "tc-a".into(),
+                input: Some(r#"{"command":"rm a"}"#.into()),
+            },
+        ));
+        app.consume_event(AgentEvent::ToolResultEnd(
+            agent_scope_event::ToolResultEndEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                tool_call_id: "tc-a".into(),
+                state: agent_scope_message::ToolResultState::Success,
+                metadata: Default::default(),
+                output: Some("exit_code: 0".into()),
+            },
+        ));
+        assert_eq!(app.items.len(), 0, "重跑 turn 的工具行不应进入消息流");
+
+        // TurnDone → 抑制结束,新工具正常展示。
+        app.handle_ui_msg(UiMsg::TurnDone);
+        assert!(!app.suppress_tool_items, "TurnDone 后应解除抑制");
+        app.consume_event(AgentEvent::ToolCallEnd(
+            agent_scope_event::ToolCallEndEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                tool_call_id: "tc-b".into(),
+                input: Some(r#"{"command":"ls"}"#.into()),
+            },
+        ));
+        assert_eq!(app.items.len(), 1, "抑制结束后新工具行应正常进入消息流");
     }
 
     #[test]

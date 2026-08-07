@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use agent_scope_memory::{Memory, MemoryEntry, MemoryType};
 use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
-use agent_scope_tool::{FunctionTool, SkillViewer, ToolKit};
+use agent_scope_tool::{FunctionTool, LocalSkillLoader, SkillViewer, ToolKit};
 use agent_scope_workspace::Skill;
 use regex::Regex;
 use schemars::JsonSchema;
@@ -301,22 +301,26 @@ impl ToolPermissionDecision {
     }
 }
 
-pub fn build_toolkit(state: ToolState, skills: Vec<Skill>) -> ToolKit {
+pub fn build_toolkit(state: ToolState, skills: Vec<Skill>, skills_dir: PathBuf) -> ToolKit {
     let state = Arc::new(state);
     let mut toolkit = ToolKit::new();
-    if skills.is_empty() {
-        toolkit.remove("Skill");
-    } else {
-        toolkit.remove("Skill");
-        for skill in &skills {
-            toolkit.add_skill(skill.clone());
-        }
-        let skill_map: HashMap<String, Skill> = skills
+    // 启动快照注册:供 `get_skill_instructions` 生成 system prompt 的
+    // <agent-skills> 静态列表。
+    for skill in &skills {
+        toolkit.add_skill(skill.clone());
+    }
+    // Skill 工具实时查询 workspace/skills 目录:运行中复制进来的新 skill
+    // 无需重启即可被查看到(复制目录后立即生效)。回调内部每次重新扫描,
+    // 而非启动时快照。必须先移除 `ToolKit::new()` 自动注册的默认 SkillViewer
+    //(基于 skill_cache 快照),否则 `register` 因同名重复而忽略我们的回调。
+    toolkit.remove("Skill");
+    toolkit.register(SkillViewer::new(Box::new(move |_groups| {
+        LocalSkillLoader::new(&skills_dir.to_string_lossy(), true)
+            .list_skills_blocking()
             .into_iter()
             .map(|skill| (skill.name.clone(), skill))
-            .collect();
-        toolkit.register(SkillViewer::new(Box::new(move |_groups| skill_map.clone())));
-    }
+            .collect()
+    })));
 
     let read_state = Arc::clone(&state);
     toolkit.register(FunctionTool::new(

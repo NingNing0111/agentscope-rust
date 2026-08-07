@@ -24,17 +24,28 @@ fn demo_skill() -> Skill {
 #[tokio::test]
 async fn toolkit_exposes_skill_only_when_loaded() {
     let dir = tempfile::tempdir().unwrap();
-    let without_skills = build_toolkit(state(&dir), vec![]);
-    assert!(!without_skills.contains("Skill"));
+    let skills_dir = dir.path().join("skills");
+    std::fs::create_dir_all(skills_dir.join("demo")).unwrap();
+    std::fs::write(
+        skills_dir.join("demo").join("SKILL.md"),
+        "---\nname: demo\ndescription: Demo skill\n---\n\n# Demo\nUse this skill.",
+    )
+    .unwrap();
+
+    // Skill 工具始终注册(运行时动态查询);无启动 skill 时静态指令为空。
+    let without_skills = build_toolkit(state(&dir), vec![], skills_dir.clone());
+    assert!(without_skills.contains("Skill"));
     assert!(without_skills.get_skill_instructions(None).is_empty());
 
-    let with_skills = build_toolkit(state(&dir), vec![demo_skill()]);
+    // 启动快照注册 + 磁盘实时扫描都能查到 demo。
+    let with_skills = build_toolkit(state(&dir), vec![demo_skill()], skills_dir);
     assert!(with_skills.contains("Skill"));
     let instructions = with_skills.get_skill_instructions(None);
     assert!(instructions.contains("<agent-skills>"));
     assert!(instructions.contains("demo"));
     assert!(instructions.contains("Demo skill"));
 
+    // SkillViewer 实时读到磁盘上的 SKILL.md。
     let output = with_skills
         .call_tool(&ToolCallBlock::new(
             "tc-skill".into(),
@@ -50,6 +61,54 @@ async fn toolkit_exposes_skill_only_when_loaded() {
         panic!("Skill should return text output");
     };
     assert!(text.contains("# Demo"));
+}
+
+#[tokio::test]
+async fn skill_viewer_picks_up_newly_added_skill_without_rebuild() {
+    let dir = tempfile::tempdir().unwrap();
+    let skills_dir = dir.path().join("skills");
+    std::fs::create_dir_all(&skills_dir).unwrap();
+
+    // 启动时无 skill。
+    let toolkit = build_toolkit(state(&dir), vec![], skills_dir.clone());
+    let miss = toolkit
+        .call_tool(&ToolCallBlock::new(
+            "tc-skill".into(),
+            "Skill".into(),
+            r#"{"skill":"late"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let ToolExecOutput::Complete(miss_block) = miss else {
+        panic!("Skill should return a complete result");
+    };
+    let ToolOutput::Text(miss_text) = &miss_block.output else {
+        panic!("Skill should return text output");
+    };
+    assert!(miss_text.contains("not found"), "查不到应报 not found");
+
+    // 运行中把 skill 复制进 workspace/skills —— 无需重建 toolkit 即可查到。
+    std::fs::create_dir_all(skills_dir.join("late")).unwrap();
+    std::fs::write(
+        skills_dir.join("late").join("SKILL.md"),
+        "---\nname: late\ndescription: Added later\n---\n\n# Late\nAppears live.",
+    )
+    .unwrap();
+    let hit = toolkit
+        .call_tool(&ToolCallBlock::new(
+            "tc-skill".into(),
+            "Skill".into(),
+            r#"{"skill":"late"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let ToolExecOutput::Complete(hit_block) = hit else {
+        panic!("Skill should return a complete result");
+    };
+    let ToolOutput::Text(hit_text) = &hit_block.output else {
+        panic!("Skill should return text output");
+    };
+    assert!(hit_text.contains("# Late"), "动态装入的 skill 应立即可查");
 }
 
 #[test]
@@ -547,7 +606,7 @@ async fn bash_approval_set_bypasses_confirmation() {
 #[test]
 fn build_toolkit_registers_search_tools() {
     let dir = tempfile::tempdir().unwrap();
-    let toolkit = build_toolkit(state(&dir), vec![]);
+    let toolkit = build_toolkit(state(&dir), vec![], dir.path().join("skills"));
     for name in [
         "Read", "Write", "Edit", "Bash", "Grep", "Glob", "ListDir", "Memory",
     ] {

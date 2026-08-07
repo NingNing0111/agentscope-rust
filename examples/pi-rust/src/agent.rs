@@ -52,7 +52,8 @@ impl AgentRuntime {
         let mut probe_state = ToolState::from_config(&config);
         probe_state.approvals = Arc::clone(&approvals);
         let skills = load_workspace_skills(&config).await?;
-        let skill_probe = build_toolkit(probe_state, skills.clone());
+        let skills_dir = config.workdir.join("workspace").join("skills");
+        let skill_probe = build_toolkit(probe_state, skills.clone(), skills_dir);
         let skill_instructions = skill_probe.get_skill_instructions(None);
         let agent = build_react_agent(
             &config,
@@ -109,9 +110,7 @@ fn build_react_agent(
     skill_instructions: &str,
     approvals: Arc<Mutex<HashSet<String>>>,
 ) -> PiResult<ReActAgent> {
-    let has_skills = !skills.is_empty();
     let model = Arc::new(DashScopeChatModel::new(&config.api_key, &config.model).with_stream(true));
-
     // One shared memory store is used by both the Memory tool (writes) and the
     // library's MemoryMiddleware (index injection + retrieval), so a fact the
     // model saves in one turn is immediately visible to the next turn and to
@@ -148,9 +147,11 @@ fn build_react_agent(
         let mut state = ToolState::from_config(config);
         state.approvals = approvals;
         state.memory = memory.clone();
+        // Skill 工具实时扫描 workspace/skills(与 load_workspace_skills 一致)。
+        let skills_dir = config.workdir.join("workspace").join("skills");
         builder = builder
-            .toolkit(build_toolkit(state, skills))
-            .permission_context(permission_context(has_skills));
+            .toolkit(build_toolkit(state, skills, skills_dir))
+            .permission_context(permission_context());
     }
 
     let mut middlewares: Vec<Arc<dyn Middleware>> = Vec::new();
@@ -199,7 +200,7 @@ fn build_react_agent(
     )?)
 }
 
-fn permission_context(has_skills: bool) -> PermissionContext {
+fn permission_context() -> PermissionContext {
     let mut context = PermissionContext::default();
     context.add_rule(PermissionRule::allow("Read"));
     context.add_rule(PermissionRule::allow("Write"));
@@ -209,9 +210,8 @@ fn permission_context(has_skills: bool) -> PermissionContext {
     context.add_rule(PermissionRule::allow("Glob"));
     context.add_rule(PermissionRule::allow("ListDir"));
     context.add_rule(PermissionRule::allow("Memory"));
-    if has_skills {
-        context.add_rule(PermissionRule::allow("Skill"));
-    }
+    // Skill 始终允许:运行中可能动态装入新 skill,Skill 工具随时可查询。
+    context.add_rule(PermissionRule::allow("Skill"));
     context
 }
 
@@ -232,10 +232,12 @@ Coding workflow:
         }
     };
     let skills_guidance = if skill_instructions.trim().is_empty() {
-        "No workspace skills are loaded; do not claim skills are available.\n".to_string()
+        // 启动时没有 skill,但 skill 可在运行中装入 workspace/skills —— 用
+        // Skill 工具实时查询最新可用集。
+        "No workspace skills were loaded at startup. Use the Skill tool to query available skills at any time; new skills may become available during the session.\n".to_string()
     } else {
         format!(
-            "Use Skill only for skills listed in <agent-skills>. When a user task matches a listed skill, call Skill first to read the full instructions.\n\n{skill_instructions}\n"
+            "Use Skill only for skills listed in <agent-skills>. When a user task matches a listed skill, call Skill first to read the full instructions. New skills may be installed during the session — if a listed skill is not found, re-query with the Skill tool.\n\n{skill_instructions}\n"
         )
     };
     let task_tools_guidance = r#"

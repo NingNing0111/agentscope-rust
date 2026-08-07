@@ -18,3 +18,5 @@ agentscope/
 sessions/
 # pi-rust demo runtime data (sessions + workspace)
 examples/pi-rust/.pi-rust/
+# pi-rust: anthropics/skills 本地克隆(可随时 git clone 重建,避免与上游漂移)
+examples/pi-rust/skills/

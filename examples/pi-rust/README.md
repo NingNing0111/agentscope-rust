@@ -94,6 +94,29 @@ description: Rust coding workflow guidance
 
 没有加载 skills 时，`Skill` 工具不会暴露，模型也不应声称 skills 可用。
 
+### 安装 Anthropic 官方 skills
+
+[`anthropics/skills`](https://github.com/anthropics/skills) 提供 17 个官方 skill（`claude-api`、`pdf`、`docx`、`xlsx`、`pptx`、`frontend-design`、`theme-factory` 等）。安装方式：克隆后把 `skills/` 下的 skill 目录复制到 `.pi-rust/workspace/skills/`。pi-rust 启动时通过 `reconcile` 自动发现新目录，`Skill` 工具也实时扫描该目录——复制即生效，无需重启。
+
+```bash
+# 1. 克隆（如未克隆）
+git clone https://github.com/anthropics/skills skills
+
+# 2. 复制全部 skill 到运行时 workspace（`skills/skills/` 下每个含 SKILL.md 的子目录是一个 skill）
+cp -R skills/skills/. .pi-rust/workspace/skills/
+```
+
+等价地，也可在启动时用多个 `--skill-path` 逐个导入（每个参数指向一个含 `SKILL.md` 的目录）：
+
+```bash
+rtk cargo run -p pi-rust -- \
+  --workdir .pi-rust \
+  --skill-path ./skills/skills/claude-api \
+  --skill-path ./skills/skills/pdf
+```
+
+> 注：anthropics 个别 skill 的 frontmatter 使用 YAML 块标量（`description: |-` 多行描述）。`parse_skill_md`（agent_scope_tool / agent_scope_workspace）已支持块标量解析，`|` 系列保留换行、`>` 系列按折叠语义连接，这类 skill 的多行描述会被完整解析。
+
 ## REPL 命令
 
 - `/help`：显示命令、配置摘要和示例 prompt

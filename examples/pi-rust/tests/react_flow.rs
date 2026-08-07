@@ -108,6 +108,7 @@ async fn react_flow_reads_file_then_answers() {
     let toolkit = build_toolkit(
         ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
+        dir.path().join("skills"),
     );
     let agent = agent_with(
         vec![
@@ -136,6 +137,7 @@ async fn react_flow_writes_and_edits_file() {
     let toolkit = build_toolkit(
         ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
+        dir.path().join("skills"),
     );
     let agent = agent_with(
         vec![
@@ -170,6 +172,7 @@ async fn react_flow_executes_safe_bash() {
     let toolkit = build_toolkit(
         ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
+        dir.path().join("skills"),
     );
     let agent = agent_with(
         vec![
@@ -192,9 +195,18 @@ async fn react_flow_executes_safe_bash() {
 #[tokio::test]
 async fn react_flow_uses_skill_tool_when_loaded() {
     let dir = tempfile::tempdir().unwrap();
+    // SkillViewer 实时扫描 workspace/skills:skill 必须真实存在于磁盘上。
+    let skills_dir = dir.path().join("skills");
+    std::fs::create_dir_all(skills_dir.join("demo")).unwrap();
+    std::fs::write(
+        skills_dir.join("demo").join("SKILL.md"),
+        "---\nname: demo\ndescription: Demo skill\n---\n\n# Demo\nFollow demo skill instructions.",
+    )
+    .unwrap();
     let toolkit = build_toolkit(
         ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![demo_skill()],
+        skills_dir,
     );
     let agent = agent_with(
         vec![
@@ -221,6 +233,7 @@ async fn coding_flow_edits_and_verifies_once() {
     let toolkit = build_toolkit(
         ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
+        dir.path().join("skills"),
     );
     let agent = agent_with(
         vec![
@@ -263,6 +276,7 @@ async fn coding_flow_iterates_after_failed_verification() {
     let toolkit = build_toolkit(
         ToolState::new(dir.path().canonicalize().unwrap(), 2),
         vec![],
+        dir.path().join("skills"),
     );
     let agent = agent_with(
         vec![
@@ -430,7 +444,7 @@ async fn approval_gate_denies_then_allows_overwrite() {
             },
             ScriptedResponse::Text("needs approval".into()),
         ],
-        build_toolkit(make_state(), vec![]),
+        build_toolkit(make_state(), vec![], dir.path().join("skills")),
     );
     let first = agent1
         .reply(Some(vec![user_msg("user", "overwrite hello").unwrap()]))
@@ -456,7 +470,7 @@ async fn approval_gate_denies_then_allows_overwrite() {
             },
             ScriptedResponse::Text("done".into()),
         ],
-        build_toolkit(make_state(), vec![]),
+        build_toolkit(make_state(), vec![], dir.path().join("skills")),
     );
     let second = agent2
         .reply(Some(vec![user_msg("user", "overwrite hello").unwrap()]))

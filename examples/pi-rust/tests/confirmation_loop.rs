@@ -10,6 +10,7 @@ use pi_rust::repl::{parse_confirmation_response, run_confirmation_loop};
 
 fn candidate(tool: &str, fingerprint: &str, description: &str) -> ConfirmationCandidate {
     ConfirmationCandidate {
+        tool_call_id: "tc-test".into(),
         tool_name: tool.into(),
         fingerprint: fingerprint.into(),
         description: description.into(),

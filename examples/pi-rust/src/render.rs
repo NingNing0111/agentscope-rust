@@ -26,6 +26,10 @@ const TOOL_RESULT_EXCERPT_LIMIT: usize = 200;
 /// with `confirmation_required`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfirmationCandidate {
+    /// The tool call that triggered this confirmation. The TUI uses it to
+    /// remove the pending tool line from the message stream once the operation
+    /// is offered for approval.
+    pub tool_call_id: String,
     pub tool_name: String,
     /// Exact fingerprint the tool checks against its approvals set.
     pub fingerprint: String,
@@ -205,6 +209,7 @@ fn collect_confirmation_candidates(
         _ => format!("[{tool_name}]"),
     };
     let candidate = ConfirmationCandidate {
+        tool_call_id: end.tool_call_id.clone(),
         tool_name: tool_name.clone(),
         fingerprint,
         description,

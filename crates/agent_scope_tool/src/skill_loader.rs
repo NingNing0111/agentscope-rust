@@ -395,7 +395,8 @@ mod tests {
     #[test]
     fn test_parse_skill_md_block_scalar_folded() {
         // `description: >` 折叠标量:非空行用空格连接。
-        let content = "---\nname: folded\ndescription: >\n  First line\n  Second line\n---\n\nBody.";
+        let content =
+            "---\nname: folded\ndescription: >\n  First line\n  Second line\n---\n\nBody.";
         let (name, desc, body) = parse_skill_md(content);
         assert_eq!(name, "folded");
         assert_eq!(desc, "First line Second line");
@@ -405,7 +406,8 @@ mod tests {
     #[test]
     fn test_parse_skill_md_block_scalar_ends_at_next_key() {
         // 块内容后面紧跟顶层键(无缩进)时,块应正确结束。
-        let content = "---\nname: s\ndescription: |\n  Block body\n  still block\nother: value\n---\n\nBody.";
+        let content =
+            "---\nname: s\ndescription: |\n  Block body\n  still block\nother: value\n---\n\nBody.";
         let (name, desc, body) = parse_skill_md(content);
         assert_eq!(name, "s");
         assert_eq!(desc, "Block body\nstill block");

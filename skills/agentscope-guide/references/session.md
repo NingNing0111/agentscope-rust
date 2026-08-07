@@ -60,7 +60,7 @@ use agent_scope_message::factory::user_msg;
 
 let store = InMemorySessionStore::new();
 store.create(session.meta().clone())?;
-session.state_mut().append_context(user_msg("user-001", "Hello!")?)?;
+session.state_mut().append_context(user_msg("user-001", "Hello!").expect("valid user message"))?;
 store.save_state(session.session_id(), session.state())?;
 
 let loaded = store.get(session.session_id())?;

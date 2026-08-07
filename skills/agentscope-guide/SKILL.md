@@ -45,15 +45,15 @@ AgentScope Rust 是一个用 Rust 重构的 Agent 开发框架,以**多 crate wo
 
 ### 2.1 当前:通过 GitHub 引入(尚未发布 crates.io)
 
-项目源码托管在 **https://github.com/ningning0111/agentscope-rust**。使用 git 依赖引入所需 crate,不要使用 `path = "../..."` 这样的相对路径(不适用于外部用户):
+项目源码托管在 **https://github.com/NingNing0111/agentscope-rust**。使用 git 依赖引入所需 crate,不要使用 `path = "../..."` 这样的相对路径(不适用于外部用户):
 
 ```toml
 [dependencies]
-agent_scope_agent = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
-agent_scope_dashscope = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
-agent_scope_tool = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
-agent_scope_message = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
-agent_scope_event = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
+agent_scope_agent = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_dashscope = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_tool = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_message = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_event = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
@@ -140,6 +140,8 @@ toolkit.register(FunctionTool::new("calculator", "Evaluate a math expression", c
 
 handler 返回 `String`(自动转为 `ToolResultBlock`,state=Success),或直接返回 `ToolResultBlock`(无 `Result` 形式)。输入反序列化失败或 handler panic 由框架转为 `ToolError`。
 
+> **lenient 容错反序列化**:LLM 常把数字/布尔参数序列化成字符串(`"max_results": "30"`、`"timeout_secs": "60"`)。`FunctionTool` 与 `agent_scope_tool::deserialize_lenient` 已内置容错——先严格尝试,失败后才对字符串化数字/布尔做 coerce,严格输入永不改写。因此这类工具调用不会因类型不符而被整批拒绝。
+
 > 工具需要访问共享状态(如工作目录、配置)时,用 `Arc` 共享并在闭包里 clone(参考 `references/tools.md` 的"带状态的 handler")。
 
 ### 4.3 组装 ReActAgent
@@ -171,7 +173,7 @@ use agent_scope_agent::Agent;
 use agent_scope_message::factory::user_msg;
 
 let reply = agent
-    .reply(Some(vec![user_msg("user", "请用 calculator 计算 15 * 27 + 3")?]))
+    .reply(Some(vec![user_msg("user", "请用 calculator 计算 15 * 27 + 3").expect("valid user message")]))
     .await?;
 println!("{}", reply.get_text_content("\n").unwrap_or_default());
 ```
@@ -192,7 +194,7 @@ println!("{}", reply.get_text_content("\n").unwrap_or_default());
 use futures::StreamExt;
 
 let mut stream = agent
-    .reply_stream(Some(vec![user_msg("user", "一步步计算 (2+3)*4")?]))
+    .reply_stream(Some(vec![user_msg("user", "一步步计算 (2+3)*4").expect("valid user message")]))
     .await?;
 
 while let Some(event) = stream.next().await {
@@ -407,7 +409,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 6. 流式对话
     let mut stream = agent
-        .reply_stream(Some(vec![user_msg("user", "你好,用工具算 15*27+3")?]))
+        .reply_stream(Some(vec![user_msg("user", "你好,用工具算 15*27+3").expect("valid user message")]))
         .await?;
     while let Some(event) = stream.next().await {
         match event {
@@ -451,6 +453,8 @@ cargo run -p pi-rust -- --workdir .pi-rust --cwd . --model qwen-plus --mode codi
 ```
 
 `examples/pi-rust` 演示了完整的真实用法:模型、ReAct 循环、四个编码工具(Read/Write/Edit/Bash)、Coding workflow、Skills 加载、权限、MemoryMiddleware、RAGMiddleware、会话持久化。它是"真实 Agent 长什么样"的最佳参考。
+
+> **Skill 实时扫描**:pi-rust 的 `Skill` 工具不再使用启动时快照,而是每次调用实时扫描 `workspace/skills` 目录(`LocalSkillLoader::list_skills_blocking`)。运行中把新 skill 目录复制进 `workspace/skills` 立即生效,无需重启;`PermissionRule::allow("Skill")` 始终开启以支持运行期动态装入。
 
 ---
 

@@ -145,6 +145,21 @@ let block = ToolResultBlock {
 
 `SkillViewer::new(callback)` 注册为工具后,Agent 通过 `Skill` 工具按需读取技能说明(参考 `examples/pi-rust` 的 skill 集成)。
 
+**实时扫描**(pi-rust 用法):用 `LocalSkillLoader` 作为回调,每次调用实时重扫目录,运行期新增的 skill 立即生效,无需重启:
+
+```rust
+use agent_scope_tool::{LocalSkillLoader, SkillViewer};
+
+toolkit.remove("Skill"); // 移除 ToolKit::new() 默认注册的基于快照的 SkillViewer
+toolkit.register(SkillViewer::new(Box::new(move |_groups| {
+    LocalSkillLoader::new(skills_dir, true)
+        .list_skills_blocking()
+        .into_iter()
+        .map(|skill| (skill.name.clone(), skill))
+        .collect()
+})));
+```
+
 ## 9. 错误
 
 | 错误 | 触发条件 |
@@ -160,3 +175,4 @@ let block = ToolResultBlock {
 - **工具输入为什么先是字符串再 parse JSON**:与消息层 `ToolCallBlock.input` 的稳定协议保持一致,Foundation 层不提前解析参数。
 - **handler panic 会怎样**:`FunctionTool` 内部 `catch_unwind`,返回 `ToolError::Execution { reason: "handler panicked" }`。
 - **schema 从哪来**:`schemars` 从参数类型自动推导;用 `new_with_schema` 可手写 escape hatch。
+- **LLM 把数字/布尔传成字符串怎么办**:`FunctionTool` 与 `deserialize_lenient` 内置容错——严格反序列化失败后才对字符串化数字/布尔做 coerce(如 `"30"` → `30`、`"true"` → `true`),严格输入永不改写。因此无需手写自定义 `Deserialize` 来容忍这类 LLM 输出。

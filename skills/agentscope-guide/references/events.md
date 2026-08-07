@@ -58,7 +58,7 @@ use futures::StreamExt;
 use agent_scope_event::AgentEvent;
 
 let mut stream = agent
-    .reply_stream(Some(vec![user_msg("user", "一步步计算 (2+3)*4")?]))
+    .reply_stream(Some(vec![user_msg("user", "一步步计算 (2+3)*4").expect("valid user message")]))
     .await?;
 
 while let Some(event) = stream.next().await {

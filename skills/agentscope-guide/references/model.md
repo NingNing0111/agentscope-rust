@@ -56,7 +56,7 @@ use futures::StreamExt;
 let model = DashScopeChatModel::new(api_key, "qwen-plus");
 
 // 非流式
-let messages = vec![user_msg("user", "你好")?];
+let messages = vec![user_msg("user", "你好").expect("valid user message")];
 if let ModelCallResult::Complete(resp) = model.call(&messages, None, None).await? {
     for block in &resp.content { /* ... */ }
 }

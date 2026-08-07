@@ -14,15 +14,15 @@
 
 ## 2. 通过 GitHub(git 依赖)
 
-项目源码托管在 `https://github.com/ningning0111/agentscope-rust`。最小依赖集:
+项目源码托管在 `https://github.com/NingNing0111/agentscope-rust`。最小依赖集:
 
 ```toml
 [dependencies]
-agent_scope_agent = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
-agent_scope_dashscope = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
-agent_scope_tool = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
-agent_scope_message = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
-agent_scope_event = { git = "https://github.com/ningning0111/agentscope-rust", branch = "master" }
+agent_scope_agent = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_dashscope = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_tool = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_message = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_event = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 
 # 非 AgentScope 依赖
 tokio = { version = "1", features = ["full"] }
@@ -36,7 +36,7 @@ serde_json = "1"
 **可复现构建建议**:git 依赖用 `rev` 固定提交,或用 `tag`:
 
 ```toml
-agent_scope_agent = { git = "https://github.com/ningning0111/agentscope-rust", rev = "87e5d37" }
+agent_scope_agent = { git = "https://github.com/NingNing0111/agentscope-rust", rev = "87e5d37" }
 ```
 
 ## 3. crates.io 发布后(版本号)

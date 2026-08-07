@@ -236,6 +236,11 @@ pub trait ChatModel: Send + Sync {
     }
 
     /// Generate structured output via tool-calling bypass.
+    ///
+    /// The default implementation injects a `generate_structured_output` tool
+    /// and forces `tool_choice="required"`. Providers whose API rejects
+    /// `required`/object-form `tool_choice` in certain modes (e.g. DashScope
+    /// thinking mode) must override this method and fall back to `auto`/`none`.
     async fn generate_structured_output(
         &self,
         messages: &[Msg],

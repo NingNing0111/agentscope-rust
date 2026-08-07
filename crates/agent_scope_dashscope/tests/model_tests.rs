@@ -320,6 +320,13 @@ async fn structured_output_works_on_streaming_model() {
         body.get("stream_options").is_none(),
         "stream_options must be dropped when stream is false: {body}"
     );
+    // Thinking mode (explicit or server-default, e.g. qwen3) rejects
+    // tool_choice="required"/object, so structured output must always send
+    // "auto" regardless of the model name.
+    assert_eq!(
+        body["tool_choice"], "auto",
+        "structured output must use tool_choice=\"auto\": {body}"
+    );
 }
 
 /// A malformed tool-call argument from the model must fall back to JSON repair
@@ -372,4 +379,121 @@ async fn structured_output_repairs_malformed_json() {
     );
     let response = result.unwrap();
     assert_eq!(response.content["selected_files"][0], "auth.md");
+}
+
+/// A qwen3-series model with `enable_thinking` left at its default (`false`)
+/// reproduces the server-default thinking case: DashScope rejects
+/// `tool_choice="required"`/object in thinking mode, so structured output must
+/// send `"auto"` even when the local `enable_thinking` flag is off.
+#[tokio::test]
+async fn structured_output_uses_auto_tool_choice_when_thinking_off() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-mock-so3",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call-3",
+                        "type": "function",
+                        "function": {
+                            "name": "generate_structured_output",
+                            "arguments": r#"{"selected_files":["b.md"]}"#
+                        }
+                    }]
+                },
+                "finish_reason": "stop"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let model = DashScopeChatModel::new("test-key", "qwen3")
+        .with_base_url(mock_server.uri())
+        .with_stream(true);
+
+    let msg = user_msg("user", "which memory is relevant?").unwrap();
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "selected_files": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["selected_files"]
+    });
+
+    let result = model.generate_structured_output(&[msg], &schema).await;
+    assert!(result.is_ok(), "Expected Ok, got {:?}", result.err());
+    let response = result.unwrap();
+    assert_eq!(response.content["selected_files"][0], "b.md");
+
+    // The exact bug scenario: model `qwen3` with default enable_thinking=false
+    // (server-default thinking) must still send tool_choice="auto".
+    let requests = mock_server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        requests
+            .last()
+            .expect("expected at least one request")
+            .body
+            .as_ref(),
+    )
+    .unwrap();
+    assert_eq!(
+        body["tool_choice"], "auto",
+        "qwen3 with enable_thinking off must still use tool_choice=\"auto\": {body}"
+    );
+    assert!(
+        body.get("enable_thinking").is_none(),
+        "enable_thinking must not be sent when unset: {body}"
+    );
+}
+
+/// In `auto` mode the model may respond with plain-text JSON instead of a tool
+/// call; `generate_structured_output` must fall back to parsing the text.
+#[tokio::test]
+async fn structured_output_parses_plain_text_json() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-mock-so4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": r#"{"selected_files":["c.md"]}"#
+                },
+                "finish_reason": "stop"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let model = DashScopeChatModel::new("test-key", "qwen3")
+        .with_base_url(mock_server.uri())
+        .with_stream(true);
+
+    let msg = user_msg("user", "which memory is relevant?").unwrap();
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "selected_files": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["selected_files"]
+    });
+
+    let result = model.generate_structured_output(&[msg], &schema).await;
+    assert!(
+        result.is_ok(),
+        "Expected text fallback to succeed, got {:?}",
+        result.err()
+    );
+    let response = result.unwrap();
+    assert_eq!(response.content["selected_files"][0], "c.md");
 }

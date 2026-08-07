@@ -858,7 +858,12 @@ impl ChatModel for DashScopeChatModel {
             }
         });
         let tools = vec![tool_schema];
-        let tool_choice = ToolChoice::required();
+        // DashScope thinking 模式（显式 enable_thinking=true 或 qwen3 系列
+        // 服务端默认开启）都拒绝 tool_choice="required"/object 形式。本地没有
+        // 可靠信号判断服务端是否默认 thinking，故统一用 "auto"（thinking 下
+        // 唯一合法值之一）。非 thinking 模型下 "auto" 也合法；prompt 强制要求
+        // JSON 输出且仅注入单个工具，模型仍会高概率调用。
+        let tool_choice = ToolChoice::auto();
 
         let mut body = self.build_request_body(messages, Some(&tools), Some(&tool_choice))?;
         // The model may be configured streaming; structured output must not be.
@@ -909,6 +914,9 @@ impl ChatModel for DashScopeChatModel {
         })?;
         let resp = self.parse_completion_response(&json)?;
 
+        // `auto` 模式下模型可能直接返回纯文本 JSON 而非工具调用，回退到文本
+        // 内容解析。`get_text_content` 只读取 TextBlock，不会混入 thinking
+        // 内容（thinking 存于 ThinkingBlock）。
         let tool_input = resp
             .content
             .iter()
@@ -919,8 +927,17 @@ impl ChatModel for DashScopeChatModel {
                     None
                 }
             })
+            .or_else(|| {
+                let text = resp.get_text_content("");
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            })
             .ok_or_else(|| ModelError::StructuredOutputError {
-                reason: "No tool call found in response".to_string(),
+                reason: "No structured output found in response (neither tool call nor text)"
+                    .to_string(),
             })?;
 
         // Try parsing, fall back to JSON repair (mirrors the trait default).
@@ -930,7 +947,7 @@ impl ChatModel for DashScopeChatModel {
                 serde_json::from_str(&repaired)
             })
             .map_err(|e| ModelError::StructuredOutputError {
-                reason: format!("Failed to parse tool call input as JSON: {e}"),
+                reason: format!("Failed to parse structured output as JSON: {e}"),
             })?;
 
         Ok(StructuredResponse {

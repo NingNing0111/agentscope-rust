@@ -95,12 +95,60 @@ pub(crate) fn parse_skill_md(content: &str) -> (String, String, String) {
     let mut name = String::new();
     let mut description = String::new();
 
-    for line in frontmatter.lines() {
+    let lines: Vec<&str> = frontmatter.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
         if let Some(value) = line.strip_prefix("name:") {
             name = value.trim().trim_matches('"').to_string();
         } else if let Some(value) = line.strip_prefix("description:") {
-            description = value.trim().trim_matches('"').to_string();
+            let inline = value.trim().trim_matches('"');
+            if inline.starts_with('|') || inline.starts_with('>') {
+                // YAML 块标量(`description: |-` / `|` / `>` / `>-`):
+                // 后续缩进行属于块内容,直到遇到无缩进的顶层键或 frontmatter
+                // 结束。对齐真正 YAML 语义以支持多行描述(如 anthropics/skills
+                // 官方 skill 使用的 `description: |-`)。
+                let mut block: Vec<&str> = Vec::new();
+                let mut base_indent: Option<usize> = None;
+                let mut j = i + 1;
+                while j < lines.len() {
+                    let next = lines[j];
+                    if next.is_empty() {
+                        block.push("");
+                    } else if !next.starts_with(' ') && !next.starts_with('\t') {
+                        break; // 无缩进 = 顶层键,块结束
+                    } else {
+                        let indent = next.len() - next.trim_start().len();
+                        match base_indent {
+                            None => {
+                                base_indent = Some(indent);
+                                block.push(next.trim_start());
+                            }
+                            Some(base) => {
+                                if indent < base {
+                                    break;
+                                }
+                                block.push(&next[base.min(next.len())..]);
+                            }
+                        }
+                    }
+                    j += 1;
+                }
+                // `|` 系列保留换行;`>` 系列按 YAML 折叠语义用空格连接。
+                description = if inline.starts_with('>') {
+                    block.join(" ")
+                } else {
+                    block.join("\n")
+                }
+                .trim()
+                .to_string();
+                i = j; // 跳过已消费的块行
+                continue;
+            } else {
+                description = inline.to_string();
+            }
         }
+        i += 1;
     }
 
     (name, description, body)
@@ -329,5 +377,48 @@ mod tests {
         assert_eq!(name, "my-skill");
         assert_eq!(desc, "My description");
         assert!(body.contains("Body here"));
+    }
+
+    #[test]
+    fn test_parse_skill_md_block_scalar_literal() {
+        // `description: |-` 多行块标量(anthropics/skills 官方 skill 用法)。
+        let content = "---\nname: claude-api\ndescription: |-\n  Reference for the Claude API.\n  Second line of description.\nlicense: Proprietary\n---\n\nBody.";
+        let (name, desc, body) = parse_skill_md(content);
+        assert_eq!(name, "claude-api");
+        assert_eq!(
+            desc,
+            "Reference for the Claude API.\nSecond line of description."
+        );
+        assert!(body.contains("Body"));
+    }
+
+    #[test]
+    fn test_parse_skill_md_block_scalar_folded() {
+        // `description: >` 折叠标量:非空行用空格连接。
+        let content = "---\nname: folded\ndescription: >\n  First line\n  Second line\n---\n\nBody.";
+        let (name, desc, body) = parse_skill_md(content);
+        assert_eq!(name, "folded");
+        assert_eq!(desc, "First line Second line");
+        assert!(body.contains("Body"));
+    }
+
+    #[test]
+    fn test_parse_skill_md_block_scalar_ends_at_next_key() {
+        // 块内容后面紧跟顶层键(无缩进)时,块应正确结束。
+        let content = "---\nname: s\ndescription: |\n  Block body\n  still block\nother: value\n---\n\nBody.";
+        let (name, desc, body) = parse_skill_md(content);
+        assert_eq!(name, "s");
+        assert_eq!(desc, "Block body\nstill block");
+        assert!(body.contains("Body"));
+    }
+
+    #[test]
+    fn test_parse_skill_md_single_line_unchanged() {
+        // 单行描述回归:行为保持不变。
+        let content = "---\nname: plain\ndescription: A plain description\n---\n\nBody.";
+        let (name, desc, body) = parse_skill_md(content);
+        assert_eq!(name, "plain");
+        assert_eq!(desc, "A plain description");
+        assert!(body.contains("Body"));
     }
 }

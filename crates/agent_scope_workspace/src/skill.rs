@@ -293,12 +293,60 @@ pub(crate) fn parse_skill_md(content: &str) -> Result<(String, String, String), 
     let mut name = String::new();
     let mut description = String::new();
 
-    for line in frontmatter.lines() {
+    // Mirror `agent_scope_tool::skill_loader::parse_skill_md` exactly. Supports
+    // YAML 块标量(`description: |-` 等多行描述,如 anthropics/skills 官方 skill)。
+    let lines: Vec<&str> = frontmatter.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
         if let Some(value) = line.strip_prefix("name:") {
             name = value.trim().trim_matches('"').to_string();
         } else if let Some(value) = line.strip_prefix("description:") {
-            description = value.trim().trim_matches('"').to_string();
+            let inline = value.trim().trim_matches('"');
+            if inline.starts_with('|') || inline.starts_with('>') {
+                // 后续缩进行属于块内容,直到遇到无缩进的顶层键或 frontmatter
+                // 结束。对齐真正 YAML 语义以支持多行描述。
+                let mut block: Vec<&str> = Vec::new();
+                let mut base_indent: Option<usize> = None;
+                let mut j = i + 1;
+                while j < lines.len() {
+                    let next = lines[j];
+                    if next.is_empty() {
+                        block.push("");
+                    } else if !next.starts_with(' ') && !next.starts_with('\t') {
+                        break; // 无缩进 = 顶层键,块结束
+                    } else {
+                        let indent = next.len() - next.trim_start().len();
+                        match base_indent {
+                            None => {
+                                base_indent = Some(indent);
+                                block.push(next.trim_start());
+                            }
+                            Some(base) => {
+                                if indent < base {
+                                    break;
+                                }
+                                block.push(&next[base.min(next.len())..]);
+                            }
+                        }
+                    }
+                    j += 1;
+                }
+                // `|` 系列保留换行;`>` 系列按 YAML 折叠语义用空格连接。
+                description = if inline.starts_with('>') {
+                    block.join(" ")
+                } else {
+                    block.join("\n")
+                }
+                .trim()
+                .to_string();
+                i = j; // 跳过已消费的块行
+                continue;
+            } else {
+                description = inline.to_string();
+            }
         }
+        i += 1;
     }
 
     Ok((name, description, body))

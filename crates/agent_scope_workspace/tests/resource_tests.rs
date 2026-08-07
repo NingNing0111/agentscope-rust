@@ -416,6 +416,40 @@ async fn test_skill_add_valid_skill() {
 }
 
 #[tokio::test]
+async fn test_skill_add_block_scalar_description() {
+    // anthropics/skills 官方 skill 使用 YAML 块标量 `description: |-`;
+    // add_skill → list_skills 端到端验证多行描述被正确解析。
+    let (_td, workdir) = temp_workdir();
+
+    let (_skill_td, skill_dir) = common::temp_workdir();
+    let skill_md_path = std::path::Path::new(&skill_dir).join("SKILL.md");
+    std::fs::write(
+        &skill_md_path,
+        "---\nname: claude-api\ndescription: |-\n  Reference for the Claude API.\n  Second line of description.\nlicense: Proprietary\n---\n\n# Body\n",
+    )
+    .unwrap();
+
+    let config = LocalWorkspaceConfig {
+        workdir,
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize().await.unwrap();
+
+    ws.add_skill(&skill_dir).await.unwrap();
+    let skills = ws.list_skills().await.unwrap();
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0].name, "claude-api");
+    assert_eq!(
+        skills[0].description,
+        "Reference for the Claude API.\nSecond line of description."
+    );
+}
+
+#[tokio::test]
 async fn test_skill_add_missing_skill_md_error() {
     let (_td, workdir) = temp_workdir();
     let (_empty_td, empty_dir) = common::temp_workdir();

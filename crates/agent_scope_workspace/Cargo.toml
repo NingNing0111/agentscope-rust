@@ -25,4 +25,5 @@ uuid.workspace = true
 
 [dev-dependencies]
 agent_scope_sandbox = { path = "../agent_scope_sandbox" }
+async-trait = "0.1"
 tempfile = "3"

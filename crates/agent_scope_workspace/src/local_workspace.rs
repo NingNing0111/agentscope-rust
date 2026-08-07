@@ -1,11 +1,12 @@
 //! LocalWorkspace — filesystem-based workspace implementation.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
 use crate::backend::{ContainedBackend, LocalBackend, WorkspaceBackend};
-use crate::base::{ToolInfo, WorkspaceBase};
+use crate::base::{McpConnectionHandle, McpConnectionsHost, ToolInfo, WorkspaceBase};
 use crate::error::WorkspaceError;
 use crate::instructions::DEFAULT_WORKSPACE_INSTRUCTIONS;
 use crate::mcp::{McpClientConfig, McpRegistry};
@@ -32,11 +33,25 @@ pub struct LocalWorkspace {
     _backend: Arc<dyn WorkspaceBackend>,
     _mcps: Vec<McpClientConfig>,
     _skill_mgr: Arc<Mutex<SkillManager>>,
+    _mcp_connections: Arc<Mutex<HashMap<String, Arc<dyn McpConnectionHandle>>>>,
     _mcp_lock: Mutex<()>,
     _skill_lock: Mutex<()>,
 }
 
 impl LocalWorkspace {
+    /// Disconnect and drop all active MCP connections (FR-010).
+    async fn disconnect_all_mcps(&self) -> Result<(), WorkspaceError> {
+        let mut conns = self._mcp_connections.lock().await;
+        let mut last_err = Ok(());
+        for (name, handle) in conns.drain() {
+            if let Err(e) = handle.disconnect().await {
+                tracing::warn!("failed to disconnect MCP '{name}': {e}");
+                last_err = Err(e);
+            }
+        }
+        last_err
+    }
+
     #[must_use]
     pub fn new(config: LocalWorkspaceConfig) -> Self {
         let workdir = std::path::Path::new(&config.workdir)
@@ -75,6 +90,7 @@ impl LocalWorkspace {
             _backend: backend,
             _mcps: Vec::new(),
             _skill_mgr: Arc::new(Mutex::new(skill_mgr)),
+            _mcp_connections: Arc::new(Mutex::new(HashMap::new())),
             _mcp_lock: Mutex::new(()),
             _skill_lock: Mutex::new(()),
         }
@@ -155,12 +171,16 @@ impl WorkspaceBase for LocalWorkspace {
         if !self.is_alive {
             return Ok(());
         }
+        // Release all stateful MCP connections (FR-010).
+        self.disconnect_all_mcps().await?;
         self._mcps.clear();
         self.is_alive = false;
         Ok(())
     }
 
     async fn reset(&mut self) -> Result<(), WorkspaceError> {
+        // Release all stateful MCP connections (FR-010).
+        self.disconnect_all_mcps().await?;
         self._mcps.clear();
 
         let _lock = self._mcp_lock.lock().await;
@@ -380,5 +400,11 @@ impl WorkspaceBase for LocalWorkspace {
             return Err(WorkspaceError::NotInitialized);
         }
         Ok(&*self._backend)
+    }
+}
+
+impl McpConnectionsHost for LocalWorkspace {
+    fn mcp_connections(&self) -> &Arc<Mutex<HashMap<String, Arc<dyn McpConnectionHandle>>>> {
+        &self._mcp_connections
     }
 }

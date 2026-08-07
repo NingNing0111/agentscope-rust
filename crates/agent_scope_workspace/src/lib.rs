@@ -38,7 +38,7 @@ pub mod offload;
 pub mod skill;
 
 pub use backend::{ContainedBackend, ExecOutput, LocalBackend, WorkspaceBackend};
-pub use base::{ToolInfo, WorkspaceBase};
+pub use base::{McpConnectionHandle, McpConnectionsHost, ToolInfo, WorkspaceBase};
 pub use error::WorkspaceError;
 pub use local_workspace::{LocalWorkspace, LocalWorkspaceConfig};
 pub use manager::WorkspaceManager;

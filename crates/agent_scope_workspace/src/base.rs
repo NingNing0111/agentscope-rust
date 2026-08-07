@@ -1,5 +1,8 @@
 //! WorkspaceBase trait — the core workspace abstraction.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::error::WorkspaceError;
 use crate::mcp::McpClientConfig;
 use crate::skill::Skill;
@@ -13,6 +16,40 @@ pub struct ToolInfo {
     pub description: String,
     /// JSON Schema for the tool's input parameters.
     pub input_schema: serde_json::Value,
+}
+
+/// Runtime handle to an active MCP connection, owned by the workspace.
+///
+/// Kept out of `agent_scope_tool` to preserve the crate dependency direction
+/// (Constitution Article 11): this crate must not depend on the tool crate.
+#[async_trait::async_trait]
+pub trait McpConnectionHandle: Send + Sync {
+    /// The registered MCP client name this connection belongs to.
+    fn name(&self) -> &str;
+
+    /// Terminate the connection and release resources (child process, etc.).
+    async fn disconnect(&self) -> Result<(), WorkspaceError>;
+
+    /// Type-erased accessor so the extension crate can downcast to the
+    /// concrete `McpClient` implementation.
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Recover the concrete `Arc<McpClient>` behind this handle. The
+    /// extension crate needs an owned `Arc` to build tool adapters that share
+    /// the live connection, which a shared `&dyn Any` cannot provide.
+    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync>;
+}
+
+/// Host trait exposing the workspace's MCP connection map.
+///
+/// Implemented by `LocalWorkspace`. Allows the `agent_scope_mcp` extension
+/// crate to register/disconnect connections and the workspace to release
+/// them on `close()`/`reset()`.
+pub trait McpConnectionsHost: Send + Sync {
+    /// The name → handle map of active MCP connections.
+    fn mcp_connections(
+        &self,
+    ) -> &Arc<tokio::sync::Mutex<HashMap<String, Arc<dyn McpConnectionHandle>>>>;
 }
 
 /// Abstract workspace — provides an isolated working environment for Agents.

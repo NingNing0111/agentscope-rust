@@ -19,6 +19,18 @@ pub enum WorkspaceError {
     McpNotFound { name: String },
     /// MCP client with this name already registered.
     McpAlreadyExists { name: String },
+    /// MCP connection failed (transport, handshake, or protocol error).
+    /// `reason` MUST NOT contain authentication secrets (FR-009).
+    McpConnectionError { name: String, reason: String },
+    /// MCP tool call failed on the server.
+    /// `reason` MUST NOT contain authentication secrets (FR-009).
+    McpCallError {
+        mcp_name: String,
+        tool_name: String,
+        reason: String,
+    },
+    /// MCP client is not connected — call `connect_mcp()` first.
+    McpNotConnected { name: String },
     /// Path traversal attack detected.
     PathTraversal { path: String },
     /// .mcp file is corrupted.
@@ -41,6 +53,20 @@ impl fmt::Display for WorkspaceError {
             WorkspaceError::SkillNotFound { name } => write!(f, "skill not found: {name}"),
             WorkspaceError::McpNotFound { name } => write!(f, "MCP not found: {name}"),
             WorkspaceError::McpAlreadyExists { name } => write!(f, "MCP already exists: {name}"),
+            WorkspaceError::McpConnectionError { name, reason } => {
+                write!(f, "MCP connection failed for '{name}': {reason}")
+            }
+            WorkspaceError::McpCallError {
+                mcp_name,
+                tool_name,
+                reason,
+            } => write!(
+                f,
+                "MCP tool call failed: '{mcp_name}/{tool_name}': {reason}"
+            ),
+            WorkspaceError::McpNotConnected { name } => {
+                write!(f, "MCP client not connected: {name}")
+            }
             WorkspaceError::PathTraversal { path } => write!(f, "path traversal detected: {path}"),
             WorkspaceError::CorruptMcpFile { path, message } => {
                 write!(f, "corrupt .mcp file at {path}: {message}")

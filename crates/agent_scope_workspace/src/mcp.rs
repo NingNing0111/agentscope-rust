@@ -213,3 +213,89 @@ impl Default for McpRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Legacy `.mcp` files written before Feature 027 may use `"type": "sse"`
+    /// or `"type": "streamable_http"` tags. These MUST still deserialize
+    /// (FR-002 / SC-003).
+    #[test]
+    fn legacy_sse_tag_still_parses() {
+        let json = r#"{
+            "name": "legacy",
+            "transport": { "type": "sse", "url": "https://api.example.com/sse" },
+            "is_stateful": true
+        }"#;
+        let cfg: McpClientConfig = serde_json::from_str(json).expect("legacy sse must parse");
+        match cfg.transport {
+            McpTransportConfig::Sse { url, .. } => assert_eq!(url, "https://api.example.com/sse"),
+            other => panic!("expected Sse variant, got {other:?}"),
+        }
+    }
+
+    /// `"type": "streamable_http"` must also deserialize (T003).
+    #[test]
+    fn streamable_http_tag_parses() {
+        let json = r#"{
+            "name": "http",
+            "transport": { "type": "streamable_http", "url": "https://api.example.com/mcp" }
+        }"#;
+        let cfg: McpClientConfig = serde_json::from_str(json).expect("streamable_http must parse");
+        match cfg.transport {
+            McpTransportConfig::StreamableHttp { url, .. } => {
+                assert_eq!(url, "https://api.example.com/mcp")
+            }
+            other => panic!("expected StreamableHttp variant, got {other:?}"),
+        }
+    }
+
+    /// Unknown fields in a `.mcp` file must be ignored, not cause a hard
+    /// deserialization failure (FR-004).
+    #[test]
+    fn unknown_fields_are_ignored() {
+        let json = r#"{
+            "name": "future",
+            "transport": { "type": "sse", "url": "https://api.example.com/sse" },
+            "is_stateful": true,
+            "future_field": { "whatever": [1, 2, 3] }
+        }"#;
+        let cfg: McpClientConfig =
+            serde_json::from_str(json).expect("unknown fields must be ignored");
+        assert_eq!(cfg.name, "future");
+        assert!(cfg.is_stateful);
+    }
+
+    /// Sensitive headers must round-trip to `[REDACTED]` through the scrubber
+    /// (FR-003 / SC-005) — regression guard for the defect-3 fix.
+    #[test]
+    fn scrubbed_redacts_sensitive_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("authorization".to_string(), "Bearer secret123".to_string());
+        headers.insert("x-api-key".to_string(), "key123".to_string());
+        headers.insert("user-agent".to_string(), "agentscope".to_string());
+        let cfg = McpTransportConfig::Sse {
+            url: "https://api.example.com/sse".into(),
+            headers,
+        };
+        let scrubbed = cfg.scrubbed();
+        match scrubbed {
+            McpTransportConfig::Sse { headers, .. } => {
+                assert_eq!(
+                    headers.get("authorization").map(String::as_str),
+                    Some(REDACTED_VALUE)
+                );
+                assert_eq!(
+                    headers.get("x-api-key").map(String::as_str),
+                    Some(REDACTED_VALUE)
+                );
+                assert_eq!(
+                    headers.get("user-agent").map(String::as_str),
+                    Some("agentscope")
+                );
+            }
+            other => panic!("expected Sse variant, got {other:?}"),
+        }
+    }
+}

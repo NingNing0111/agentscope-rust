@@ -72,7 +72,13 @@ pub enum UiItem {
     /// Accumulating thinking block (appended by `THINKING_BLOCK_DELTA`).
     StreamThinking(String),
     /// A tool invocation summary line.
-    ToolCall { name: String, summary: String },
+    ToolCall {
+        name: String,
+        summary: String,
+        tool_call_id: String,
+        /// 结果行(`→ success` / `→ error: …`),ToolResultEnd 到达时原地填充。
+        result: Option<String>,
+    },
     /// A tool result line (`→ success` / `→ error: …`).
     ToolResult(String),
     /// Low-key lifecycle marker (`MODEL_CALL_START`, `REPLY_START`, …).
@@ -119,6 +125,33 @@ enum UiMsg {
     TurnDone,
 }
 
+/// 集中定义的语义配色,替换散落在渲染方法里的字面色值。
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+struct Theme {
+    accent: Color,   // 主色:logo、工具名、输入提示符 `>`、主面板边框
+    success: Color,  // 成功:工具 `→ success`、`you` 前缀、idle 状态点
+    error: Color,    // 失败:工具 `→ error/denied`
+    warn: Color,     // 忙碌:busy 状态、中断提示
+    muted: Color,    // 次要:Meta/系统行、状态栏快捷键提示
+    thinking: Color, // 思考:思考块 `⋯`
+    border: Color,   // 边框:分隔线、辅助边框
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            accent: Color::Cyan,
+            success: Color::Green,
+            error: Color::Red,
+            warn: Color::Yellow,
+            muted: Color::DarkGray,
+            thinking: Color::Magenta,
+            border: Color::DarkGray,
+        }
+    }
+}
+
 pub struct App {
     input: String,
     cursor: usize,
@@ -130,6 +163,7 @@ pub struct App {
     busy: bool,
     status: String,
     help_text: String,
+    theme: Theme,
     /// tool_call_id → tool name, captured at `ToolCallStart`.
     tool_call_names: HashMap<String, String>,
     /// tool_call_id → accumulated (capped) output text.
@@ -156,6 +190,7 @@ impl App {
             busy: false,
             status: String::new(),
             help_text,
+            theme: Theme::default(),
             tool_call_names: HashMap::new(),
             tool_outputs: HashMap::new(),
             provider: config.provider.name().to_string(),
@@ -367,7 +402,12 @@ impl App {
                     .cloned()
                     .unwrap_or_else(|| "?".to_string());
                 let summary = tool_call_summary(&name, end.input.as_deref());
-                self.items.push(UiItem::ToolCall { name, summary });
+                self.items.push(UiItem::ToolCall {
+                    name,
+                    summary,
+                    tool_call_id: end.tool_call_id.clone(),
+                    result: None,
+                });
                 self.follow_bottom = true;
             }
             AgentEvent::ToolResultTextDelta(delta) => {
@@ -381,7 +421,23 @@ impl App {
             }
             AgentEvent::ToolResultEnd(end) => {
                 let line = tool_result_line(&self.tool_outputs, end);
-                self.items.push(UiItem::ToolResult(line));
+                // 按 tool_call_id 精确匹配,原地绑定结果到对应调用项。
+                let tool_call_id = end.tool_call_id.clone();
+                let matched = self.items.iter_mut().rev().find_map(|item| match item {
+                    UiItem::ToolCall {
+                        tool_call_id: id,
+                        result,
+                        ..
+                    } if *id == tool_call_id && result.is_none() => {
+                        *result = Some(line.clone());
+                        Some(())
+                    }
+                    _ => None,
+                });
+                if matched.is_none() {
+                    // 不变量退化路径:找不到对应调用项时追加独立结果行。
+                    self.items.push(UiItem::ToolResult(line));
+                }
                 self.follow_bottom = true;
             }
             AgentEvent::UserInterrupt(_) => {
@@ -624,22 +680,39 @@ impl App {
                         }
                     }
                 }
-                UiItem::ToolCall { name, summary } => {
+                UiItem::ToolCall {
+                    name,
+                    summary,
+                    result,
+                    ..
+                } => {
                     lines.push(Line::from(vec![
                         Span::styled(
-                            format!("{name} "),
+                            format!("{name}  "),
                             Style::default()
-                                .fg(Color::Cyan)
+                                .fg(self.theme.accent)
                                 .add_modifier(Modifier::BOLD),
                         ),
-                        Span::styled(summary.clone(), Style::default().fg(Color::Cyan)),
+                        Span::styled(summary.clone(), Style::default().fg(self.theme.accent)),
                     ]));
+                    if let Some(result) = result {
+                        let color = if result.starts_with("→ success") {
+                            self.theme.success
+                        } else {
+                            self.theme.error
+                        };
+                        // 缩进对齐工具名后,与调用行视觉绑定。
+                        lines.push(Line::from(Span::styled(
+                            format!("      {result}"),
+                            Style::default().fg(color),
+                        )));
+                    }
                 }
                 UiItem::ToolResult(text) => {
                     let color = if text.starts_with("→ success") {
-                        Color::Green
+                        self.theme.success
                     } else {
-                        Color::Red
+                        self.theme.error
                     };
                     lines.push(Line::from(Span::styled(
                         text.clone(),
@@ -1153,10 +1226,79 @@ mod tests {
             },
         ));
         assert!(matches!(
-            app.items[0],
-            UiItem::ToolCall { ref name, ref summary } if name == "Bash" && summary.contains("ls")
+            &app.items[0],
+            UiItem::ToolCall { name, summary, result, .. }
+                if name == "Bash" && summary.contains("ls") && result.as_deref() == Some("→ success")
         ));
-        assert_eq!(app.items[1], UiItem::ToolResult("→ success".to_string()));
+        assert_eq!(
+            app.items.len(),
+            1,
+            "ToolResult must fold into the ToolCall item"
+        );
+    }
+
+    #[test]
+    fn tool_result_updates_latest_open_tool_call() {
+        let mut app = App::new(&config(), 0);
+        // 两个并行工具调用(事件流允许交错),结果必须按 id 精确绑定。
+        for (id, name, input) in [
+            ("tc-a", "Bash", r#"{"command":"ls"}"#),
+            ("tc-b", "Read", r#"{"path":"a.txt"}"#),
+        ] {
+            app.consume_event(AgentEvent::ToolCallStart(
+                agent_scope_event::ToolCallStartEvent {
+                    base: agent_scope_event::EventBase::new(),
+                    reply_id: "r".into(),
+                    tool_call_id: id.into(),
+                    tool_call_name: name.into(),
+                },
+            ));
+            app.consume_event(AgentEvent::ToolCallEnd(
+                agent_scope_event::ToolCallEndEvent {
+                    base: agent_scope_event::EventBase::new(),
+                    reply_id: "r".into(),
+                    tool_call_id: id.into(),
+                    input: Some(input.into()),
+                },
+            ));
+        }
+        // tc-b 的结果先到。
+        app.consume_event(AgentEvent::ToolResultEnd(
+            agent_scope_event::ToolResultEndEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                tool_call_id: "tc-b".into(),
+                state: agent_scope_message::ToolResultState::Error,
+                metadata: Default::default(),
+                output: Some("boom".into()),
+            },
+        ));
+        // tc-a 的结果后到。
+        app.consume_event(AgentEvent::ToolResultEnd(
+            agent_scope_event::ToolResultEndEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                tool_call_id: "tc-a".into(),
+                state: agent_scope_message::ToolResultState::Success,
+                metadata: Default::default(),
+                output: Some("exit_code: 0".into()),
+            },
+        ));
+        assert_eq!(
+            app.items.len(),
+            2,
+            "both results must fold into their own items"
+        );
+        let a = &app.items[0];
+        let b = &app.items[1];
+        assert!(matches!(
+            a,
+            UiItem::ToolCall { result, .. } if result.as_deref() == Some("→ success")
+        ));
+        assert!(matches!(
+            b,
+            UiItem::ToolCall { result, .. } if result.as_deref().is_some_and(|r| r.starts_with("→ error"))
+        ));
     }
 
     #[test]

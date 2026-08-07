@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 
 use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
 use agent_scope_state::{AgentState, Task, TaskState};
-use agent_scope_tool::{Tool, ToolError, ToolExecOutput};
+use agent_scope_tool::{Tool, ToolError, ToolExecOutput, deserialize_lenient};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
@@ -133,7 +133,7 @@ impl Tool for TaskCreateTool {
 
     async fn call(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {
         let params: TaskCreateParams =
-            serde_json::from_value(input).map_err(|e| ToolError::InvalidInput {
+            deserialize_lenient(input).map_err(|e| ToolError::InvalidInput {
                 tool_name: self.name().into(),
                 reason: e.to_string(),
             })?;
@@ -272,7 +272,7 @@ impl Tool for TaskGetTool {
 
     async fn call(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {
         let params: TaskGetParams =
-            serde_json::from_value(input).map_err(|e| ToolError::InvalidInput {
+            deserialize_lenient(input).map_err(|e| ToolError::InvalidInput {
                 tool_name: self.name().into(),
                 reason: e.to_string(),
             })?;
@@ -399,7 +399,7 @@ impl Tool for TaskUpdateTool {
 
     async fn call(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {
         let params: TaskUpdateParams =
-            serde_json::from_value(input).map_err(|e| ToolError::InvalidInput {
+            deserialize_lenient(input).map_err(|e| ToolError::InvalidInput {
                 tool_name: self.name().into(),
                 reason: e.to_string(),
             })?;

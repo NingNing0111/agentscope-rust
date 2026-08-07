@@ -14,6 +14,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 
+use crate::deserialize_lenient;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 // ---------------------------------------------------------------------------
@@ -104,8 +105,10 @@ where
         let tool_name = self.tool_name.clone();
 
         Box::pin(async move {
-            // Deserialize input JSON → T
-            let typed: T = serde_json::from_value(input).map_err(|e| ToolError::InvalidInput {
+            // Deserialize input JSON → T. Lenient retry tolerates LLMs that
+            // serialize numbers/booleans as strings (e.g. `"max_results":
+            // "30"`); strictly-valid input is never rewritten.
+            let typed: T = deserialize_lenient(input).map_err(|e| ToolError::InvalidInput {
                 tool_name: tool_name.clone(),
                 reason: e.to_string(),
             })?;
@@ -492,6 +495,41 @@ mod tests {
                 assert_eq!(tool_name, "search");
             }
             other => panic!("Expected ToolError::InvalidInput, got: {other:?}"),
+        }
+    }
+
+    // -- T022: string-encoded numbers in tool args are tolerated --
+    // Regression for the pi-rust reports where the LLM serialized numeric
+    // fields as strings (`"timeout_secs": "60"`, `"max_results": "30"`) and
+    // strict serde rejected the whole call.
+    #[tokio::test]
+    async fn test_string_encoded_numbers_are_accepted() {
+        async fn handler(input: SearchInput) -> String {
+            format!(
+                "query={} max={}",
+                input.query,
+                input
+                    .max_results
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "none".into())
+            )
+        }
+
+        let tool = FunctionTool::new("search", "desc", handler);
+        let result = tool
+            .call(serde_json::json!({"query": "rust", "max_results": "30"}))
+            .await
+            .unwrap();
+
+        match result {
+            ToolExecOutput::Complete(chunk) => {
+                assert_eq!(chunk.state, ToolResultState::Success);
+                match &chunk.output {
+                    ToolOutput::Text(text) => assert!(text.contains("max=30"), "got: {text}"),
+                    _ => panic!("Expected ToolOutput::Text"),
+                }
+            }
+            _ => panic!("Expected ToolExecOutput::Complete"),
         }
     }
 

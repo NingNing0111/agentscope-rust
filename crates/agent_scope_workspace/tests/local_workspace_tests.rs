@@ -85,6 +85,40 @@ async fn test_workdir_is_absolute() {
     assert!(!ws.workdir().is_empty());
 }
 
+/// Regression: a workdir under a symlinked parent (e.g. macOS `/tmp` →
+/// `/private/tmp`) whose leaf directory does not exist yet must still
+/// initialize successfully. Before the fix, `LocalWorkspace::new` fell back
+/// to the *un-canonicalized* workdir when the directory was missing, and the
+/// backend containment check later rejected the canonicalized ancestor —
+/// spurious `PathTraversal`.
+#[tokio::test]
+#[cfg(unix)]
+async fn test_initialize_under_symlinked_parent_missing_leaf() {
+    use std::os::unix::fs::symlink;
+
+    let (_td, base) = temp_workdir();
+    let real = std::path::Path::new(&base).join("real-dir");
+    std::fs::create_dir_all(&real).unwrap();
+    // `link` → `real-dir`; the workdir lives *through* the symlink, in a
+    // subdirectory that does not exist yet.
+    let link = std::path::Path::new(&base).join("link");
+    symlink(&real, &link).unwrap();
+    let workdir = link.join("brand-new-workspace");
+
+    let config = LocalWorkspaceConfig {
+        workdir: workdir.to_string_lossy().to_string(),
+        workspace_id: None,
+        default_mcps: vec![],
+        skill_paths: vec![],
+        instructions: None,
+    };
+    let mut ws = LocalWorkspace::new(config);
+    ws.initialize()
+        .await
+        .expect("initialize under symlinked parent must succeed");
+    assert!(ws.is_alive());
+}
+
 #[tokio::test]
 async fn test_list_tools_returns_six_tools() {
     let (_td, workdir) = temp_workdir();

@@ -54,9 +54,20 @@ impl LocalWorkspace {
 
     #[must_use]
     pub fn new(config: LocalWorkspaceConfig) -> Self {
-        let workdir = std::path::Path::new(&config.workdir)
+        // Resolve the workdir to a canonicalized absolute path. When the
+        // directory does not exist yet (typical first run), create it first so
+        // canonicalize() succeeds. This keeps the backend containment root in
+        // canonical form even when the workdir sits under a symlinked parent
+        // (e.g. macOS `/tmp` → `/private/tmp`) — otherwise the containment
+        // check compares a canonicalized ancestor against the un-canonicalized
+        // root and spuriously reports PathTraversal.
+        let workdir_path = std::path::Path::new(&config.workdir);
+        if !workdir_path.exists() {
+            let _ = std::fs::create_dir_all(workdir_path);
+        }
+        let workdir = workdir_path
             .canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(&config.workdir))
+            .unwrap_or_else(|_| workdir_path.to_path_buf())
             .to_string_lossy()
             .to_string();
 

@@ -533,19 +533,36 @@ impl App {
 
     // -- rendering -----------------------------------------------------------
 
-    fn render(&mut self, frame: &mut Frame) {
-        let area = frame.area();
-        let [header, main, status, input] = Layout::vertical([
+    /// 宽终端(≥60 列)绘制面板边框,窄终端跳过以节省空间。
+    fn bordered(area: Rect) -> bool {
+        area.width >= 60
+    }
+
+    /// 将屏幕分为 header/message/status/input 四区。
+    fn layout_areas(area: Rect) -> [Rect; 4] {
+        Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .areas(area);
+        .areas::<4>(area)
+    }
 
-        self.render_header(frame, header);
-        self.render_message_area(frame, main);
-        self.render_status(frame, status);
+    fn render(&mut self, frame: &mut Frame) {
+        let area = frame.area();
+        let [header, main, status, input] = App::layout_areas(area);
+        let bordered = App::bordered(area);
+
+        if bordered {
+            self.render_header_panel(frame, header);
+            self.render_message_panel(frame, main);
+            self.render_status_panel(frame, status);
+        } else {
+            self.render_header(frame, header);
+            self.render_message_area(frame, main);
+            self.render_status(frame, status);
+        }
         self.render_input(frame, input);
 
         match self.mode {
@@ -576,6 +593,82 @@ impl App {
         frame.render_widget(Paragraph::new(line), area);
     }
 
+    fn header_spans(&self) -> (Span<'static>, Span<'static>) {
+        let state = if self.busy { " running " } else { " idle " };
+        let state_style = if self.busy {
+            Style::default().fg(self.theme.warn)
+        } else {
+            Style::default().fg(self.theme.success)
+        };
+        let left = Span::styled(
+            format!(
+                " pi-rust · {} · {} · mode {} · cwd {} · skills {} ",
+                self.provider, self.model, self.mode_name, self.cwd, self.skills
+            ),
+            Style::default().fg(self.theme.muted),
+        );
+        let right = Span::styled(state, state_style);
+        (left, right)
+    }
+
+    fn render_header_panel(&self, frame: &mut Frame, area: Rect) {
+        let (left, right) = self.header_spans();
+        let block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(self.theme.accent));
+        let line = Line::from(vec![Span::raw(" "), left, Span::raw(" "), right]);
+        frame.render_widget(Paragraph::new(line).block(block), area);
+    }
+
+    fn render_message_panel(&mut self, frame: &mut Frame, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" message ")
+            .border_style(Style::default().fg(self.theme.accent));
+        let inner = block.inner(area);
+        if inner.height == 0 {
+            frame.render_widget(block, area);
+            return;
+        }
+        let lines = self.items_to_lines();
+        let total = lines.len();
+        let offset = if self.follow_bottom {
+            total.saturating_sub(inner.height as usize)
+        } else {
+            (self.scroll as usize).min(total.saturating_sub(inner.height as usize))
+        };
+        self.scroll = offset as u16;
+        let paragraph = Paragraph::new(Text::from(lines))
+            .scroll((offset as u16, 0))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, inner);
+        frame.render_widget(block, area);
+    }
+
+    fn render_status_panel(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(self.theme.border));
+        let prefix = if self.busy {
+            Span::styled("[busy]", Style::default().fg(self.theme.warn))
+        } else {
+            Span::styled("[ok]", Style::default().fg(self.theme.success))
+        };
+        let style = if self.busy {
+            Style::default().fg(self.theme.warn)
+        } else {
+            Style::default().fg(self.theme.muted)
+        };
+        let text = format!(" {} ", self.status);
+        let line = Line::from(vec![
+            prefix,
+            Span::styled(text, style),
+            Span::raw(" "),
+            Span::styled("/help · ctrl+c quit", Style::default().fg(self.theme.muted)),
+        ]);
+        frame.render_widget(Paragraph::new(line).block(block), area);
+    }
+
     fn render_message_area(&mut self, frame: &mut Frame, area: Rect) {
         if area.height == 0 {
             return;
@@ -595,16 +688,21 @@ impl App {
     fn render_status(&self, frame: &mut Frame, area: Rect) {
         let text = format!("  {}", self.status);
         let style = if self.busy {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(self.theme.warn)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(self.theme.muted)
         };
         frame.render_widget(Paragraph::new(text).style(style), area);
     }
 
     fn render_input(&self, frame: &mut Frame, area: Rect) {
+        let prompt_style = if self.busy {
+            Style::default().fg(self.theme.warn)
+        } else {
+            Style::default().fg(self.theme.accent)
+        };
         let line = Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Cyan)),
+            Span::styled("> ", prompt_style),
             Span::raw(self.input.clone()),
         ]);
         frame.render_widget(Paragraph::new(line), area);
@@ -1564,5 +1662,21 @@ mod tests {
             .next()
             .unwrap();
         assert_eq!(merged_text, "Hello World");
+    }
+
+    #[test]
+    fn narrow_terminal_falls_back_to_no_border() {
+        // <60 列时不绘制面板边框,布局仍为 4 区、不 panic。
+        let wide = ratatui::layout::Rect::new(0, 0, 100, 10);
+        let narrow = ratatui::layout::Rect::new(0, 0, 40, 10);
+        assert!(App::bordered(wide));
+        assert!(!App::bordered(narrow));
+
+        let [header, main, status, input] = App::layout_areas(wide);
+        assert_eq!(header.width, wide.width);
+        assert_eq!(main.width, wide.width);
+        assert_eq!(status.width, wide.width);
+        assert_eq!(input.width, wide.width);
+        let _ = (header, main, status, input);
     }
 }

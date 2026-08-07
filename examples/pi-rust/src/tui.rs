@@ -40,7 +40,7 @@ use crate::agent::AgentRuntime;
 use crate::config::RuntimeConfig;
 use crate::error::{PiError, PiResult};
 use crate::render::{
-    ConfirmationCandidate, RenderConfig, RenderedTurn, event_name, render_event, tool_call_summary,
+    ConfirmationCandidate, RenderConfig, RenderedTurn, render_event, tool_call_summary,
     tool_result_line,
 };
 use crate::repl::{CommandOutput, handle_command, run_confirmation_loop};
@@ -448,9 +448,7 @@ impl App {
             | AgentEvent::ModelCallEnd(_)
             | AgentEvent::ReplyStart(_)
             | AgentEvent::ReplyEnd(_) => {
-                self.items
-                    .push(UiItem::Meta(event_name(&event).to_string()));
-                self.follow_bottom = true;
+                // 降噪:模型是否在工作由 header 状态点体现,工具活动由工具块呈现。
             }
             _ => {}
         }
@@ -748,9 +746,9 @@ impl App {
                 UiItem::UserMsg(text) => {
                     lines.push(Line::from(vec![
                         Span::styled(
-                            "user ",
+                            "you ",
                             Style::default()
-                                .fg(Color::Green)
+                                .fg(self.theme.success)
                                 .add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(text.clone(), Style::default()),
@@ -767,11 +765,11 @@ impl App {
                     for sub in text.split('\n') {
                         if !sub.is_empty() {
                             lines.push(Line::from(vec![
-                                Span::styled("⋯ ", Style::default().fg(Color::DarkGray)),
+                                Span::styled("⋯ ", Style::default().fg(self.theme.thinking)),
                                 Span::styled(
                                     sub.to_string(),
                                     Style::default()
-                                        .fg(Color::DarkGray)
+                                        .fg(self.theme.thinking)
                                         .add_modifier(Modifier::ITALIC),
                                 ),
                             ]));
@@ -820,7 +818,7 @@ impl App {
                 UiItem::Meta(text) => {
                     lines.push(Line::from(Span::styled(
                         format!("· {text}"),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(self.theme.muted),
                     )));
                 }
             }
@@ -1662,6 +1660,65 @@ mod tests {
             .next()
             .unwrap();
         assert_eq!(merged_text, "Hello World");
+    }
+
+    #[test]
+    fn meta_events_no_longer_produce_items() {
+        let mut app = App::new(&config(), 0);
+        for event in [
+            AgentEvent::ModelCallStart(agent_scope_event::ModelCallStartEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                model_name: "test-model".into(),
+            }),
+            AgentEvent::ModelCallEnd(agent_scope_event::ModelCallEndEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                input_tokens: 0,
+                output_tokens: 0,
+                finished_reason: agent_scope_types::ReplyFinishedReason::Completed,
+            }),
+            AgentEvent::ReplyStart(agent_scope_event::ReplyStartEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                name: "test".into(),
+                role: "assistant".into(),
+                session_id: "s".into(),
+            }),
+            AgentEvent::ReplyEnd(agent_scope_event::ReplyEndEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                error: None,
+                finished_reason: agent_scope_types::ReplyFinishedReason::Completed,
+                session_id: "s".into(),
+            }),
+        ] {
+            app.consume_event(event);
+        }
+        assert!(
+            app.items.is_empty(),
+            "Meta events must not produce UI items"
+        );
+    }
+
+    #[test]
+    fn user_message_prefix_and_thinking_style() {
+        // 角色渲染在 items_to_lines 层实现,此处验证 items 内容本身。
+        let mut app = App::new(&config(), 0);
+        app.items.push(UiItem::UserMsg("hello".into()));
+        app.consume_event(AgentEvent::ThinkingBlockDelta(
+            agent_scope_event::ThinkingBlockDeltaEvent {
+                base: agent_scope_event::EventBase::new(),
+                reply_id: "r".into(),
+                block_id: "t".into(),
+                delta: "hmm".into(),
+            },
+        ));
+        let lines = app.items_to_lines();
+        // 第一行以 `you ` 前缀开头。
+        assert!(lines[0].to_string().contains("you"), "{:?}", lines[0]);
+        // 思考行含 `⋯` 与文本。
+        assert!(lines[1].to_string().contains("⋯"), "{:?}", lines[1]);
     }
 
     #[test]

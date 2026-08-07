@@ -147,7 +147,7 @@ impl Default for Theme {
             warn: Color::Yellow,
             muted: Color::DarkGray,
             thinking: Color::Magenta,
-            border: Color::DarkGray,
+            border: Color::Gray,
         }
     }
 }
@@ -1735,5 +1735,28 @@ mod tests {
         assert_eq!(status.width, wide.width);
         assert_eq!(input.width, wide.width);
         let _ = (header, main, status, input);
+    }
+
+    #[test]
+    fn theme_colors_are_consistent() {
+        let theme = Theme::default();
+        // 语义色必须互不相同,避免视觉混淆。
+        let colors = [
+            theme.accent,
+            theme.success,
+            theme.error,
+            theme.warn,
+            theme.muted,
+            theme.thinking,
+            theme.border,
+        ];
+        let mut unique = std::collections::HashSet::new();
+        for c in colors {
+            unique.insert(c);
+        }
+        assert_eq!(unique.len(), 7, "theme semantic colors must be distinct");
+        // 语义:accent 主色、success/error/warn 为可辨识色。
+        assert_ne!(theme.success, theme.error);
+        assert_ne!(theme.accent, theme.muted);
     }
 }

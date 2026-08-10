@@ -130,6 +130,18 @@ You are a weather reporter. When asked about weather:
 
 ## 6. MCP 配置与运行时(`agent_scope_mcp`)
 
+MCP 在 AgentScope Rust 中分成两层:
+
+- `agent_scope_workspace`:只保存和管理持久化配置(`.mcp`、`McpClientConfig`、`add_mcp` / `remove_mcp` / `list_mcps`)。
+- `agent_scope_mcp`:负责运行时连接、工具发现和 `Tool` 适配(`McpClient`、`McpTool`、`McpExt`)。
+
+因此应用代码需要连接 MCP 服务器时,除 workspace 外还要显式依赖 `agent_scope_mcp`:
+
+```toml
+agent_scope_workspace = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_mcp = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+```
+
 ### 6.1 配置注册(workspace 侧)
 
 `McpClientConfig` 描述一个外部 MCP 服务器,持久化到 `<workdir>/.mcp`(JSON 数组):
@@ -158,6 +170,16 @@ let mcp = McpClientConfig {
 ```rust
 use agent_scope_mcp::McpExt;
 use agent_scope_workspace::mcp::{McpClientConfig, McpTransportConfig};
+use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase};
+
+let mut ws = LocalWorkspace::new(LocalWorkspaceConfig {
+    workdir: "/tmp/my-workspace".into(),
+    workspace_id: None,
+    default_mcps: vec![],
+    skill_paths: vec![],
+    instructions: None,
+});
+ws.initialize().await?;
 
 ws.add_mcp(McpClientConfig {
     name: "my-server".into(),
@@ -168,7 +190,7 @@ ws.add_mcp(McpClientConfig {
     is_stateful: true,
 }).await?;
 
-let tools = ws.connect_mcp("my-server").await?;   // 连接 + 发现工具 → Vec<Arc<dyn Tool>>
+let tools = ws.connect_mcp("my-server").await?;    // 连接 + 发现工具 → Vec<Arc<dyn Tool>>
 let cached = ws.get_mcp_tools("my-server").await?; // 缓存列表,连接生命周期内可查
 ws.disconnect_mcp("my-server").await?;             // 关闭连接,释放子进程/套接字
 ```
@@ -179,7 +201,74 @@ ws.disconnect_mcp("my-server").await?;             // 关闭连接,释放子进�
 - workspace `close()` / `reset()` 自动断开所有 MCP 连接(FR-010)。
 - 依赖:需在 `Cargo.toml` 加入 `agent_scope_mcp`(非 workspace 默认依赖)。
 
-真实示例:`crates/agent_scope_mcp/examples/mcp_excalidraw_debug.rs`(对 `mcp-excalidraw-server` 做完整 stdio 往返)。
+### 6.3 把 MCP 工具交给 Agent
+
+`connect_mcp()` 返回的是 `Vec<Arc<dyn Tool>>`。这些工具与本地 `FunctionTool` 走同一个 `Tool` trait,可以直接调用,也可以注册进 `ToolKit` 后交给 `ReActAgent` 调度:
+
+```rust
+use std::sync::Arc;
+
+use agent_scope_tool::{Tool, ToolError, ToolExecOutput, ToolKit};
+use serde_json::Value;
+
+struct SharedTool(Arc<dyn Tool>);
+
+#[async_trait::async_trait]
+impl Tool for SharedTool {
+    fn name(&self) -> &str { self.0.name() }
+    fn description(&self) -> &str { self.0.description() }
+    fn input_schema(&self) -> Value { self.0.input_schema() }
+    fn is_concurrency_safe(&self) -> bool { self.0.is_concurrency_safe() }
+    fn is_read_only(&self) -> bool { self.0.is_read_only() }
+
+    async fn call(&self, input: Value) -> Result<ToolExecOutput, ToolError> {
+        self.0.call(input).await
+    }
+}
+
+let mcp_tools = ws.connect_mcp("my-server").await?;
+let mut toolkit = ToolKit::new();
+for tool in mcp_tools {
+    toolkit.register(SharedTool(tool));
+}
+// 后续把 toolkit 放进 AgentConfig::builder().toolkit(toolkit)
+```
+
+若只想手动调试单个远程工具,按带前缀的名字查找后调用:
+
+```rust
+use serde_json::json;
+
+let create = cached
+    .iter()
+    .find(|tool| tool.name() == "my-server/create_element")
+    .expect("remote tool exists");
+let output = create.call(json!({ "type": "rectangle", "x": 100, "y": 100 })).await?;
+```
+
+### 6.4 真实 stdio 示例
+
+真实示例:`crates/agent_scope_mcp/examples/mcp_excalidraw_debug.rs` 对 `mcp-excalidraw-server` 做完整 stdio 往返:注册 `.mcp`、派生 Node 子进程、发现远程工具、调用 `clear_canvas` / `create_element` / `describe_scene` / `query_elements`,最后 `disconnect_mcp()` 释放子进程。
+
+运行前先安装服务器并确保命令在 `PATH` 中:
+
+```bash
+npm i -g mcp-excalidraw-server
+cargo run -p agent_scope_mcp --example mcp_excalidraw_debug
+```
+
+如果不想全局安装,也可以把 `McpTransportConfig::Stdio` 改成 `command: "npx"`、`args: vec!["-y".into(), "mcp-excalidraw-server".into()]`。
+
+### 6.5 常见 MCP 坑
+
+| 现象 | 检查点 |
+|------|--------|
+| `McpNotFound` | 先 `add_mcp()` 或在 `default_mcps` 中注册;`connect_mcp(name)` 的名字必须与配置一致 |
+| 派生失败 / `McpConnectionError` | stdio `command` 不在 `PATH`、`args` 错误、服务器启动后没有按 MCP 协议响应 |
+| 找不到远程工具 | 工具名必须带 MCP 前缀:`"{mcp_name}/{tool_name}"` |
+| Agent 不调用 MCP 工具 | 连接后要把返回的 `Arc<dyn Tool>` 注册进 `ToolKit`,并在 system prompt 中说明可用工具 |
+| HTTP header 凭据丢失 | 持久化/列表会脱敏敏感 header;需要运行时真实凭据时避免把只含 `[REDACTED]` 的展示值重新作为连接配置 |
+| 长驻进程残留 | 结束时调用 `disconnect_mcp()` / `close()` / `reset()`;workspace 会自动断开活跃 MCP 连接 |
 
 ## 7. 沙箱:`SandboxSession` trait
 

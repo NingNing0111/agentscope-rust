@@ -334,11 +334,26 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
   ws.initialize().await?;
   ```
 
-- **MCP 集成**(`agent_scope_mcp`):把外部 MCP 服务器(Excalidraw、网页搜索等)接入为统一 `Tool`。配置注册在 workspace(`McpClientConfig`),运行时连接走 `McpExt`:
+- **MCP 集成**(`agent_scope_mcp`):把外部 MCP 服务器(Excalidraw、网页搜索、编辑器等)接入为统一 `Tool`。使用时要同时依赖 `agent_scope_workspace`(保存 `.mcp` 配置)与 `agent_scope_mcp`(运行时连接/工具适配):
+
+  ```toml
+  agent_scope_workspace = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+  agent_scope_mcp = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+  ```
 
   ```rust
   use agent_scope_mcp::McpExt;
   use agent_scope_workspace::mcp::{McpClientConfig, McpTransportConfig};
+  use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase};
+
+  let mut ws = LocalWorkspace::new(LocalWorkspaceConfig {
+      workdir: "/tmp/my-workspace".into(),
+      workspace_id: None,
+      default_mcps: vec![],
+      skill_paths: vec![],
+      instructions: None,
+  });
+  ws.initialize().await?;
 
   ws.add_mcp(McpClientConfig {
       name: "excalidraw".into(),
@@ -348,10 +363,14 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
       },
       is_stateful: true,
   }).await?;
-  let tools = ws.connect_mcp("excalidraw").await?; // Vec<Arc<dyn Tool>>
-  // 直接当本地工具用: tools.find(|t| t.name() == "excalidraw/create_element") ...
-  ws.disconnect_mcp("excalidraw").await?; // 释放子进程/连接
+
+  let tools = ws.connect_mcp("excalidraw").await?; // 连接 + 发现 → Vec<Arc<dyn Tool>>
+  // 远程工具名带 MCP 前缀,例如 "excalidraw/create_element"。
+  // 可直接调用 tool.call(json!(...)),也可注册进 ToolKit 后交给 ReActAgent 使用。
+  ws.disconnect_mcp("excalidraw").await?; // 释放 stdio 子进程/HTTP 连接
   ```
+
+  传输支持 `Stdio`、`StreamableHttp`、遗留 `Sse`(连接时映射为 StreamableHttp)。真实 stdio 示例见 `crates/agent_scope_mcp/examples/mcp_excalidraw_debug.rs`;运行前需安装 `mcp-excalidraw-server` 并保证命令在 `PATH` 中。
 
 🔗 详细参考:[`references/workspace.md`](references/workspace.md)(`LocalWorkspace`/`WorkspaceManager`/`Skill` 管理/MCP 配置)、[`references/workspace.md` §6](references/workspace.md)(MCP 运行时 `agent_scope_mcp` 连接与调用)、[`references/session.md`](references/session.md)(`Session`/`SessionStore`/上下文裁剪)。`LocalSandboxSession` 沙箱定义在 `agent_scope_sandbox` crate,用法见 `references/workspace.md` §9。
 

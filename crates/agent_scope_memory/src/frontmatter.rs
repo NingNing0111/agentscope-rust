@@ -3,43 +3,10 @@
 
 use std::collections::HashMap;
 
-use regex::Regex;
-
 use crate::MemoryEntry;
 
 pub fn parse_frontmatter_fields(content: &str) -> HashMap<String, String> {
-    // The closing delimiter must be `---` on its own line (or at EOF); a suffix
-    // like `---suffix` must NOT terminate the frontmatter.
-    let Ok(block_re) = Regex::new(r"(?s)\A---\r?\n(.*?)\r?\n---(?:\r?\n|\z)") else {
-        return HashMap::new();
-    };
-    let Some(captures) = block_re.captures(content) else {
-        return HashMap::new();
-    };
-    let Some(block) = captures.get(1) else {
-        return HashMap::new();
-    };
-
-    let Ok(field_re) = Regex::new(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$") else {
-        return HashMap::new();
-    };
-
-    block
-        .as_str()
-        .lines()
-        .filter_map(|line| {
-            let captures = field_re.captures(line.trim())?;
-            let key = captures.get(1)?.as_str().to_string();
-            let raw_value = captures.get(2)?.as_str().trim();
-            let value = if raw_value.starts_with('"') && raw_value.ends_with('"') {
-                yaml_unescape(&raw_value[1..raw_value.len() - 1])
-            } else {
-                // Legacy unquoted value (simple scalar written by older code).
-                raw_value.trim_matches('"').to_string()
-            };
-            Some((key, value))
-        })
-        .collect()
+    agent_scope_utils::frontmatter::parse_frontmatter_fields(content)
 }
 
 pub fn serialize_frontmatter(entry: &MemoryEntry) -> String {
@@ -83,47 +50,8 @@ fn yaml_quote(s: &str) -> String {
     out
 }
 
-/// Unescape a double-quoted YAML scalar (inverse of [`yaml_quote`]).
-fn yaml_unescape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('r') => out.push('\r'),
-                Some('t') => out.push('\t'),
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
-                None => out.push('\\'),
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
 pub(crate) fn body_after_frontmatter(content: &str) -> Option<String> {
-    let normalized = content.replace("\r\n", "\n");
-    if !normalized.starts_with("---\n") {
-        return None;
-    }
-    let rest = &normalized[4..];
-    // Closing delimiter must be `---` on its own line (or at EOF).
-    let end = rest
-        .find("\n---\n")
-        .or_else(|| rest.strip_suffix("\n---").map(|prefix| prefix.len()))?;
-    let after = if rest[end..].starts_with("\n---\n") {
-        &rest[end + "\n---\n".len()..]
-    } else {
-        ""
-    };
-    Some(after.trim_start_matches('\n').to_string())
+    agent_scope_utils::frontmatter::body_after_frontmatter(content)
 }
 
 #[cfg(test)]

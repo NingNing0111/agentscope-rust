@@ -285,7 +285,7 @@ impl std::io::Write for LogWriter {
         let mut logs = self
             .0
             .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "log buffer poisoned"))?;
+            .map_err(|_| std::io::Error::other("log buffer poisoned"))?;
         logs.push(String::from_utf8_lossy(buf).into_owned());
         Ok(buf.len())
     }

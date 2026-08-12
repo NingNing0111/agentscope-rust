@@ -9,10 +9,11 @@ use agent_scope_memory::{Memory, MemoryEntry, MemoryType};
 use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
 use agent_scope_tool::{FunctionTool, LocalSkillLoader, SkillViewer, ToolKit};
 use agent_scope_workspace::Skill;
-use regex::Regex;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use walkdir::{DirEntry, WalkDir};
 
 use crate::config::RuntimeConfig;
 
@@ -922,6 +923,9 @@ pub fn truncate_output(text: &str) -> String {
 /// Supported syntax: `*` (within a path segment), `**` (across directories),
 /// `?` (single non-separator character). Everything else is matched literally.
 /// `**/` is expanded to `(?:.*/)?` so `src/**/*.rs` also matches `src/main.rs`.
+///
+/// This helper remains for compatibility tests; matching in `glob_tool` is
+/// delegated to the approved dependency-backed wrapper.
 pub fn glob_to_regex(pattern: &str) -> String {
     let mut out = String::with_capacity(pattern.len() * 2);
     let chars: Vec<char> = pattern.chars().collect();
@@ -953,6 +957,47 @@ pub fn glob_to_regex(pattern: &str) -> String {
         }
     }
     out
+}
+
+fn build_glob_set(pattern: &str) -> Result<GlobSet, globset::Error> {
+    let mut builder = GlobSetBuilder::new();
+    builder.add(Glob::new(pattern)?);
+    builder.build()
+}
+
+fn is_hidden_entry(entry: &DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .is_some_and(|name| name.starts_with('.'))
+}
+
+fn bounded_walk(root: &Path, max_entries: usize) -> (Vec<DirEntry>, bool) {
+    let mut entries = Vec::new();
+    let mut entries_scanned = 0usize;
+    let mut scan_cap_hit = false;
+
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| entry.depth() == 0 || !is_hidden_entry(entry))
+    {
+        let Ok(entry) = entry else { continue };
+        if entry.depth() == 0 {
+            continue;
+        }
+        entries_scanned += 1;
+        if entries_scanned > max_entries {
+            scan_cap_hit = true;
+            break;
+        }
+        if entry.file_type().is_symlink() {
+            continue;
+        }
+        entries.push(entry);
+    }
+
+    (entries, scan_cap_hit)
 }
 
 pub fn grep_tool(state: &ToolState, input: GrepInput) -> ToolResultShape {
@@ -987,69 +1032,47 @@ pub fn grep_tool(state: &ToolState, input: GrepInput) -> ToolResultShape {
     let mut files_scanned = 0usize;
     let mut files_skipped_large = 0usize;
     let mut files_skipped_binary = 0usize;
-    let mut scan_limit_hit = false;
-    let mut stack = vec![base];
-    while let Some(dir) = stack.pop() {
-        if files_scanned >= MAX_GREP_SCAN_FILES {
-            scan_limit_hit = true;
+    let (entries, scan_limit_hit) = bounded_walk(&base, MAX_GREP_SCAN_FILES);
+    for entry in entries {
+        if matches.len() >= max_results || files_scanned >= MAX_GREP_SCAN_FILES {
             break;
         }
-        let Ok(entries) = fs::read_dir(&dir) else {
+        if !entry.file_type().is_file() {
             continue;
-        };
-        for entry in entries.flatten() {
-            if matches.len() >= max_results {
-                break;
-            }
-            let name = entry.file_name();
-            if name.to_string_lossy().starts_with('.') {
-                continue; // skip hidden entries (covers .git, .pi-rust, etc.)
-            }
-            let Ok(ft) = entry.file_type() else { continue };
-            if ft.is_symlink() {
-                continue; // never follow symlinks (avoids escaping the workspace)
-            }
-            if ft.is_dir() {
-                stack.push(entry.path());
-                continue;
-            }
-            if !ft.is_file() {
-                continue;
-            }
-            files_scanned += 1;
+        }
+        files_scanned += 1;
 
-            // Per-file size guard: skip files larger than MAX_GREP_FILE_BYTES
-            // so a single huge file (e.g. multi-GB log) cannot stall the host.
-            let file_path = entry.path();
-            let file_size = fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
-            if file_size > MAX_GREP_FILE_BYTES {
-                files_skipped_large += 1;
-                continue;
-            }
+        // Per-file size guard: skip files larger than MAX_GREP_FILE_BYTES
+        // so a single huge file (e.g. multi-GB log) cannot stall the host.
+        let file_path = entry.path().to_path_buf();
+        let file_size = fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+        if file_size > MAX_GREP_FILE_BYTES {
+            files_skipped_large += 1;
+            continue;
+        }
 
-            // Binary guard: peek at the first 8 KiB for a NUL byte.
-            if is_binary_file(&file_path) {
-                files_skipped_binary += 1;
-                continue;
-            }
+        // Binary guard: peek at the first 8 KiB for a NUL byte.
+        if is_binary_file(&file_path) {
+            files_skipped_binary += 1;
+            continue;
+        }
 
-            let Ok(text) = fs::read_to_string(&file_path) else {
-                continue;
-            }; // skip non-UTF8
-            for (idx, line) in text.lines().enumerate() {
-                let hay = if input.case_insensitive {
-                    line.to_lowercase()
-                } else {
-                    line.to_string()
-                };
-                if hay.contains(&needle) {
-                    let rel = display_rel(&state.cwd, &file_path);
-                    matched_files.insert(rel.clone());
-                    let line_capped: String = line.chars().take(MAX_GREP_LINE_CHARS).collect();
-                    matches.push(format!("{rel}:{}:{line_capped}", idx + 1));
-                    if matches.len() >= max_results {
-                        break;
-                    }
+        let Ok(text) = fs::read_to_string(&file_path) else {
+            continue;
+        }; // skip non-UTF8
+        for (idx, line) in text.lines().enumerate() {
+            let hay = if input.case_insensitive {
+                line.to_lowercase()
+            } else {
+                line.to_string()
+            };
+            if hay.contains(&needle) {
+                let rel = display_rel(&state.cwd, &file_path);
+                matched_files.insert(rel.clone());
+                let line_capped: String = line.chars().take(MAX_GREP_LINE_CHARS).collect();
+                matches.push(format!("{rel}:{}:{line_capped}", idx + 1));
+                if matches.len() >= max_results {
+                    break;
                 }
             }
         }
@@ -1105,9 +1128,8 @@ pub fn glob_tool(state: &ToolState, input: GlobInput) -> ToolResultShape {
     if !base.exists() {
         return ToolResultShape::err("file_not_found", "io", "glob path does not exist", false);
     }
-    let regex_str = glob_to_regex(pattern);
-    let re = match Regex::new(&format!("^{regex_str}$")) {
-        Ok(re) => re,
+    let glob_set = match build_glob_set(pattern) {
+        Ok(glob_set) => glob_set,
         Err(err) => {
             return ToolResultShape::err(
                 "invalid_pattern",
@@ -1119,43 +1141,19 @@ pub fn glob_tool(state: &ToolState, input: GlobInput) -> ToolResultShape {
     };
 
     let mut files: Vec<String> = Vec::new();
-    let mut entries_scanned = 0usize;
-    let mut scan_cap_hit = false;
-    let mut stack = vec![base.clone()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if files.len() >= DEFAULT_GLOB_MAX_RESULTS {
-                break;
-            }
-            entries_scanned += 1;
-            if entries_scanned > MAX_GLOB_SCAN_ENTRIES {
-                scan_cap_hit = true;
-                break;
-            }
-            let name = entry.file_name();
-            if name.to_string_lossy().starts_with('.') {
-                continue;
-            }
-            let Ok(ft) = entry.file_type() else { continue };
-            if ft.is_symlink() {
-                continue;
-            }
-            if ft.is_dir() {
-                stack.push(entry.path());
-            } else if ft.is_file()
-                && let Ok(rel) = entry.path().strip_prefix(&base)
-            {
-                let rel_str = rel.to_string_lossy().replace('\\', "/");
-                if re.is_match(&rel_str) {
-                    files.push(rel_str);
-                }
-            }
-        }
-        if scan_cap_hit {
+    let (entries, scan_cap_hit) = bounded_walk(&base, MAX_GLOB_SCAN_ENTRIES);
+    for entry in entries {
+        if files.len() >= DEFAULT_GLOB_MAX_RESULTS {
             break;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if let Ok(rel) = entry.path().strip_prefix(&base) {
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            if glob_set.is_match(&rel_str) {
+                files.push(rel_str);
+            }
         }
     }
     if files.is_empty() {

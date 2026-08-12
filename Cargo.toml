@@ -27,6 +27,10 @@ chrono-tz = "0.10"
 base64 = "0.22"
 schemars = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
+thiserror = "2"
+gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
+globset = "0.4.20"
+walkdir = "2.5.0"
 
 [dependencies]
 agent_scope_agent = { path = "crates/agent_scope_agent" }

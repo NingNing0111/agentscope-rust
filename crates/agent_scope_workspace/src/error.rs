@@ -1,80 +1,56 @@
 //! Workspace error types.
 
-use std::fmt;
+use thiserror::Error;
 
 /// Errors returned by workspace operations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum WorkspaceError {
     /// Backend I/O error.
+    #[error("backend error: {message}")]
     BackendError { message: String },
     /// Workspace not initialized.
+    #[error("workspace not initialized")]
     NotInitialized,
     /// Already initialized.
+    #[error("workspace already initialized")]
     AlreadyInitialized,
     /// SKILL.md is invalid or missing.
+    #[error("invalid skill at {path}: {reason}")]
     InvalidSkill { path: String, reason: String },
     /// Skill name was not found in the index.
+    #[error("skill not found: {name}")]
     SkillNotFound { name: String },
     /// MCP client name was not found.
+    #[error("MCP not found: {name}")]
     McpNotFound { name: String },
     /// MCP client with this name already registered.
+    #[error("MCP already exists: {name}")]
     McpAlreadyExists { name: String },
     /// MCP connection failed (transport, handshake, or protocol error).
     /// `reason` MUST NOT contain authentication secrets (FR-009).
+    #[error("MCP connection failed for '{name}': {reason}")]
     McpConnectionError { name: String, reason: String },
     /// MCP tool call failed on the server.
     /// `reason` MUST NOT contain authentication secrets (FR-009).
+    #[error("MCP tool call failed: '{mcp_name}/{tool_name}': {reason}")]
     McpCallError {
         mcp_name: String,
         tool_name: String,
         reason: String,
     },
     /// MCP client is not connected — call `connect_mcp()` first.
+    #[error("MCP client not connected: {name}")]
     McpNotConnected { name: String },
     /// Path traversal attack detected.
+    #[error("path traversal detected: {path}")]
     PathTraversal { path: String },
     /// .mcp file is corrupted.
+    #[error("corrupt .mcp file at {path}: {message}")]
     CorruptMcpFile { path: String, message: String },
     /// Placeholder for sandbox gateway errors.
+    #[error("gateway error: {message}")]
     GatewayError { message: String },
     /// Context/tool-result offload failed.
+    #[error("offload error: {message}")]
     OffloadError { message: String },
 }
-
-impl fmt::Display for WorkspaceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            WorkspaceError::BackendError { message } => write!(f, "backend error: {message}"),
-            WorkspaceError::NotInitialized => write!(f, "workspace not initialized"),
-            WorkspaceError::AlreadyInitialized => write!(f, "workspace already initialized"),
-            WorkspaceError::InvalidSkill { path, reason } => {
-                write!(f, "invalid skill at {path}: {reason}")
-            }
-            WorkspaceError::SkillNotFound { name } => write!(f, "skill not found: {name}"),
-            WorkspaceError::McpNotFound { name } => write!(f, "MCP not found: {name}"),
-            WorkspaceError::McpAlreadyExists { name } => write!(f, "MCP already exists: {name}"),
-            WorkspaceError::McpConnectionError { name, reason } => {
-                write!(f, "MCP connection failed for '{name}': {reason}")
-            }
-            WorkspaceError::McpCallError {
-                mcp_name,
-                tool_name,
-                reason,
-            } => write!(
-                f,
-                "MCP tool call failed: '{mcp_name}/{tool_name}': {reason}"
-            ),
-            WorkspaceError::McpNotConnected { name } => {
-                write!(f, "MCP client not connected: {name}")
-            }
-            WorkspaceError::PathTraversal { path } => write!(f, "path traversal detected: {path}"),
-            WorkspaceError::CorruptMcpFile { path, message } => {
-                write!(f, "corrupt .mcp file at {path}: {message}")
-            }
-            WorkspaceError::GatewayError { message } => write!(f, "gateway error: {message}"),
-            WorkspaceError::OffloadError { message } => write!(f, "offload error: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for WorkspaceError {}

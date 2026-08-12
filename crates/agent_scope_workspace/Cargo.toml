@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agent_scope_utils = { path = "../agent_scope_utils" }
 agent_scope_message = { path = "../agent_scope_message" }
 
 async-trait = "0.1"
@@ -21,6 +22,7 @@ serde_json.workspace = true
 sha2 = "0.10"
 tokio = { version = "1", features = ["fs", "io-util", "sync", "process", "rt", "macros", "time"] }
 tracing = "0.1"
+thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

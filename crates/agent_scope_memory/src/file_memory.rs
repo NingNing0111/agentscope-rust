@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use regex::Regex;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
@@ -257,21 +256,18 @@ fn validate_entry(entry: &MemoryEntry) -> Result<(), MemoryError> {
 /// memory root (audit M6). `write` already enforced this via `validate_entry`;
 /// `read`/`delete` take a bare name and must apply the same guard.
 fn validate_name(name: &str) -> Result<(), MemoryError> {
-    let name_re = Regex::new(r"^[A-Za-z0-9_-]+$").map_err(|err| MemoryError::ValidationError {
-        field: "name".into(),
-        message: err.to_string(),
-    })?;
-    if name.trim().is_empty() {
-        return Err(MemoryError::ValidationError {
-            field: "name".into(),
-            message: "name must not be empty".into(),
-        });
-    }
-    if !name_re.is_match(name) {
+    if !is_valid_memory_name(name) {
         return Err(MemoryError::ValidationError {
             field: "name".into(),
             message: "name must match [A-Za-z0-9_-]+".into(),
         });
     }
     Ok(())
+}
+
+fn is_valid_memory_name(name: &str) -> bool {
+    !name.trim().is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }

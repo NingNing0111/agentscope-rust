@@ -55,103 +55,16 @@ pub enum SkillOrLoader {
 }
 
 // ---------------------------------------------------------------------------
-// parse_skill_md helper (T006) — duplicated from agent_scope_workspace::skill
-// since the original is pub(crate).
+// parse_skill_md helper (T006) — shared compatibility wrapper
 // ---------------------------------------------------------------------------
 
 /// Parse a SKILL.md file's YAML frontmatter and body.
 ///
-/// Expected format:
-/// ```markdown
-/// ---
-/// name: skill-name
-/// description: A description of the skill
-/// ---
-///
-/// Markdown body here...
-/// ```
-///
-/// Returns `(name, description, body)`.  Missing or malformed frontmatter
+/// Returns `(name, description, body)`. Missing or malformed frontmatter
 /// results in empty strings for name/description.
 pub(crate) fn parse_skill_md(content: &str) -> (String, String, String) {
-    let trimmed = content.trim();
-    let Some(rest) = trimmed.strip_prefix("---\n") else {
-        return (String::new(), String::new(), content.to_string());
-    };
-    let Some(end) = rest
-        .find("\n---\n")
-        .or_else(|| rest.strip_suffix("\n---").map(|prefix| prefix.len()))
-    else {
-        return (String::new(), String::new(), content.to_string());
-    };
-    let frontmatter = &rest[..end];
-    let body_start = if rest[end..].starts_with("\n---\n") {
-        end + "\n---\n".len()
-    } else {
-        rest.len()
-    };
-    let body = rest[body_start..].trim().to_string();
-
-    let mut name = String::new();
-    let mut description = String::new();
-
-    let lines: Vec<&str> = frontmatter.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        if let Some(value) = line.strip_prefix("name:") {
-            name = value.trim().trim_matches('"').to_string();
-        } else if let Some(value) = line.strip_prefix("description:") {
-            let inline = value.trim().trim_matches('"');
-            if inline.starts_with('|') || inline.starts_with('>') {
-                // YAML 块标量(`description: |-` / `|` / `>` / `>-`):
-                // 后续缩进行属于块内容,直到遇到无缩进的顶层键或 frontmatter
-                // 结束。对齐真正 YAML 语义以支持多行描述(如 anthropics/skills
-                // 官方 skill 使用的 `description: |-`)。
-                let mut block: Vec<&str> = Vec::new();
-                let mut base_indent: Option<usize> = None;
-                let mut j = i + 1;
-                while j < lines.len() {
-                    let next = lines[j];
-                    if next.is_empty() {
-                        block.push("");
-                    } else if !next.starts_with(' ') && !next.starts_with('\t') {
-                        break; // 无缩进 = 顶层键,块结束
-                    } else {
-                        let indent = next.len() - next.trim_start().len();
-                        match base_indent {
-                            None => {
-                                base_indent = Some(indent);
-                                block.push(next.trim_start());
-                            }
-                            Some(base) => {
-                                if indent < base {
-                                    break;
-                                }
-                                block.push(&next[base.min(next.len())..]);
-                            }
-                        }
-                    }
-                    j += 1;
-                }
-                // `|` 系列保留换行;`>` 系列按 YAML 折叠语义用空格连接。
-                description = if inline.starts_with('>') {
-                    block.join(" ")
-                } else {
-                    block.join("\n")
-                }
-                .trim()
-                .to_string();
-                i = j; // 跳过已消费的块行
-                continue;
-            } else {
-                description = inline.to_string();
-            }
-        }
-        i += 1;
-    }
-
-    (name, description, body)
+    let parsed = agent_scope_utils::frontmatter::parse_skill_frontmatter(content);
+    (parsed.name, parsed.description, parsed.body)
 }
 
 // ---------------------------------------------------------------------------

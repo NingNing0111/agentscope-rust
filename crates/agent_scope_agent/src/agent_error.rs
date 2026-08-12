@@ -1,51 +1,67 @@
 //! AgentError — typed error enum for all agent operations.
 
-use std::fmt;
 use std::time::Duration;
+
+use thiserror::Error;
 
 /// Typed error for agent operations.
 ///
 /// 10 variants covering validation, model, tool, timeout, cancellation,
 /// permission, compression, empty context, max iterations, and config errors.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AgentError {
     /// Invalid input or configuration.
+    #[error("Validation error: {message}")]
     ValidationError { message: String },
 
     /// Model call failure (wraps ModelError from agent_scope_model).
+    #[error("Model error: {source}")]
     ModelError {
+        #[source]
         source: agent_scope_model::ModelError,
     },
 
     /// Tool execution failure (wraps ToolError from agent_scope_tool).
-    ToolError { source: agent_scope_tool::ToolError },
+    #[error("Tool error: {source}")]
+    ToolError {
+        #[source]
+        source: agent_scope_tool::ToolError,
+    },
 
     /// Operation timed out.
+    #[error("Timeout: {operation} after {duration:?}")]
     TimeoutError {
         operation: String,
         duration: Duration,
     },
 
     /// Reply was cancelled/interrupted.
+    #[error("Reply cancelled: {reply_id}")]
     CancellationError { reply_id: String },
 
     /// Tool execution rejected by permission engine.
+    #[error("Permission denied for tool '{tool_name}': {reason}")]
     PermissionDenied { tool_name: String, reason: String },
 
     /// Context compression model call failed.
+    #[error("Context compression failed: {reason}")]
     ContextCompressionFailed { reason: String },
 
     /// `reply(None)` called with empty state context.
+    #[error("No content to reply to — state context is empty")]
     NoContentToReply,
 
     /// ReAct loop exceeded iteration limit.
+    #[error("Max iterations ({max_iters}) exceeded")]
     MaxItersExceeded { max_iters: u32 },
 
     /// Config validation failed at build time.
+    #[error("Invalid config field '{field}': {message}")]
     InvalidConfig { field: String, message: String },
 
     /// A streaming reply is already in progress.
     /// Callers must consume or drop the existing stream before starting a new reply.
+    #[error("A streaming reply is already in progress")]
     AlreadyStreaming,
 
     /// Session persistence failure (wraps SessionError from agent_scope_state).
@@ -53,60 +69,11 @@ pub enum AgentError {
     /// Raised when resuming a persisted session at build time, or when an
     /// automatic save fails after a reply. Does not break the reply result
     /// already produced.
+    #[error("Session persistence error: {source}")]
     SessionError {
+        #[source]
         source: agent_scope_state::SessionError,
     },
-}
-
-impl fmt::Display for AgentError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ValidationError { message } => write!(f, "Validation error: {message}"),
-            Self::ModelError { source } => write!(f, "Model error: {source}"),
-            Self::ToolError { source } => write!(f, "Tool error: {source}"),
-            Self::TimeoutError {
-                operation,
-                duration,
-            } => {
-                write!(f, "Timeout: {operation} after {duration:?}")
-            }
-            Self::CancellationError { reply_id } => {
-                write!(f, "Reply cancelled: {reply_id}")
-            }
-            Self::PermissionDenied { tool_name, reason } => {
-                write!(f, "Permission denied for tool '{tool_name}': {reason}")
-            }
-            Self::ContextCompressionFailed { reason } => {
-                write!(f, "Context compression failed: {reason}")
-            }
-            Self::NoContentToReply => {
-                write!(f, "No content to reply to — state context is empty")
-            }
-            Self::MaxItersExceeded { max_iters } => {
-                write!(f, "Max iterations ({max_iters}) exceeded")
-            }
-            Self::InvalidConfig { field, message } => {
-                write!(f, "Invalid config field '{field}': {message}")
-            }
-            Self::AlreadyStreaming => {
-                write!(f, "A streaming reply is already in progress")
-            }
-            Self::SessionError { source } => {
-                write!(f, "Session persistence error: {source}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AgentError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::ModelError { source } => Some(source),
-            Self::ToolError { source } => Some(source),
-            Self::SessionError { source } => Some(source),
-            _ => None,
-        }
-    }
 }
 
 impl From<agent_scope_model::ModelError> for AgentError {

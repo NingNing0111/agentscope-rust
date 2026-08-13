@@ -65,6 +65,26 @@ pub trait WorkspaceBase: Send + Sync {
 | Glob | 文件模式匹配 |
 | Grep | 内容搜索 |
 
+### 2.3.1 Agent 侧内置工具自动注入 (Feature 029)
+
+当 agent 通过 `AgentConfig::builder().workspace(...)` 显式绑定 workspace 后，构造路径**自动合并**一组默认内置工具到 agent 的 `ToolKit`：
+
+| 工具 | 功能 | 只读 |
+|------|------|------|
+| Bash | 执行 shell 命令（超时、输出截断、cwd 限定 workspace） | 否 |
+| Read | 读取文件；记录读状态供读-改守卫 | 是 |
+| Edit | 精确字符串替换（须先读文件；`old_string` 唯一否则要求 `replace_all`） | 否 |
+| Write | 创建/覆盖文件（覆盖已有文件须先读） | 否 |
+| Grep | 原生 Rust 内容搜索（输出模式、上下文、有界结果） | 是 |
+| Glob | 原生 Rust glob 文件发现（有界、按 mtime 排序） | 是 |
+| ResetTools | 元工具，在授权范围内切换工具组激活状态 | 否 |
+| Skill | 按精确名称查看技能内容（尊重激活工具组） | 是 |
+| PowerShell | 仅 Windows 的命令工具（其他平台不注入） | 否 |
+
+**未**配置 workspace 的 agent 不会暴露任何上述文件/命令工具（FR-002）。共享的 `WorkspaceToolSession` 在 `Read` → `Edit`/`Write` 之间强制读-改守卫；`ResetTools` 的激活变化会立即反映到 `ToolKit::get_tool_schemas()`。
+
+完整契约见 `specs/029-agent-workspace-tools/`。
+
 ### 2.4 MCP 集成
 
 ```rust
@@ -120,18 +140,31 @@ ws.close().await?;
 
 ### 4.1 在 Agent 中使用 Workspace
 
+将 workspace 绑定到 agent，即可自动获得内置文件/命令工具（Feature 029）：
+
 ```rust
 use std::sync::Arc;
-let ws = Arc::new(tokio::sync::Mutex::new(LocalWorkspace::new(config)));
-ws.lock().await.initialize().await?;
+use agent_scope_agent::{AgentConfig, ReActAgent};
+use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase};
 
-let agent = ReActAgent::new(
-    agent_config,
-    ReActConfig::default(),
-    ContextConfig::default(),
-    vec![], // 注入 workspace-aware middleware
-)?;
+let mut ws = LocalWorkspace::new(LocalWorkspaceConfig {
+    workdir: "/tmp/my-workspace".into(),
+    ..Default::default()
+});
+ws.initialize().await?;
+let ws = Arc::new(ws);
+
+let config = AgentConfig::builder()
+    .name("agent")
+    .model(model)
+    .workspace(Arc::clone(&ws)) // 029: 自动注入 Bash/Read/Edit/Write/Grep/Glob/ResetTools/Skill
+    .build()?;
+let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::default(), vec![])?;
+
+// `agent.toolkit().get_tool_schemas()` 现在包含上述内置工具。
 ```
+
+未配置 `.workspace(...)` 的 agent 不会暴露任何文件/命令工具。
 
 ### 4.2 MCP 客户端注册
 

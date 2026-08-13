@@ -65,6 +65,26 @@ Tools returned by `LocalWorkspace.list_tools()`:
 | Glob | File pattern matching |
 | Grep | Content search |
 
+### 2.3.1 Agent-Side Built-In Tool Injection (Feature 029)
+
+When an agent is explicitly bound to a workspace via `AgentConfig::builder().workspace(...)`, the agent construction path **automatically merges** a default set of built-in tools into the agent's `ToolKit`:
+
+| Tool | Function | Read-only |
+|------|----------|-----------|
+| Bash | Execute shell commands (timeout, output-truncation, workspace cwd) | no |
+| Read | Read files; records the read for the read-before-modify guard | yes |
+| Edit | Exact string replacement (requires the file to have been read; unique `old_string` unless `replace_all`) | no |
+| Write | Create/overwrite files (overwrite requires prior read) | no |
+| Grep | Native Rust content search (output modes, context, bounded results) | yes |
+| Glob | Native Rust glob file discovery (bounded, mtime-sorted) | yes |
+| ResetTools | Meta-tool switching tool-group activation state within authorization | no |
+| Skill | View skill content by exact name (respects active tool groups) | yes |
+| PowerShell | Windows-only command tool (absent on other platforms) | no |
+
+Agents **without** a workspace expose none of these file/command tools (FR-002). The shared `WorkspaceToolSession` enforces the read-before-modify guard across `Read` → `Edit`/`Write`, and `ResetTools` activation changes are reflected in `ToolKit::get_tool_schemas()` immediately.
+
+See `specs/029-agent-workspace-tools/` for the full contracts.
+
 ### 2.4 MCP Integration
 
 ```rust
@@ -119,18 +139,32 @@ ws.close().await?;
 
 ### 4.1 Using Workspace with Agents
 
+Bind a workspace to the agent to automatically receive the built-in file/command
+tools (Feature 029):
+
 ```rust
 use std::sync::Arc;
-let ws = Arc::new(tokio::sync::Mutex::new(LocalWorkspace::new(config)));
-ws.lock().await.initialize().await?;
+use agent_scope_agent::{AgentConfig, ReActAgent};
+use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase};
 
-let agent = ReActAgent::new(
-    agent_config,
-    ReActConfig::default(),
-    ContextConfig::default(),
-    vec![], // inject workspace-aware middleware
-)?;
+let mut ws = LocalWorkspace::new(LocalWorkspaceConfig {
+    workdir: "/tmp/my-workspace".into(),
+    ..Default::default()
+});
+ws.initialize().await?;
+let ws = Arc::new(ws);
+
+let config = AgentConfig::builder()
+    .name("agent")
+    .model(model)
+    .workspace(Arc::clone(&ws)) // 029: auto-inject Bash/Read/Edit/Write/Grep/Glob/ResetTools/Skill
+    .build()?;
+let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::default(), vec![])?;
+
+// `agent.toolkit().get_tool_schemas()` now includes the built-in tools.
 ```
+
+An agent built without `.workspace(...)` exposes no file/command tools.
 
 ### 4.2 MCP Client Registration
 

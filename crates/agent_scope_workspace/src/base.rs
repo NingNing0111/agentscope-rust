@@ -131,4 +131,12 @@ pub trait WorkspaceBase: Send + Sync {
 
     /// Return the active execution backend.
     fn get_backend(&self) -> Result<&dyn crate::backend::WorkspaceBackend, WorkspaceError>;
+
+    /// Return an owned handle to the active execution backend.
+    ///
+    /// Unlike [`Self::get_backend`] (a borrow), this returns a clone of the
+    /// `Arc` the workspace holds, so callers such as the `agent_scope_tool`
+    /// built-in workspace tools can retain the backend independently of the
+    /// workspace's lifetime (Feature 029).
+    fn get_backend_arc(&self) -> Result<Arc<dyn crate::backend::WorkspaceBackend>, WorkspaceError>;
 }

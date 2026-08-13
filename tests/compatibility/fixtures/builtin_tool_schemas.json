@@ -1,0 +1,84 @@
+{
+  "_fixture_name": "builtin-tool-schemas",
+  "_generated_at": "2026-08-13T00:00:00Z",
+  "_description": "Golden snapshot of Feature 029 built-in workspace tool input-schema contracts, transcribed from the vendored Python reference (agentscope/tool/_builtin/, upstream 9d1026fa) and contracts/ (specs/029-agent-workspace-tools). Compared structurally by crates/agent_scope_tool/tests/builtin_compat_tests.rs (Constitution Art.1/Art.3/Art.6).",
+  "data": {
+    "Bash": {
+      "required": ["command"],
+      "properties": {
+        "command": "string",
+        "description": "string",
+        "timeout": "integer"
+      }
+    },
+    "Read": {
+      "required": ["file_path"],
+      "properties": {
+        "file_path": "string",
+        "offset": "integer",
+        "limit": "integer"
+      }
+    },
+    "Edit": {
+      "required": ["file_path", "old_string", "new_string"],
+      "properties": {
+        "file_path": "string",
+        "old_string": "string",
+        "new_string": "string",
+        "replace_all": "boolean"
+      }
+    },
+    "Write": {
+      "required": ["file_path", "content"],
+      "properties": {
+        "file_path": "string",
+        "content": "string"
+      }
+    },
+    "Grep": {
+      "required": ["pattern"],
+      "properties": {
+        "pattern": "string",
+        "path": "string",
+        "output_mode": "string",
+        "glob": "string",
+        "type": "string",
+        "-A": "integer",
+        "-B": "integer",
+        "-C": "integer",
+        "context": "integer",
+        "n": "boolean",
+        "i": "boolean",
+        "case_insensitive": "boolean",
+        "multiline": "boolean",
+        "head_limit": "integer",
+        "offset": "integer"
+      }
+    },
+    "Glob": {
+      "required": ["pattern"],
+      "properties": {
+        "pattern": "string",
+        "path": "string"
+      }
+    },
+    "PowerShell": {
+      "required": ["command"],
+      "properties": {
+        "command": "string",
+        "description": "string",
+        "timeout": "integer"
+      }
+    },
+    "ResetTools": {
+      "required": [],
+      "properties": {}
+    },
+    "Skill": {
+      "required": ["skill"],
+      "properties": {
+        "skill": "string"
+      }
+    }
+  }
+}

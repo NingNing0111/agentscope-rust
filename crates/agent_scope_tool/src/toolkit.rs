@@ -2,7 +2,7 @@
 //!
 //! Aligns with AgentScope Python's `Toolkit`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use agent_scope_message::ToolCallBlock;
@@ -13,6 +13,8 @@ use crate::json_repair::{RepairOutcome, repair_tool_input};
 use crate::skill_loader::{LocalSkillLoader, SkillLoader, SkillOrLoader};
 use crate::skill_viewer::{DEFAULT_SKILL_INSTRUCTION, SkillViewer};
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
+
+use crate::builtin::WorkspaceToolSession;
 
 // ---------------------------------------------------------------------------
 // ToolGroup struct
@@ -117,6 +119,16 @@ pub struct ToolKit {
     tools: HashMap<String, Box<dyn Tool>>,
     tool_groups: Vec<ToolGroup>,
     skill_cache: Arc<RwLock<BTreeMap<String, Skill>>>,
+    /// Tool-name → group-name association for activation filtering.
+    tool_group_of: HashMap<String, String>,
+    /// Currently active tool-group names (managed by `ResetTools`).
+    /// Empty means no filtering (all tools visible) — the default.
+    active_groups: HashSet<String>,
+    /// Optional shared workspace tool-session (Feature 029). When present, the
+    /// activation state for schema filtering is read from this session (so
+    /// `ResetTools` calls update visibility immediately without a separate
+    /// sync step).
+    workspace_session: Option<Arc<RwLock<WorkspaceToolSession>>>,
 }
 
 impl Default for ToolKit {
@@ -141,6 +153,9 @@ impl ToolKit {
                 "Default group for general-purpose tools and skills",
             )],
             skill_cache,
+            tool_group_of: HashMap::new(),
+            active_groups: HashSet::new(),
+            workspace_session: None,
         };
 
         // Auto-register SkillViewer with a callback that queries this toolkit
@@ -162,6 +177,8 @@ impl ToolKit {
         }));
         tk.tools
             .insert(skill_viewer.name().to_string(), Box::new(skill_viewer));
+        tk.tool_group_of
+            .insert("Skill".to_string(), "basic".to_string());
 
         tk
     }
@@ -204,6 +221,8 @@ impl ToolKit {
             }));
             self.tools
                 .insert(skill_viewer.name().to_string(), Box::new(skill_viewer));
+            self.tool_group_of
+                .insert("Skill".to_string(), "basic".to_string());
         }
     }
 
@@ -222,6 +241,98 @@ impl ToolKit {
         self.tools.contains_key(name)
     }
 
+    // -- Activation-group filtering (Feature 029, T007) --
+
+    /// Bind a shared workspace tool-session to this toolkit.
+    ///
+    /// When bound, `get_tool_schemas()` derives the active groups from the
+    /// session so `ResetTools` calls (which update the session) take effect on
+    /// tool visibility immediately.
+    pub fn set_workspace_session(&mut self, session: Arc<RwLock<WorkspaceToolSession>>) {
+        self.workspace_session = Some(session);
+    }
+
+    /// Replace the active tool-group set. `basic` is always active by
+    /// convention and does not need to be listed.
+    ///
+    /// An empty set restores the default behaviour (all tools visible).
+    /// Ignored when a workspace session is bound (activation then lives in the
+    /// session).
+    pub fn set_active_groups(&mut self, groups: impl IntoIterator<Item = String>) {
+        if self.workspace_session.is_some() {
+            return;
+        }
+        self.active_groups = groups.into_iter().filter(|g| g != "basic").collect();
+    }
+
+    /// Currently active tool groups (excluding the implicit `basic`).
+    pub fn active_groups(&self) -> Vec<String> {
+        if let Some(session) = &self.workspace_session {
+            return session
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .list_groups()
+                .cloned()
+                .collect();
+        }
+        self.active_groups.iter().cloned().collect()
+    }
+
+    /// The tool group a registered tool belongs to (defaults to `"basic"`).
+    pub fn tool_group_of(&self, tool_name: &str) -> &str {
+        self.tool_group_of
+            .get(tool_name)
+            .map(String::as_str)
+            .unwrap_or("basic")
+    }
+
+    /// Whether a tool with the given name is visible under the current
+    /// activation state: the `basic` group is always visible; with a bound
+    /// workspace session the session's active groups decide; with no active
+    /// groups set (empty) everything is visible (backward compat).
+    pub fn is_tool_visible(&self, tool_name: &str) -> bool {
+        let group = self.tool_group_of(tool_name);
+        if group == "basic" {
+            return true;
+        }
+        if let Some(session) = &self.workspace_session {
+            let guard = session.read().unwrap_or_else(|e| e.into_inner());
+            return guard.is_group_active(group);
+        }
+        self.active_groups.is_empty() || self.active_groups.contains(group)
+    }
+
+    /// Names of all registered tool groups except the implicit `basic`.
+    ///
+    /// Used as the authorization boundary for `ResetTools` when workspace
+    /// built-in tools are injected (Feature 029).
+    pub fn non_basic_group_names(&self) -> Vec<String> {
+        self.tool_groups
+            .iter()
+            .map(|g| g.name.clone())
+            .filter(|n| n != "basic")
+            .collect()
+    }
+
+    /// Build a [`ListSkillsCallback`](crate::skill_viewer::ListSkillsCallback)
+    /// bound to this toolkit's live skill cache.
+    ///
+    /// The callback resolves the current skill snapshot on every invocation so
+    /// skills added after agent construction remain visible to the built-in
+    /// `Skill` tool.
+    #[allow(clippy::mutable_key_type)]
+    pub fn skill_snapshot_callback(&self) -> crate::skill_viewer::ListSkillsCallback {
+        let cache = Arc::clone(&self.skill_cache);
+        Box::new(move |_activated_groups: &[String]| {
+            cache
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .map(|(name, skill)| (name.clone(), skill.clone()))
+                .collect()
+        })
+    }
+
     // -- Registration (T023, T024) --
 
     /// Registers a tool, rejecting duplicate names.
@@ -234,7 +345,28 @@ impl ToolKit {
         if self.tools.contains_key(&name) {
             return Err(ToolError::DuplicateName { tool_name: name });
         }
-        self.tools.insert(name, Box::new(tool));
+        self.tools.insert(name.clone(), Box::new(tool));
+        self.tool_group_of.insert(name, "basic".to_string());
+        Ok(())
+    }
+
+    /// Registers a tool in a specific tool group.
+    ///
+    /// Same fail-closed semantics as [`ToolKit::try_register`], but the tool's
+    /// group membership is recorded so `get_tool_schemas()` can filter by the
+    /// activation state of that group (Feature 029, T007).
+    pub fn try_register_in_group(
+        &mut self,
+        group: impl Into<String>,
+        tool: impl Tool + 'static,
+    ) -> Result<(), ToolError> {
+        let group = group.into();
+        let name = tool.name().to_string();
+        if self.tools.contains_key(&name) {
+            return Err(ToolError::DuplicateName { tool_name: name });
+        }
+        self.tools.insert(name.clone(), Box::new(tool));
+        self.tool_group_of.insert(name, group);
         Ok(())
     }
 
@@ -253,12 +385,15 @@ impl ToolKit {
 
     /// Removes a specific tool by name, returning it if it existed.
     pub fn remove(&mut self, name: &str) -> Option<Box<dyn Tool>> {
+        self.tool_group_of.remove(name);
         self.tools.remove(name)
     }
 
     /// Removes all registered tools.
     pub fn clear(&mut self) {
         self.tools.clear();
+        self.tool_group_of.clear();
+        self.active_groups.clear();
     }
 
     // -- Skill registration (NEW: T025, T026, T027) --
@@ -451,8 +586,9 @@ impl ToolKit {
     /// ```
     pub fn get_tool_schemas(&self) -> Vec<JsonValue> {
         self.tools
-            .values()
-            .map(|tool| {
+            .iter()
+            .filter(|(name, _)| self.is_tool_visible(name))
+            .map(|(_, tool)| {
                 serde_json::json!({
                     "type": "function",
                     "function": {

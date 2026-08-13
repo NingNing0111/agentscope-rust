@@ -22,6 +22,7 @@
 //! let schemas = tk.get_tool_schemas(); // OpenAI-compatible
 //! ```
 
+pub mod builtin;
 pub mod function;
 pub mod json_repair;
 pub mod lenient;

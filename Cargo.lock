@@ -13,6 +13,7 @@ dependencies = [
  "agent_scope_state",
  "agent_scope_tool",
  "agent_scope_types",
+ "agent_scope_workspace",
  "async-stream",
  "async-trait",
  "chrono",
@@ -221,6 +222,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "globset",
+ "regex",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -230,6 +233,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]

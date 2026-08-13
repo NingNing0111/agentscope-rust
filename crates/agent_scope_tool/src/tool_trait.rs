@@ -94,6 +94,18 @@ pub enum ToolError {
         /// Name of the skill that was requested but not found.
         skill_name: String,
     },
+
+    /// The requested capability is not supported in the current environment
+    /// (e.g. `PowerShell` on a non-Windows host). Aligns with Constitution
+    /// Art.13 `UnsupportedFeature` — the call fails explicitly instead of
+    /// silently degrading (Art.5).
+    #[error("tool '{tool_name}' is not supported in the current environment")]
+    UnsupportedCapability {
+        /// Name of the tool that is unavailable in this environment.
+        tool_name: String,
+        /// Human-readable reason why the capability is unsupported.
+        reason: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

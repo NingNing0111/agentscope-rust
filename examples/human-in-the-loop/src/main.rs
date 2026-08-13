@@ -71,6 +71,19 @@ fn allow_context() -> PermissionContext {
     perm
 }
 
+/// Pick the permission context for the current attempt.
+///
+/// `allow` is true after the host approves (`y`/`a`) so the replay executes the
+/// write instead of re-triggering confirmation. Returns an `ask` context by
+/// default and an `allow` context once approved.
+fn permission_context_for(allow: bool) -> PermissionContext {
+    if allow {
+        allow_context()
+    } else {
+        ask_context()
+    }
+}
+
 fn build_agent(
     model: Arc<DashScopeChatModel>,
     perm: PermissionContext,
@@ -135,13 +148,13 @@ async fn run_turn(
     always_allow: &mut bool,
     start_len: usize,
 ) -> anyhow::Result<()> {
+    // 本次 turn 的放行状态：初始跟随全局 always_allow；批准（y/a）后置为
+    // 放行，用于本次重放。`y` 只影响本次 turn（`always_allow` 不变，下一轮
+    // 恢复询问），`a` 同时持久化到 always_allow。
+    let mut current_allow = *always_allow;
     loop {
         // Rebuild per replay: permission context is fixed at construction time.
-        let perm = if *always_allow {
-            allow_context()
-        } else {
-            ask_context()
-        };
+        let perm = permission_context_for(current_allow);
         let agent = build_agent(Arc::clone(model), perm)?;
 
         let stream = agent.reply_stream(Some(history.clone())).await?;
@@ -160,10 +173,13 @@ async fn run_turn(
                         match ask_user(&tc.name, &tc.input)? {
                             Approval::Approved => {
                                 println!("[human-in-the-loop] 本次批准 {}，重放本轮…", tc.name);
+                                // 仅本次放行：重放用 allow 上下文，写入成功。
+                                current_allow = true;
                             }
                             Approval::AlwaysAllow => {
                                 println!("[human-in-the-loop] 总是允许 {}，重放本轮…", tc.name);
                                 *always_allow = true;
+                                current_allow = true;
                             }
                             Approval::Rejected => {
                                 println!("[human-in-the-loop] 已拒绝 {}，模型自行调整…", tc.name);
@@ -188,7 +204,7 @@ async fn run_turn(
         drop(stream);
 
         if replay {
-            continue; // 重新构建 allow agent 重放本轮
+            continue; // 重新构建（本次放行时用 allow 上下文）重放本轮
         }
 
         // 同步权威历史：reply_stream 会把 user 消息 append 到 context，assistant
@@ -254,4 +270,35 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 批准（y/a）后的重放必须用 allow 上下文（含 allow 规则、不含 ask 规则），
+    /// 否则重放会再次触发确认，导致无限循环。
+    #[test]
+    fn approved_replay_uses_allow_context() {
+        let ctx = permission_context_for(true);
+        assert!(
+            ctx.allow_rules.contains_key("write_note"),
+            "批准后应使用 allow 上下文放行 write_note"
+        );
+        assert!(
+            !ctx.ask_rules.contains_key("write_note"),
+            "批准后不应残留 ask 规则，否则重放再次触发确认"
+        );
+    }
+
+    /// 未批准时保留 ask 上下文（首次尝试需确认）。
+    #[test]
+    fn default_uses_ask_context() {
+        let ctx = permission_context_for(false);
+        assert!(
+            ctx.ask_rules.contains_key("write_note"),
+            "未批准时应使用 ask 上下文要求确认"
+        );
+        assert!(!ctx.allow_rules.contains_key("write_note"));
+    }
 }

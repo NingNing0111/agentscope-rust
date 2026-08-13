@@ -13,6 +13,7 @@ agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_event = { path = "../agent_scope_event" }
 agent_scope_memory = { path = "../agent_scope_memory" }
 agent_scope_types = { path = "../agent_scope_types" }
+agent_scope_workspace = { path = "../agent_scope_workspace" }
 
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
 futures = "0.3"

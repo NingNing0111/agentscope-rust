@@ -9,6 +9,10 @@ use agent_scope_message::Msg;
 use agent_scope_state::{
     AgentState, JsonFileSessionStore, Session, SessionError, SessionImpl, SessionStore,
 };
+use agent_scope_tool::builtin::{
+    BashTool, BuiltInToolContext, EditTool, GlobTool, GrepTool, PowerShellTool, ReadTool,
+    ResetToolsTool, SkillTool, WorkspaceToolSession, WriteTool,
+};
 use agent_scope_tool::{Tool, ToolKit};
 use futures::Stream;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
@@ -171,6 +175,15 @@ impl ReActAgent {
             config.toolkit = Some(toolkit);
         }
 
+        // Merge the workspace built-in tools into the toolkit when the agent is
+        // explicitly bound to a workspace (Feature 029, FR-001/FR-002). Agents
+        // without a workspace expose no file/command tools.
+        if config.workspace_tools_enabled && config.workspace.is_some() {
+            let mut toolkit = config.toolkit.take().unwrap_or_default();
+            register_workspace_builtins(&config, &mut toolkit)?;
+            config.toolkit = Some(toolkit);
+        }
+
         Ok(Self {
             inner: Arc::new(AgentInner {
                 config,
@@ -208,6 +221,15 @@ impl ReActAgent {
     pub fn try_state(&self) -> std::sync::RwLockReadGuard<'_, AgentState> {
         self.inner.state.read().unwrap_or_else(|e| e.into_inner())
     }
+
+    /// Access the agent's tool registry after construction.
+    ///
+    /// Returns `None` when no `ToolKit` is configured. This is primarily used
+    /// to inspect the injected tool set (e.g. workspace built-ins, Feature 029)
+    /// and for tooling that needs the final schemas.
+    pub fn toolkit(&self) -> Option<&ToolKit> {
+        self.inner.config.toolkit.as_ref()
+    }
 }
 
 fn register_builtin_task_tool(
@@ -221,6 +243,88 @@ fn register_builtin_task_tool(
             field: "toolkit".into(),
             message: format!(
                 "reserved built-in task tool name '{name}' is already registered; rename the custom tool or disable task tools"
+            ),
+        })
+}
+
+/// Merge the workspace built-in tools into `toolkit` (Feature 029, T023).
+///
+/// Called from [`ReActAgent::construct`] when the agent is explicitly bound to
+/// a workspace. Registers `Bash`/`Read`/`Edit`/`Write`/`Grep`/`Glob`/
+/// `ResetTools`/`Skill` (plus `PowerShell` on Windows) and shares a single
+/// [`WorkspaceToolSession`] between them so `Read` → `Edit`/`Write` guard
+/// state and `ResetTools` activation state stay consistent.
+///
+/// Fail-closed: an unavailable workspace backend, or a name collision with an
+/// already-registered tool, aborts construction with an [`AgentError`] instead
+/// of silently exposing a partial tool set.
+fn register_workspace_builtins(
+    config: &AgentConfig,
+    toolkit: &mut ToolKit,
+) -> Result<(), AgentError> {
+    let workspace = config
+        .workspace
+        .as_ref()
+        .ok_or_else(|| AgentError::InvalidConfig {
+            field: "workspace".into(),
+            message: "workspace built-in injection requires a bound workspace".into(),
+        })?;
+
+    let backend = workspace
+        .get_backend_arc()
+        .map_err(|e| AgentError::InvalidConfig {
+            field: "workspace".into(),
+            message: format!("workspace backend is unavailable (is it initialized?): {e}"),
+        })?;
+    let workdir = workspace.workdir().to_string();
+    let workspace_id = workspace.workspace_id().to_string();
+
+    // ResetTools authorization boundary = the toolkit's non-basic groups.
+    // The session is shared with the toolkit so `get_tool_schemas()` reflects
+    // activation changes immediately.
+    let authorized = toolkit.non_basic_group_names();
+    let session = Arc::new(RwLock::new(WorkspaceToolSession::with_authorized_groups(
+        workspace_id,
+        authorized,
+    )));
+    toolkit.set_workspace_session(Arc::clone(&session));
+
+    let ctx = BuiltInToolContext::new(backend, workdir, Arc::clone(&session));
+
+    // Skill: replace the auto-registered SkillViewer with the session-aware
+    // built-in SkillTool (its callback reads the live skill snapshot).
+    toolkit.remove("Skill");
+    let skill_cb = toolkit.skill_snapshot_callback();
+    inject_workspace_tool(toolkit, SkillTool::new(ctx.clone(), skill_cb))?;
+
+    // The remaining built-in tools. `PowerShell` is only exposed on Windows
+    // (FR-017); elsewhere it is omitted from the default injected set.
+    inject_workspace_tool(toolkit, BashTool::new(ctx.clone()))?;
+    inject_workspace_tool(toolkit, ReadTool::new(ctx.clone()))?;
+    inject_workspace_tool(toolkit, EditTool::new(ctx.clone()))?;
+    inject_workspace_tool(toolkit, WriteTool::new(ctx.clone()))?;
+    inject_workspace_tool(toolkit, GrepTool::new(ctx.clone()))?;
+    inject_workspace_tool(toolkit, GlobTool::new(ctx.clone()))?;
+    inject_workspace_tool(toolkit, ResetToolsTool::new(ctx.clone()))?;
+    if std::env::consts::OS == "windows" {
+        inject_workspace_tool(toolkit, PowerShellTool::new(ctx))?;
+    }
+
+    Ok(())
+}
+
+/// Register a workspace built-in tool, fail-closed on name collision.
+fn inject_workspace_tool(
+    toolkit: &mut ToolKit,
+    tool: impl Tool + 'static,
+) -> Result<(), AgentError> {
+    let name = tool.name().to_string();
+    toolkit
+        .try_register(tool)
+        .map_err(|_| AgentError::InvalidConfig {
+            field: "toolkit".into(),
+            message: format!(
+                "workspace built-in tool name '{name}' is already registered; rename the custom tool or disable workspace tools"
             ),
         })
 }

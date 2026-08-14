@@ -1,0 +1,16 @@
+[package]
+name = "workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "workspace"
+path = "src/main.rs"
+
+[dependencies]
+agent_scope_workspace = { path = "../../crates/agent_scope_workspace" }
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"

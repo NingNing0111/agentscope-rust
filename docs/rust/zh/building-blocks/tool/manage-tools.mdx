@@ -1,0 +1,38 @@
+---
+title: "元工具"
+description: "让智能体在运行时激活或停用工具组"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L2）。`ToolKit` 支持工具组注册与激活过滤，内置 `ResetTools` 元工具。兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+AgentScope Rust 提供工具组（`ToolGroup`）与内置元工具 `ResetTools`，让智能体在运行时管理哪些工具组处于激活状态，从而保持上下文聚焦：只有与当前任务相关的工具才会暴露给模型。
+
+## 工具组
+
+`ToolGroup` 是带有名称和描述的工具集合。保留名 `"basic"` 由默认注册的工具构成，且始终激活。
+
+```rust
+use agent_scope_tool::ToolKit;
+
+let mut toolkit = ToolKit::new();
+toolkit.register(my_tool);
+
+// 按名称查看 / 激活工具
+let groups = toolkit.active_groups();        // 当前激活组
+toolkit.set_active_groups(["basic"]);        // 仅保留 basic 组
+let visible = toolkit.is_tool_visible("calculator"); // 某工具当前是否可见
+```
+
+## 内置元工具 ResetTools
+
+`ResetTools` 让智能体恢复默认的工具可见性/工具组状态。它是 workspace 内置工具集的一部分（随 workspace 绑定注入），用于在切换工具组后恢复基线。
+
+## 工具可见性
+
+`ToolKit` 根据激活组过滤工具：`get_tool_schemas()` 只返回当前激活组可见的工具 schema，模型因此只会看到与其任务相关的工具。
+
+## 完整示例
+
+见 [`examples/tool`](../../../../../examples/tool/)，演示 ToolKit 注册、schema 输出与工具调用。

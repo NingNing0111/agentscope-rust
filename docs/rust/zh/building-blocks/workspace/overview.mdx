@@ -1,0 +1,77 @@
+---
+title: "概述"
+description: "把智能体的执行隔离到受控工作空间"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L2）——**本地文件系统**工作空间。当前实现为 `LocalWorkspace`；Docker / E2B / K8s 等远程沙箱后端为「计划中」。兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+工作空间（Workspace）是智能体的执行环境：文件读写、命令执行、MCP 客户端与技能都在工作空间内进行，边界受控。AgentScope Rust 通过 `WorkspaceBase` trait（`agent_scope_workspace`）抽象：
+
+| 类型 | 职责 |
+|------|------|
+| `WorkspaceBase` | 工作空间统一接口：初始化、工具发现、MCP 管理、技能管理、卸载 |
+| `LocalWorkspace` | 本地文件系统实现（workdir 隔离 + 路径越界防护） |
+| `WorkspaceBackend` | 后端执行接口：`exec_shell` / `read_file` / `write_file` / `list_dir` |
+| `WorkspaceManager` | 多租户管理：按 ID 创建/获取工作空间 + TTL 清理 |
+
+## 创建工作空间
+
+```rust
+use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase};
+
+let mut ws = LocalWorkspace::new(LocalWorkspaceConfig {
+    workdir: "/tmp/my-ws".into(),
+    workspace_id: Some("demo".into()),
+    default_mcps: vec![],
+    skill_paths: vec![],
+    instructions: None,
+});
+ws.initialize().await?;
+
+let tools = ws.list_tools().await?;   // 内置工具
+let backend = ws.get_backend()?;      // 后端执行接口
+let out = backend.exec_shell(&["echo", "hi"], "/tmp/my-ws", None).await?;
+```
+
+## 绑定到 Agent
+
+在 `AgentConfig` 中绑定 workspace 后，内置工具（Bash / Read / Write / Edit / Grep / Glob / ResetTools / Skill）自动注入：
+
+```rust
+use std::sync::Arc;
+
+let ws: Arc<dyn WorkspaceBase> = Arc::new(ws);
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .workspace(ws)
+    .build()?;
+```
+
+## 完整示例
+
+见 [`examples/workspace`](../../../../../examples/workspace/)（`cargo run -p workspace`），演示工作空间初始化、内置工具发现与命令执行，无需模型凭据。
+
+## 沙箱执行
+
+沙箱（Sandbox）在工作空间内提供**受控命令执行**：`LocalSandboxSession`（`agent_scope_sandbox`）以本地进程 + 临时根目录方式隔离命令，配合 `SandboxPolicy` / `SandboxPathResolver` 做路径越界防护与命令超时控制。
+
+> **边界**：Rust 沙箱为**本地隔离**，非 Docker 容器；cpu/memory 资源限制在本地后端**不可强制**（Docker / E2B / K8s 沙箱为「计划中」）。
+
+沙箱示例见 [`examples/sandbox`](../../../../../examples/sandbox/)（`cargo run -p sandbox`），演示命令执行、路径防护与 CapabilityReport，无需模型凭据。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="管理资源" icon="folder" href="/versions/0.1.0/zh/building-blocks/workspace/manage-resources">
+    workdir、技能、MCP 配置与多租户管理。
+  </Card>
+  <Card title="运行工作空间" icon="play" href="/versions/0.1.0/zh/building-blocks/workspace/run-workspace">
+    在受控环境执行命令与文件操作。
+  </Card>
+  <Card title="MCP Gateway" icon="plug" href="/versions/0.1.0/zh/building-blocks/workspace/mcp-gateway">
+    MCP 客户端的接入方式。
+  </Card>
+</CardGroup>

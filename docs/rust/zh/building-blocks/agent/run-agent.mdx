@@ -1,0 +1,100 @@
+---
+title: "运行智能体"
+description: "运行智能体，处理它的回复、上下文与状态"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L2）。`reply` / `reply_stream` / `reply_stream_event` / `observe` 在 AgentScope Rust 中可用。**结构化输出**在 Agent 循环中为「部分支持」——模型层 `generate_structured_output` 已实现，但 `ReActAgent` 循环尚未直接接线。兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+`Agent` trait 将智能体的行为抽象为一组接口：
+
+| 行为 | 接口 | 适用场景 |
+|------|------|----------|
+| 回复 | `reply`、`reply_stream` | 驱动推理-行动循环，一次性返回结果或实时产出事件流 |
+| 事件恢复 | `reply_stream_event` | 以 HITL 事件（确认 / 外部执行 / 中断）恢复暂停的同一回复 |
+| 观察消息 | `observe` | 将消息注入上下文而不触发回复 |
+| 持久化状态 | `session_id` + `ReActAgent::build` | 在一个进程中暂停会话，在另一个进程中恢复 |
+
+## 回复
+
+`reply` 和 `reply_stream` 都接受相同的 `input` 参数（`Option<Vec<Msg>>`），驱动相同的推理-行动循环，区别只在结果的交付方式：
+
+```rust
+use agent_scope_message::factory::user_msg;
+use agent_scope_event::AgentEvent;
+use futures::StreamExt;
+
+let msg = user_msg("user", "你好")?;
+
+// 方式一：等待最终助手消息。
+let reply = agent.reply(Some(vec![msg.clone()])).await?;
+if let Some(text) = reply.get_text_content("") {
+    println!("{text}");
+}
+
+// 方式二：流式事件。
+let mut stream = agent.reply_stream(Some(vec![msg])).await?;
+while let Some(event) = stream.next().await {
+    match &event {
+        AgentEvent::TextBlockDelta(d) => print!("{}", d.delta),
+        AgentEvent::ReplyEnd(e) => println!("[end] {:?}", e.finished_reason),
+        _ => {}
+    }
+}
+```
+
+### 事件输入（暂停-确认-恢复）
+
+当回复因工具确认（`RequireUserConfirmEvent`）或外部执行（`RequireExternalExecutionEvent`）而**暂停**时，可用 `reply_stream_event` 注入事件**恢复同一回复**——不新建 `ReplyStart`、保留暂停的 `reply_id`，对齐 Python `_reply_impl` 的 `inputs` 语义：
+
+```rust
+use agent_scope_agent::event_input::EventInput;
+use agent_scope_event::{ConfirmResult, EventBase, UserConfirmResultEvent};
+
+let resume = UserConfirmResultEvent {
+    base: EventBase::new(),
+    reply_id: confirm.reply_id.clone(),          // 从 RequireUserConfirmEvent 取得
+    confirm_results: vec![ConfirmResult {
+        confirmed: true,                          // false = 拒绝 → 生成 DENIED 结果
+        tool_call: confirm.tool_calls[0].clone(), // 待确认的 tool_call（state="asking"）
+        rules: None,                              // 可携带 allow 规则，采纳后不再询问
+    }],
+};
+let mut stream = agent.reply_stream_event(EventInput::Confirm(resume)).await?;
+```
+
+三类事件输入及完整流程见 [人机交互](./human-in-the-loop)。
+
+## 观察消息
+
+`observe` 将消息添加到上下文而不触发推理，常用于会话恢复：
+
+```rust
+agent.observe(Some(vec![user_msg("user", "历史消息")?])).await?;
+```
+
+## 持久化状态
+
+设置 `session_id` 并让 `ReActAgent` 使用会话存储（默认 `JsonFileSessionStore`）即可在进程间恢复会话：
+
+```rust
+use agent_scope_agent::{AgentConfig, ReActAgent};
+
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .session_id("my-session")
+    .auto_persist(true)  // 默认 true：回复后自动落盘
+    .build()?;
+
+let agent = ReActAgent::build(config, ReActConfig::default(), ContextConfig::default(), vec![]).await?;
+```
+
+## 结构化输出
+
+模型层 `ChatModel::generate_structured_output(msgs, schema)` 可生成符合 JSON Schema 的结构化结果（见 [LLM](../model/llm)）。注意：当前 `ReActAgent` 循环尚未直接接线该能力，需要由调用方直接使用模型层接口。
+
+## 完整示例
+
+见 [`examples/chat`](../../../../../examples/chat/) 与 [`examples/agent`](../../../../../examples/agent/)。

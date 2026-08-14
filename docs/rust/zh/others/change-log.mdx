@@ -1,0 +1,47 @@
+---
+title: "版本迁移"
+description: "AgentScope Rust 相对 2.0 / 1.0 的核心区别"
+---
+
+<Note>
+**Rust 实现状态**: 已实现。本文档汇总 AgentScope Rust（以 2.0 API 为参考）相对 1.0 的核心差异，并标注每项在 Rust 中的状态。
+</Note>
+
+AgentScope 2.0 是一次破坏性更新。下面是 AgentScope Rust 相对 1.0/2.0 核心差异的对照。
+
+## 智能体（Agent）
+
+- `ReActAgent` 重构为统一的 `Agent` trait + `ReActAgent` 实现。✅ 已实现
+- 用 `reply_stream` 与 `reply` 公共方法替换 1.0 的 `__call__`。✅ 已实现
+- 支持从 `reply_stream` 产出智能体事件（33 种 `AgentEvent`），提供可观测性与控制。✅ 已实现
+- 通过事件流支持**权限校验**与 **human-in-the-loop** 确认。✅ 已实现（`RequireUserConfirmEvent`）
+- 通过 Offloader 接口支持压缩上下文与超大工具结果的 offload。✅ 已实现（`WorkspaceBase::offload_context`）
+- 废弃 hook 机制，由中间件系统取代。✅ 已实现（`Middleware` trait 9 钩子）
+- 转向通过 `AgentState` 类型显式管理状态。✅ 已实现（Feature 025 状态持久化）
+- 让智能体成为纯生产者（`reply` / `reply_stream` 产出消息与事件）。✅ 已实现
+
+## Event <Badge color="green" size="sm">New</Badge>
+
+- 新增 event 系统，服务前端集成与 human-in-the-loop。✅ 已实现（33 种 `AgentEvent`）
+
+## Message
+
+- Content blocks 重构为类型化 `ContentBlock` 枚举，`DataBlock` 统一多媒体数据。✅ 已实现
+- 新增 `HintBlock` 用于运行时状态注入。✅ 已实现（Feature 026）
+
+## 工具（Tool）
+
+- `ToolBase` 重构为 `Tool` trait + `FunctionTool` 适配器。✅ 已实现
+- 内置工具：Bash / 文件工具 / 计划工具。✅ 已实现（Bash / Read / Write / Edit / Grep / Glob / ResetTools / Skill）
+
+## 工作空间（Workspace）
+
+- workspace 抽象与内置工具注入。✅ 已实现（`LocalWorkspace`，Feature 029）
+
+## 服务化（Service）
+
+- agent-service、channel、hub 等服务化能力。⏳ 计划中（Rust 尚未实现，见 deploy/ 各页）
+
+## 更多
+
+- 完整能力清单见 [release-notes](../release-notes) 与 [mirror-map](../../mirror-map)。

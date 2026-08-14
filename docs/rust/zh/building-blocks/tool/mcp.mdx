@@ -1,0 +1,73 @@
+---
+title: "MCP"
+description: "接入 MCP 服务并使用其工具"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L2）——**客户端接入**。Rust 通过官方 SDK（`rmcp`）连接外部 MCP server 并接入其工具；**尚无将本地工具暴露为 MCP 服务端的 gateway**。兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+AgentScope Rust 集成 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)，让智能体可以接入任意兼容 MCP 的工具服务。框架自动处理协议协商、工具发现与结果转换。
+
+核心类型（`agent_scope_mcp` crate）：
+
+| 类型 | 职责 |
+|------|------|
+| `McpClient` | MCP 客户端：连接、断开、列出工具、调用工具（基于 `rmcp`） |
+| `McpTool` | 把 MCP 工具适配成 `Tool`，接入统一工具抽象 |
+| `McpExt` | 扩展 trait：`connect_mcp` / `disconnect_mcp` / `get_mcp_tools`，已为 `LocalWorkspace` 实现 |
+
+## 注册并连接 MCP 客户端
+
+MCP 配置（`McpClientConfig` + `McpTransportConfig`，支持 Stdio / SSE / StreamableHttp）持久化在 workspace 中。有状态客户端通过 `LocalWorkspace` 连接：
+
+```rust
+use agent_scope_mcp::McpExt;
+use agent_scope_workspace::mcp::{McpClientConfig, McpTransportConfig};
+use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase};
+
+let mut ws = LocalWorkspace::new(LocalWorkspaceConfig {
+    workdir: "/tmp/ws".into(),
+    workspace_id: None,
+    default_mcps: vec![],
+    skill_paths: vec![],
+    instructions: None,
+});
+ws.initialize().await?;
+
+let config = McpClientConfig {
+    name: "my-server".into(),
+    transport: McpTransportConfig::Stdio {
+        command: "mcp-server".into(),
+        args: vec![],
+    },
+    is_stateful: true,
+};
+ws.add_mcp(config).await?;
+
+// 连接：spawn stdio 子进程，执行 initialize + tools/list。
+let tools = ws.connect_mcp("my-server").await?;
+for tool in &tools {
+    println!("- {} | read_only={}", tool.name(), tool.is_read_only());
+}
+
+// 释放连接（close/reset 也会自动断开所有 MCP 连接）。
+ws.disconnect_mcp("my-server").await?;
+```
+
+## 完整示例
+
+见 [`examples/mcp`](../../../../../examples/mcp/)：
+
+```bash
+# 列出任意 stdio MCP server 的工具
+cargo run -p mcp -- --server mcp-excalidraw-server
+
+# 直接调用一个工具
+cargo run -p mcp -- --server mcp-excalidraw-server --call excalidraw/describe_scene --args '{}'
+```
+
+## 边界说明
+
+- **命名空间**：MCP 工具直接使用远程工具名；被标注只读的工具会通过 `is_read_only()` 反映。
+- **Gateway**：`workspace/mcp-gateway` 的「沙箱内运行 gateway 进程」能力在 Rust 中为「计划中」（见 [工作空间 MCP gateway](../workspace/mcp-gateway)）。

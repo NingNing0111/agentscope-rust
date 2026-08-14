@@ -1,0 +1,58 @@
+---
+title: "概述"
+description: "通过 ToolKit 为智能体装配工具、MCP 服务与技能"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L2）。工具系统在 AgentScope Rust 中可用，兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+工具是智能体与外部世界交互的途径：执行 shell 命令、读写文件、调用 API。每个工具通过 JSON Schema 暴露给大模型，智能体通过统一的接口完成调用。
+
+Rust 版包含以下三个工具相关的概念（`agent_scope_tool` crate）：
+
+| 概念 | 职责 |
+|------|------|
+| **工具** | 实现 `Tool` trait 的对象，包括内置工具，以及将 Rust 异步函数和 MCP 工具封装成 `Tool` 的 `FunctionTool` / `McpTool` 适配器 |
+| **ToolKit** | 工具注册表，负责注册工具、MCP 客户端与技能，向模型暴露它们的 JSON Schema，并把每次工具调用分发给对应的工具对象 |
+| **工具组（Tool Group）** | 一组工具的集合，可作为整体被激活或停用；智能体在运行时通过内置元工具控制工具组 |
+
+`Tool` trait 是统一契约：
+
+| 方法 | 说明 |
+|------|------|
+| `name()` | 暴露给智能体的工具名称 |
+| `description()` | 面向智能体的功能描述 |
+| `input_schema()` | 定义参数的 JSON Schema |
+| `is_concurrency_safe()` / `is_read_only()` | 并发安全 / 只读标记 |
+| `call(input)` | 执行一次工具调用 |
+
+最简单的 `ToolKit` 只需注册一组工具：
+
+```rust
+use agent_scope_tool::{FunctionTool, ToolKit};
+
+let mut toolkit = ToolKit::new();
+toolkit.register(FunctionTool::new("calculator", "Evaluate a math expression.", calculator));
+```
+
+注册到 `"basic"` 组的工具始终激活。工作空间（workspace）绑定时，内置工具（Bash / Read / Write / Edit / Grep / Glob / ResetTools / Skill）自动注入（见 [工作空间](../workspace/overview)）。
+
+## 延伸阅读
+
+每种能力来源都有独立页面介绍：
+
+<CardGroup cols={2}>
+  <Card title="函数工具" icon="code" href="/versions/0.1.0/zh/building-blocks/tool/python-tool">
+    内置工具、自定义工具、函数包装与工具中间件。
+  </Card>
+  <Card title="MCP" icon="plug" href="/versions/0.1.0/zh/building-blocks/tool/mcp">
+    接入 MCP 服务并使用其工具。
+  </Card>
+  <Card title="Skill" icon="book-open" href="/versions/0.1.0/zh/building-blocks/tool/skill">
+    用 Markdown 指令集拓展智能体能力。
+  </Card>
+  <Card title="元工具" icon="toggle-on" href="/versions/0.1.0/zh/building-blocks/tool/manage-tools">
+    让智能体在运行时激活或停用工具组。
+  </Card>
+</CardGroup>

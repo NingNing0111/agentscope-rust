@@ -1,0 +1,64 @@
+---
+title: "RAG"
+description: "为智能体构建检索增强生成（RAG）能力"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L2）——**库级 / 中间件形态**。RAG 在 AgentScope Rust 中以 `KnowledgeBase` + `RAGMiddleware` 形式提供；服务化 RAG（HTTP 服务）为「计划中」，见 [deploy/rag](../deploy/rag)。兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+AgentScope Rust 中的 RAG 由**可独立替换**的功能模块组成（`agent_scope_rag`）：
+
+| 功能模块 | 描述 |
+|----------|------|
+| 解析器 Parser | 把原始文本拆成 `Section`（`TextParser`，支持 text/markdown/csv/html/json/xml/yaml） |
+| 切块器 Chunker | 把 `Section` 切成最终入库的 `Chunk`（`ApproxTokenChunker`） |
+| 嵌入模型 Embedding | 把 `Chunk` 文本嵌入为向量（见 [Embedding](model/embedding)） |
+| 向量库 Vector Store | 存储 `Chunk` 向量并支持检索（`TurbovecVectorStore`，基于 `turbovec`） |
+| 知识库 KnowledgeBase | 绑定嵌入模型 + 向量库 + collection，封装 `insert_document` / `search` / `list_documents` / `delete_document` |
+
+## 组装知识库
+
+```rust
+use std::sync::Arc;
+use agent_scope_dashscope::DashScopeEmbeddingModel;
+use agent_scope_embedding::EmbeddingModelCard;
+use agent_scope_rag::{Chunk, KnowledgeBase, TurbovecVectorStore};
+
+let embedding = Arc::new(DashScopeEmbeddingModel::new(api_key, EmbeddingModelCard::new("text-embedding-v3", 1024, false)));
+let vector_store = Arc::new(TurbovecVectorStore::new(4)?);
+let kb = Arc::new(KnowledgeBase::new(
+    "project".into(),
+    "Project documents.".into(),
+    embedding,
+    vector_store,
+    "project".into(),
+    None,
+));
+
+kb.insert_document(
+    vec![Chunk { content: "…".into(), source: "doc".into(), chunk_index: 0, total_chunks: 1, metadata: Default::default() }],
+    Some("doc-id".into()),
+    None,
+).await?;
+```
+
+## 集成到智能体
+
+通过 `RAGMiddleware` 将检索注入 agent：
+
+| 模式 | 行为 |
+|------|------|
+| `RAGMode::Static` | 每轮自动注入检索到的相关上下文（`pre_reply`） |
+| `RAGMode::Agentic` | 工具式检索：由 LLM 决定何时/是否搜索（`pre_reasoning` 注入工具 schema） |
+
+```rust
+use agent_scope_rag::{RAGMiddleware, RAGMode};
+
+let rag = Arc::new(RAGMiddleware::new(vec![kb], RAGMode::Static, 3, None));
+let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::default(), vec![rag])?;
+```
+
+## 完整示例
+
+见 [`examples/rag`](../../../../examples/rag/)（`cargo run -p rag`），构建知识库并运行一个基于知识库回答的 Agent（需要 `DASHSCOPE_API_KEY`）。

@@ -243,6 +243,26 @@ impl PermissionEngine {
         self.context.add_rule(rule);
     }
 
+    /// Adopt an allow rule the host accepted during confirmation (Feature 032,
+    /// US3).
+    ///
+    /// Ask rules are evaluated before allow rules, so a tool-wide allow rule
+    /// accepted via `ConfirmResult.rules` ("always allow this tool") must clear
+    /// the matching ask rule — otherwise the ask would shadow it and the host
+    /// would be asked again. Tool-pattern-specific allow rules (with a
+    /// `rule_content`) are added as-is without clearing anything.
+    pub fn adopt_allow_rule(&mut self, rule: PermissionRule) {
+        if rule.behavior == PermissionBehavior::Allow && rule.rule_content.is_none() {
+            // Remove ask rules whose pattern matches the allowed tool so they
+            // cannot shadow the newly-adopted allow rule.
+            self.context.ask_rules.retain(|pattern, _| {
+                !matches_pattern(pattern, &rule.tool_name)
+                    && !matches_pattern(&rule.tool_name, pattern)
+            });
+        }
+        self.add_rule(rule);
+    }
+
     /// Check whether a tool call is permitted, returning the legacy result type.
     pub fn check(&self, tool_name: &str, input: &JsonValue) -> PermissionResult {
         match self.check_decision(tool_name, input).behavior {

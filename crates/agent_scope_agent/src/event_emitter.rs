@@ -2,7 +2,7 @@
 //!
 //! Internal (`pub(crate)`) factory for creating per-reply mpsc channels.
 //! Each `reply()` / `reply_stream()` call creates a fresh channel pair via
-//! [`EventEmitter::create_channel()`].
+//! `EventEmitter::create_channel()`.
 //!
 //! The sender half is passed to the reactor loop; the receiver half is either
 //! wrapped in [`EventStream`](super::react_agent::EventStream) (streaming) or

@@ -165,6 +165,10 @@ pub struct FunctionTool {
     description: String,
     input_schema: JsonValue,
     handler: Box<dyn FunctionToolHandler>,
+    /// Whether this tool's execution happens outside the agent process
+    /// (Feature 032). When `true`, the engine submits the call and pauses
+    /// instead of executing it. Default: `false`.
+    external: bool,
 }
 
 impl FunctionTool {
@@ -197,6 +201,7 @@ impl FunctionTool {
             handler: Box::new(HandlerImpl::new(handler, name.clone())),
             name,
             description: description.into(),
+            external: false,
         }
     }
 
@@ -266,7 +271,19 @@ impl FunctionTool {
             }),
             name,
             description: description.into(),
+            external: false,
         }
+    }
+
+    /// Mark this tool as externally executed (Feature 032).
+    ///
+    /// When set, the engine submits the call via `RequireExternalExecutionEvent`
+    /// and pauses instead of executing the handler; the host injects the result
+    /// with `ExternalExecutionResultEvent`. Aligned with Python
+    /// `Tool.is_external_tool`.
+    pub fn with_external_execution(mut self) -> Self {
+        self.external = true;
+        self
     }
 }
 
@@ -294,6 +311,10 @@ impl Tool for FunctionTool {
 
     fn is_read_only(&self) -> bool {
         false
+    }
+
+    fn is_external_tool(&self) -> bool {
+        self.external
     }
 
     async fn call(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {

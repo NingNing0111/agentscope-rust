@@ -17,10 +17,10 @@ use std::sync::atomic::Ordering;
 
 use agent_scope_event::{
     AgentEvent, EventBase, ExceedMaxItersEvent, ModelCallEndEvent, ModelCallStartEvent,
-    ReplyEndEvent, RequireUserConfirmEvent, TextBlockDeltaEvent, TextBlockEndEvent,
-    TextBlockStartEvent, ThinkingBlockDeltaEvent, ThinkingBlockEndEvent, ThinkingBlockStartEvent,
-    ToolCallDeltaEvent, ToolCallEndEvent, ToolCallStartEvent, ToolResultEndEvent,
-    ToolResultStartEvent, ToolResultTextDeltaEvent, UserInterruptEvent,
+    ReplyEndEvent, RequireExternalExecutionEvent, RequireUserConfirmEvent, TextBlockDeltaEvent,
+    TextBlockEndEvent, TextBlockStartEvent, ThinkingBlockDeltaEvent, ThinkingBlockEndEvent,
+    ThinkingBlockStartEvent, ToolCallDeltaEvent, ToolCallEndEvent, ToolCallStartEvent,
+    ToolResultEndEvent, ToolResultStartEvent, ToolResultTextDeltaEvent, UserInterruptEvent,
 };
 use agent_scope_message::{
     ContentBlock, Msg, Role, TextBlock, ThinkingBlock, ToolCallBlock, ToolCallState, ToolOutput,
@@ -34,11 +34,12 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_error::AgentError;
-use crate::permission::{PermissionBehavior, PermissionEngine};
+use crate::permission::PermissionBehavior;
 use crate::react_agent::AgentInner;
 use crate::stream_handle::StreamHandle;
 use crate::tool_feedback::tool_error_feedback;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_streaming_loop(
     inner: Arc<AgentInner>,
     session_id: String,
@@ -47,6 +48,11 @@ pub(crate) async fn run_streaming_loop(
     stream_handle: StreamHandle,
     event_tx: mpsc::Sender<AgentEvent>,
     cancel_token: CancellationToken,
+    // `true` when this invocation resumes a paused reply (Feature 032). A
+    // resumed reply keeps the paused `reply_id` and emits NO new `ReplyStart`
+    // — aligned with Python, where `_handle_incoming_event` falls straight
+    // back into the reasoning-acting loop.
+    resume: bool,
 ) {
     let base = EventBase::new;
     let mut cur_iter: u32 = 0;
@@ -54,7 +60,9 @@ pub(crate) async fn run_streaming_loop(
     if stream_handle.is_cancelled() {
         return;
     }
-    emit_start(&event_tx, &session_id, &reply_id, &inner.config.name, base).await;
+    if !resume {
+        emit_start(&event_tx, &session_id, &reply_id, &inner.config.name, base).await;
+    }
 
     loop {
         // Consume the interrupted flag so it only affects the current reply:
@@ -308,7 +316,7 @@ pub(crate) async fn run_streaming_loop(
                     let _ = mw.post_reasoning(&inner.config.name, &response).await;
                 }
                 // Process the response: write text to context or execute tool calls
-                if process_response_and_continue(
+                let outcome = process_response_and_continue(
                     &inner,
                     &response,
                     &event_tx,
@@ -317,9 +325,8 @@ pub(crate) async fn run_streaming_loop(
                     &cancel_token,
                     base,
                 )
-                .await
-                .is_done()
-                {
+                .await;
+                if outcome.is_done() {
                     let result = {
                         let text = collect_context_text(&inner);
                         Ok(Msg::new(
@@ -338,6 +345,11 @@ pub(crate) async fn run_streaming_loop(
                     };
                     invoke_post_reply(&inner, &result).await;
                     emit_completed_reply_end(&event_tx, &session_id, &reply_id, base).await;
+                    return;
+                }
+                if outcome.is_pause() {
+                    // Feature 032: paused awaiting confirmation. End the stream
+                    // WITHOUT a ReplyEnd so the host can resume.
                     return;
                 }
                 // Tool calls were executed — continue loop
@@ -373,7 +385,7 @@ pub(crate) async fn run_streaming_loop(
                             // Store assistant tool_call message BEFORE tool results
                             add_tool_calls_to_context(&inner, &tool_calls);
                             // Execute all detected tool calls
-                            execute_tool_calls(
+                            let paused = execute_tool_calls(
                                 &inner,
                                 &tool_calls,
                                 &event_tx,
@@ -383,6 +395,10 @@ pub(crate) async fn run_streaming_loop(
                                 base,
                             )
                             .await;
+                            if paused {
+                                // Feature 032: pause awaiting confirmation.
+                                return;
+                            }
                             // Continue ReAct loop — model will be called again
                         } else {
                             // No tool calls — write text to context and end
@@ -955,7 +971,7 @@ async fn process_response_and_continue(
                 }))
                 .await;
         }
-        execute_tool_calls(
+        let paused = execute_tool_calls(
             inner,
             &tool_calls,
             event_tx,
@@ -965,6 +981,12 @@ async fn process_response_and_continue(
             base,
         )
         .await;
+        if paused {
+            // Feature 032: a tool required confirmation — pause the reply.
+            // The reply_stream ends WITHOUT a ReplyEnd so the host can resume
+            // with a UserConfirmResultEvent (aligned with Python).
+            return Outcome::Pause;
+        }
         return Outcome::Continue;
     }
 
@@ -985,7 +1007,9 @@ async fn execute_tool_calls(
     stream_handle: &StreamHandle,
     cancel_token: &CancellationToken,
     _base: fn() -> EventBase,
-) {
+) -> bool {
+    // Returns true when a tool call triggered `Ask` and the reply must pause.
+    let mut paused = false;
     for tc in tool_calls {
         // Honor cancellation: the consumer may have dropped the stream, OR the
         // user may have called `interrupt()` (which sets `inner.interrupted`
@@ -1022,9 +1046,16 @@ async fn execute_tool_calls(
 
         let permission_input = serde_json::from_str(&tc_mut.input)
             .unwrap_or_else(|_| serde_json::Value::String(tc_mut.input.clone()));
-        let permission_engine =
-            PermissionEngine::with_context(inner.config.permission_context.clone());
-        let decision = permission_engine.check_decision(&tc_mut.name, &permission_input);
+        // Read the shared mutable engine (Feature 032) so rules adopted at
+        // resume time take effect immediately. The guard is scoped so it is
+        // dropped before any `.await` (RwLockReadGuard is not Send).
+        let decision = {
+            let permission_engine = inner
+                .permission_engine
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            permission_engine.check_decision(&tc_mut.name, &permission_input)
+        };
         match decision.behavior {
             PermissionBehavior::Deny => {
                 emit_denied_tool_result(
@@ -1039,22 +1070,48 @@ async fn execute_tool_calls(
                 continue;
             }
             PermissionBehavior::Ask => {
+                // Feature 032: pause instead of feeding denied back. Set the
+                // tool_call to `asking`, persist that state into context (so
+                // resume can match it via get_awaiting_tool_calls), carry the
+                // suggested_rules, emit the confirm event, and stop executing.
                 tc_mut.state = ToolCallState::Asking;
+                tc_mut.suggested_rules = decision
+                    .suggested_rules
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(to_message_permission_rule)
+                    .collect();
+                // Update the matching tool_call block in context to `asking`.
+                update_tool_call_state_in_context(inner, &tc_mut);
                 emit_require_user_confirm(event_tx, reply_id, &tc_mut, _base).await;
-                emit_denied_tool_result(
-                    event_tx,
-                    reply_id,
-                    inner,
-                    &tc_mut,
-                    &decision.message,
-                    _base,
-                )
-                .await;
-                continue;
+                paused = true;
+                break;
             }
             PermissionBehavior::Allow | PermissionBehavior::Passthrough => {
                 tc_mut.state = ToolCallState::Allowed;
             }
+        }
+
+        // External tool (Feature 032, FR-013): submit the call and pause
+        // instead of executing it in-process. The tool_call is marked
+        // `submitted` in context so resume can match it.
+        if tc_mut.state == ToolCallState::Allowed
+            && inner
+                .config
+                .toolkit
+                .as_ref()
+                .is_some_and(|tk| tk.is_external_tool(&tc_mut.name))
+        {
+            tc_mut.state = ToolCallState::Submitted;
+            update_tool_call_state_in_context(inner, &tc_mut);
+            emit_require_external_execution(event_tx, reply_id, &tc_mut, _base).await;
+            paused = true;
+            break;
+        }
+
+        if paused {
+            break;
         }
 
         let exec_result = if let Some(ref tk) = inner.config.toolkit {
@@ -1128,6 +1185,7 @@ async fn execute_tool_calls(
             add_tool_result_to_context(inner, &tc_mut, &output_text, result_state);
         }
     }
+    paused
 }
 
 async fn emit_require_user_confirm(
@@ -1145,7 +1203,25 @@ async fn emit_require_user_confirm(
         .await;
 }
 
-async fn emit_denied_tool_result(
+/// Emit a `RequireExternalExecutionEvent` (Feature 032, FR-013).
+async fn emit_require_external_execution(
+    event_tx: &mpsc::Sender<AgentEvent>,
+    reply_id: &str,
+    tool_call: &ToolCallBlock,
+    base: fn() -> EventBase,
+) {
+    let _ = event_tx
+        .send(AgentEvent::RequireExternalExecution(
+            RequireExternalExecutionEvent {
+                base: base(),
+                reply_id: reply_id.into(),
+                tool_calls: vec![tool_call.clone()],
+            },
+        ))
+        .await;
+}
+
+pub(crate) async fn emit_denied_tool_result(
     event_tx: &mpsc::Sender<AgentEvent>,
     reply_id: &str,
     inner: &Arc<AgentInner>,
@@ -1182,7 +1258,7 @@ async fn emit_denied_tool_result(
     add_tool_result_to_context(inner, tool_call, message, ToolResultState::Denied);
 }
 
-fn add_tool_result_to_context(
+pub(crate) fn add_tool_result_to_context(
     inner: &Arc<AgentInner>,
     tc: &ToolCallBlock,
     output_text: &str,
@@ -1250,6 +1326,41 @@ fn add_tool_calls_to_context(inner: &Arc<AgentInner>, tool_calls: &[ToolCallBloc
     }
 }
 
+/// Update the matching tool_call block in the tail assistant message's context
+/// to reflect the new state (e.g. `asking` after an Ask decision). The block
+/// was written by `add_tool_calls_to_context` before permission checking, so
+/// its state was the original `Pending`; keeping it in sync lets resume match
+/// awaiting tool calls via `get_awaiting_tool_calls`.
+fn update_tool_call_state_in_context(inner: &Arc<AgentInner>, tc: &ToolCallBlock) {
+    let mut state = inner.state.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(last) = state.context.last_mut() {
+        for block in &mut last.content {
+            if let ContentBlock::ToolCall(existing) = block
+                && existing.id == tc.id
+            {
+                existing.state = tc.state.clone();
+                existing.suggested_rules = tc.suggested_rules.clone();
+                break;
+            }
+        }
+    }
+}
+
+/// Convert an `agent_scope_agent::permission::PermissionRule` (the engine's
+/// rule type) into the `agent_scope_message::PermissionRule` carried in event
+/// payloads. The message-level type is a placeholder holding flattened JSON;
+/// we serialize the engine rule into it so consumers can read the fields.
+pub(crate) fn to_message_permission_rule(
+    rule: crate::permission::PermissionRule,
+) -> agent_scope_message::PermissionRule {
+    let json = serde_json::to_value(&rule).unwrap_or(serde_json::Value::Object(Default::default()));
+    let mut msg_rule = agent_scope_message::PermissionRule::default();
+    if let serde_json::Value::Object(map) = json {
+        msg_rule.extras = map.into_iter().collect();
+    }
+    msg_rule
+}
+
 // ---------------------------------------------------------------------------
 // Middleware helpers (P2-11 fix)
 // ---------------------------------------------------------------------------
@@ -1304,11 +1415,17 @@ async fn invoke_post_reply(inner: &Arc<AgentInner>, result: &Result<Msg, AgentEr
 enum Outcome {
     Done,
     Continue,
+    /// 有工具触发 Ask，reply_stream 应暂停（emit 确认事件后结束流，不喂 denied）。
+    Pause,
 }
 
 impl Outcome {
     fn is_done(&self) -> bool {
         matches!(*self, Outcome::Done)
+    }
+
+    fn is_pause(&self) -> bool {
+        matches!(*self, Outcome::Pause)
     }
 }
 
@@ -1334,7 +1451,7 @@ async fn emit_start(
         .await;
 }
 
-async fn emit_interrupted(
+pub(crate) async fn emit_interrupted(
     tx: &mpsc::Sender<AgentEvent>,
     rid: &str,
     sid: &str,
@@ -1526,7 +1643,7 @@ async fn emit_text_events_only(
 /// For `ToolExecOutput::Complete`: emits Start → Delta → End, returns the text.
 /// For `ToolExecOutput::Stream`: emits events progressively, collects ALL output
 /// text (not placeholder), returns concatenated text (P0-4 fix).
-async fn emit_tool_result_and_collect(
+pub(crate) async fn emit_tool_result_and_collect(
     tx: &mpsc::Sender<AgentEvent>,
     rid: &str,
     tc: &ToolCallBlock,

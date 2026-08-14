@@ -171,6 +171,18 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Whether this tool's execution happens outside the agent process.
+    ///
+    /// An external tool is *submitted* to the host (`RequireExternalExecutionEvent`)
+    /// instead of being executed by the engine; the reply pauses until the host
+    /// injects `ExternalExecutionResultEvent`. Aligned with Python's
+    /// `Tool.is_external_tool` (Feature 032).
+    ///
+    /// Default: `false`.
+    fn is_external_tool(&self) -> bool {
+        false
+    }
+
     /// Execute the tool with the given JSON input.
     ///
     /// # Arguments

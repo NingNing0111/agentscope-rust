@@ -2,27 +2,30 @@
 //! tool is guarded by a permission `ask` rule. The host (this program) drives
 //! approval / rejection interactively, y/n/a.
 //!
-//! Flow:
+//! Flow (event-driven pause → confirm → resume, aligned with Python):
 //!   1. REPL 循环：用户在 stdin 输入消息，agent 流式回复。
-//!   2. agent 平时可自由回答；调用 `write_note` 时，`ask` 规则使引擎发出
-//!      `RequireUserConfirmEvent`，并把被拒结果喂回模型。
-//!   3. 宿主询问 y/n/a：
-//!   - y = 本次批准：截断历史回退到本轮用户消息，重建 allow agent 重放 → 写入成功
-//!   - n = 拒绝：不重放，模型已收到被拒结果，自行调整
-//!   - a = 总是允许：宿主置 always_allow，此后重建 allow agent，不再询问
+//!   2. agent 调用 `write_note` 时，`ask` 规则使引擎发出
+//!      `RequireUserConfirmEvent` 并**暂停**（流结束，无 ReplyEnd）。
+//!   3. 宿主询问 y/n/a 后以 `UserConfirmResultEvent` **恢复同一 agent**：
+//!   - y = 仅本次批准（confirmed=true，无 rules）→ 工具执行
+//!   - n = 拒绝（confirmed=false）→ 生成 DENIED 结果，模型调整
+//!   - a = 总是允许（confirmed=true + rules:[allow]）→ 规则采纳进引擎，此后不再询问
 //!
 //! Requires `DASHSCOPE_API_KEY` for real model calls.
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 
+use agent_scope_agent::event_input::EventInput;
 use agent_scope_agent::{
     Agent, AgentConfig, ContextConfig, PermissionContext, PermissionMode, PermissionRule,
     ReActAgent, ReActConfig,
 };
 use agent_scope_dashscope::DashScopeChatModel;
-use agent_scope_event::AgentEvent;
+use agent_scope_event::{AgentEvent, ConfirmResult, EventBase, UserConfirmResultEvent};
 use agent_scope_message::Msg;
+use agent_scope_message::PermissionRule as MsgPermissionRule;
 use agent_scope_message::factory::user_msg;
 use agent_scope_tool::{FunctionTool, ToolKit};
 use clap::Parser;
@@ -64,30 +67,20 @@ fn ask_context() -> PermissionContext {
     perm
 }
 
-/// Permission context with `write_note` allowed outright (no ask rule).
-fn allow_context() -> PermissionContext {
-    let mut perm = PermissionContext::new(PermissionMode::Default);
-    perm.add_rule(PermissionRule::allow("write_note"));
-    perm
-}
-
-/// Pick the permission context for the current attempt.
+/// A message-level `allow` rule for `tool`, carried in `ConfirmResult.rules`.
 ///
-/// `allow` is true after the host approves (`y`/`a`) so the replay executes the
-/// write instead of re-triggering confirmation. Returns an `ask` context by
-/// default and an `allow` context once approved.
-fn permission_context_for(allow: bool) -> PermissionContext {
-    if allow {
-        allow_context()
-    } else {
-        ask_context()
-    }
+/// On resume the engine decodes this back into a `PermissionRule::allow` and
+/// adopts it (clearing the matching ask rule), so later calls of the tool no
+/// longer ask.
+fn allow_rule(tool: &str) -> MsgPermissionRule {
+    let mut extras = HashMap::new();
+    extras.insert("tool_name".to_string(), serde_json::json!(tool));
+    extras.insert("behavior".to_string(), serde_json::json!("allow"));
+    extras.insert("source".to_string(), serde_json::json!("runtime"));
+    MsgPermissionRule { extras }
 }
 
-fn build_agent(
-    model: Arc<DashScopeChatModel>,
-    perm: PermissionContext,
-) -> anyhow::Result<ReActAgent> {
+fn build_agent(model: Arc<DashScopeChatModel>) -> anyhow::Result<ReActAgent> {
     let mut toolkit = ToolKit::new();
     toolkit.register(FunctionTool::new(
         "write_note",
@@ -103,7 +96,7 @@ fn build_agent(
         )
         .model(model)
         .toolkit(toolkit)
-        .permission_context(perm)
+        .permission_context(ask_context())
         .build()?;
 
     Ok(ReActAgent::new(
@@ -121,7 +114,7 @@ enum Approval {
     Approved,
     /// 拒绝（n），模型基于被拒结果自行调整。
     Rejected,
-    /// 总是允许（a），此后不再询问。
+    /// 总是允许（a），规则采纳进引擎，此后不再询问。
     AlwaysAllow,
 }
 
@@ -138,82 +131,92 @@ fn ask_user(tool_name: &str, input: &str) -> io::Result<Approval> {
     })
 }
 
-/// Run one user turn against `history`. Returns `Ok(())` when the turn ends.
+/// Run one user turn against the SAME agent instance, driving the
+/// pause → confirm → resume loop until the reply ends.
 ///
-/// On approval (`y`/`a`), truncates `history` back to `start_len`, rebuilds an
-/// allow-context agent and replays — the write executes and the turn continues.
+/// When the agent pauses awaiting confirmation (`RequireUserConfirmEvent`),
+/// the host collects y/n/a for each pending tool call, injects a
+/// `UserConfirmResultEvent` via `reply_stream_event`, and continues consuming
+/// the resumed stream. The agent is never rebuilt and no history is truncated.
 async fn run_turn(
-    model: &Arc<DashScopeChatModel>,
-    history: &mut Vec<Msg>,
+    agent: &ReActAgent,
     always_allow: &mut bool,
-    start_len: usize,
+    user_input: Msg,
 ) -> anyhow::Result<()> {
-    // 本次 turn 的放行状态：初始跟随全局 always_allow；批准（y/a）后置为
-    // 放行，用于本次重放。`y` 只影响本次 turn（`always_allow` 不变，下一轮
-    // 恢复询问），`a` 同时持久化到 always_allow。
-    let mut current_allow = *always_allow;
-    loop {
-        // Rebuild per replay: permission context is fixed at construction time.
-        let perm = permission_context_for(current_allow);
-        let agent = build_agent(Arc::clone(model), perm)?;
+    let mut stream = agent.reply_stream(Some(vec![user_input])).await?;
 
-        let stream = agent.reply_stream(Some(history.clone())).await?;
-        let mut replay = false;
-        let mut stream = stream;
+    loop {
+        // 消费当前流，收集事件。`RequireUserConfirm` 后流已暂停（自然结束）；
+        // `ReplyEnd` 表示本轮回复完成。
+        let mut confirm: Option<agent_scope_event::RequireUserConfirmEvent> = None;
         while let Some(event) = stream.next().await {
             match &event {
                 AgentEvent::ThinkingBlockDelta(d) => print!("\x1b[2m{}\x1b[0m", d.delta),
                 AgentEvent::TextBlockDelta(d) => print!("{}", d.delta),
-                AgentEvent::ToolCallStart(s) => {
-                    println!("\n[tool start] {}", s.tool_call_name)
-                }
+                AgentEvent::ToolCallStart(s) => println!("\n[tool start] {}", s.tool_call_name),
                 AgentEvent::ToolResultTextDelta(d) => println!("\n[tool result] {}", d.delta),
                 AgentEvent::RequireUserConfirm(c) => {
-                    for tc in &c.tool_calls {
-                        match ask_user(&tc.name, &tc.input)? {
-                            Approval::Approved => {
-                                println!("[human-in-the-loop] 本次批准 {}，重放本轮…", tc.name);
-                                // 仅本次放行：重放用 allow 上下文，写入成功。
-                                current_allow = true;
-                            }
-                            Approval::AlwaysAllow => {
-                                println!("[human-in-the-loop] 总是允许 {}，重放本轮…", tc.name);
-                                *always_allow = true;
-                                current_allow = true;
-                            }
-                            Approval::Rejected => {
-                                println!("[human-in-the-loop] 已拒绝 {}，模型自行调整…", tc.name);
-                                continue;
-                            }
-                        }
-                        history.truncate(start_len);
-                        replay = true;
-                        break;
-                    }
+                    confirm = Some(c.clone());
+                    println!("\n[human-in-the-loop] 暂停等待确认…");
                 }
-                AgentEvent::ReplyEnd(e) => {
-                    println!("\n[reply end] {:?}", e.finished_reason)
-                }
+                AgentEvent::ReplyEnd(e) => println!("\n[reply end] {:?}", e.finished_reason),
                 _ => {}
             }
-            if replay {
+            if confirm.is_some() {
                 break;
             }
         }
-        // 流已消费完（或被 replay 提前断开），agent 仍持有最新 state。
         drop(stream);
 
-        if replay {
-            continue; // 重新构建（本次放行时用 allow 上下文）重放本轮
+        let Some(confirm) = confirm else {
+            // 无暂停：本轮回复结束（ReplyEnd 或正常流终止）。
+            break;
+        };
+
+        // 逐个询问每个待确认工具，收集确认结果。
+        let mut results = Vec::new();
+        for tc in &confirm.tool_calls {
+            match ask_user(&tc.name, &tc.input)? {
+                Approval::Approved => {
+                    println!("[human-in-the-loop] 本次批准 {}，继续执行…", tc.name);
+                    results.push(ConfirmResult {
+                        confirmed: true,
+                        tool_call: tc.clone(),
+                        rules: None,
+                    });
+                }
+                Approval::AlwaysAllow => {
+                    println!("[human-in-the-loop] 总是允许 {}，规则采纳…", tc.name);
+                    *always_allow = true;
+                    results.push(ConfirmResult {
+                        confirmed: true,
+                        tool_call: tc.clone(),
+                        rules: Some(vec![allow_rule(&tc.name)]),
+                    });
+                }
+                Approval::Rejected => {
+                    println!("[human-in-the-loop] 已拒绝 {}，模型自行调整…", tc.name);
+                    results.push(ConfirmResult {
+                        confirmed: false,
+                        tool_call: tc.clone(),
+                        rules: None,
+                    });
+                }
+            }
         }
 
-        // 同步权威历史：reply_stream 会把 user 消息 append 到 context，assistant
-        // 回复与工具结果也自动记录。以 agent 的 context 为准回写 history。
-        let context = agent.state().context.clone();
-        history.clear();
-        history.extend(context);
-        return Ok(());
+        // 以事件恢复同一 agent，继续消费其流。
+        let resume = UserConfirmResultEvent {
+            base: EventBase::new(),
+            reply_id: confirm.reply_id.clone(),
+            confirm_results: results,
+        };
+        stream = agent
+            .reply_stream_event(EventInput::Confirm(resume))
+            .await?;
     }
+
+    Ok(())
 }
 
 #[derive(Parser)]
@@ -234,7 +237,8 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("error: 缺少环境变量 DASHSCOPE_API_KEY。请设置后重试。"))?;
     let model = Arc::new(DashScopeChatModel::new(&api_key, "qwen-plus").with_stream(true));
 
-    let mut history: Vec<Msg> = Vec::new();
+    // 同一 agent 实例贯穿整个会话：暂停-确认-恢复不重建、不截断历史。
+    let agent = build_agent(model)?;
     let mut always_allow = false;
 
     println!("=== human-in-the-loop REPL ===");
@@ -264,11 +268,10 @@ async fn main() -> anyhow::Result<()> {
         }
 
         let msg = user_msg("user", &trimmed).map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        history.push(msg);
-        let start_len = history.len();
-        run_turn(&model, &mut history, &mut always_allow, start_len).await?;
+        run_turn(&agent, &mut always_allow, msg).await?;
     }
 
+    let _ = always_allow;
     Ok(())
 }
 
@@ -276,25 +279,23 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    /// 批准（y/a）后的重放必须用 allow 上下文（含 allow 规则、不含 ask 规则），
-    /// 否则重放会再次触发确认，导致无限循环。
+    /// `a`（总是允许）构造的规则必须可被引擎解码为 allow 规则。
     #[test]
-    fn approved_replay_uses_allow_context() {
-        let ctx = permission_context_for(true);
-        assert!(
-            ctx.allow_rules.contains_key("write_note"),
-            "批准后应使用 allow 上下文放行 write_note"
-        );
-        assert!(
-            !ctx.ask_rules.contains_key("write_note"),
-            "批准后不应残留 ask 规则，否则重放再次触发确认"
+    fn always_allow_rule_carries_allow_behavior() {
+        let rule = allow_rule("write_note");
+        let decoded: PermissionRule = serde_json::from_value(serde_json::to_value(&rule).unwrap())
+            .expect("规则应可反序列化为引擎 PermissionRule");
+        assert_eq!(decoded.tool_name, "write_note");
+        assert_eq!(
+            decoded.behavior,
+            agent_scope_agent::permission::PermissionBehavior::Allow
         );
     }
 
     /// 未批准时保留 ask 上下文（首次尝试需确认）。
     #[test]
     fn default_uses_ask_context() {
-        let ctx = permission_context_for(false);
+        let ctx = ask_context();
         assert!(
             ctx.ask_rules.contains_key("write_note"),
             "未批准时应使用 ask 上下文要求确认"

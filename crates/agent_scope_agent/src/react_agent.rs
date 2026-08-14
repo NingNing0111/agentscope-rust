@@ -1,11 +1,12 @@
 //! ReActAgent — the primary agent implementation.
 
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use agent_scope_event::AgentEvent;
-use agent_scope_message::Msg;
+use agent_scope_message::{ContentBlock, Msg, Role, ToolCallBlock, ToolCallState};
 use agent_scope_state::{
     AgentState, JsonFileSessionStore, Session, SessionError, SessionImpl, SessionStore,
 };
@@ -21,7 +22,9 @@ use crate::agent_error::AgentError;
 use crate::agent_trait::Agent;
 use crate::config::{AgentConfig, ContextConfig, ReActConfig};
 use crate::event_emitter::EventEmitter;
+use crate::event_input::EventInput;
 use crate::middleware::Middleware;
+use crate::permission::PermissionEngine;
 use crate::react_loop;
 use crate::stream_handle::StreamHandle;
 use crate::streaming_reactor;
@@ -53,6 +56,12 @@ pub(crate) struct AgentInner {
     /// Wrapped in Mutex so it can be replaced with a fresh token after cancellation
     /// (CancellationToken::cancel() is irreversible).
     pub(crate) cancel_token: Mutex<CancellationToken>,
+    /// Mutable permission engine shared with the reasoning-acting loops
+    /// (Feature 032). Unlike `config.permission_context` (an immutable value
+    /// snapshot), this is shared mutable state so a `ConfirmResult.rules`
+    /// accepted on resume can `add_rule` and affect subsequent checks —
+    /// aligned with Python `_engine.add_rule`.
+    pub(crate) permission_engine: Arc<RwLock<PermissionEngine>>,
 }
 
 /// The primary agent type — Reasoning + Acting loop with tool execution.
@@ -184,6 +193,14 @@ impl ReActAgent {
             config.toolkit = Some(toolkit);
         }
 
+        // Build the shared mutable permission engine from the immutable config
+        // snapshot. The loops and the HITL resume path both read/write it, so
+        // runtime rules (ConfirmResult.rules adoption) take effect immediately
+        // (Feature 032, FR-009).
+        let permission_engine = Arc::new(RwLock::new(PermissionEngine::with_context(
+            config.permission_context.clone(),
+        )));
+
         Ok(Self {
             inner: Arc::new(AgentInner {
                 config,
@@ -198,6 +215,7 @@ impl ReActAgent {
                 persist_lock: AsyncMutex::new(()),
                 session_created_at,
                 cancel_token: Mutex::new(CancellationToken::new()),
+                permission_engine,
             }),
         })
     }
@@ -230,6 +248,50 @@ impl ReActAgent {
     pub fn toolkit(&self) -> Option<&ToolKit> {
         self.inner.config.toolkit.as_ref()
     }
+}
+
+/// Get the tail assistant message's tool calls still awaiting an outside
+/// response — an `ASKing` user confirmation or a `SUBMITTED` external
+/// execution with no matching tool result yet (Feature 032).
+///
+/// Mirrors Python `AgentState.get_awaiting_tool_calls` (`_state.py`): only the
+/// **last** context message authored by this agent is inspected, and a
+/// `SUBMITTED` tool call stops awaiting once a matching tool result exists.
+pub(crate) fn get_awaiting_tool_calls(inner: &Arc<AgentInner>) -> Vec<ToolCallBlock> {
+    let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
+    let Some(last) = state.context.last() else {
+        return Vec::new();
+    };
+    if last.role != Role::Assistant || last.name != inner.config.name {
+        return Vec::new();
+    }
+    let result_ids: HashSet<&str> = last
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult(tr) => Some(tr.id.as_str()),
+            _ => None,
+        })
+        .collect();
+    last.content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolCall(tc) => {
+                let awaiting = tc.state == ToolCallState::Asking
+                    || (tc.state == ToolCallState::Submitted
+                        && !result_ids.contains(tc.id.as_str()));
+                awaiting.then(|| tc.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether the agent has any tool calls awaiting an outside response
+/// (confirmation or external execution result). Aligned with Python
+/// `has_awaiting_tool_calls`.
+pub(crate) fn has_awaiting_tool_calls(inner: &Arc<AgentInner>) -> bool {
+    !get_awaiting_tool_calls(inner).is_empty()
 }
 
 fn register_builtin_task_tool(
@@ -392,6 +454,28 @@ impl Agent for ReActAgent {
         }
 
         match do_reply_stream(Arc::clone(&self.inner), input).await {
+            Ok(stream) => Ok(stream),
+            Err(e) => {
+                self.inner.is_streaming.store(false, Ordering::SeqCst);
+                Err(e)
+            }
+        }
+    }
+
+    async fn reply_stream_event(
+        &self,
+        input: EventInput,
+    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
+        if self
+            .inner
+            .is_streaming
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(AgentError::AlreadyStreaming);
+        }
+
+        match do_reply_stream_event(Arc::clone(&self.inner), input).await {
             Ok(stream) => Ok(stream),
             Err(e) => {
                 self.inner.is_streaming.store(false, Ordering::SeqCst);
@@ -605,7 +689,7 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
         context_config: &inner.context_config,
         model: &inner.config.model,
         toolkit: &inner.config.toolkit,
-        permission_context: &inner.config.permission_context,
+        permission_engine: &inner.permission_engine,
         middlewares: &inner.middlewares,
         state: &inner.state,
         interrupted: &inner.interrupted,
@@ -715,6 +799,8 @@ async fn do_reply_stream(
             stream_handle,
             event_tx,
             spawned_cancel,
+            // A fresh message reply starts with ReplyStart.
+            false,
         )
         .await;
     });
@@ -735,4 +821,123 @@ fn build_interruption_msg_inline(message: &str) -> Msg {
         agent_scope_message::Role::Assistant,
     )
     .unwrap()
+}
+
+/// Stream a reply resumed from a HITL event (Feature 032).
+///
+/// Dispatches the host-injected event:
+/// - `Confirm` / `ExternalResult`: validate against the paused state, apply
+///   the event (execute confirmed tools / append external results), then
+///   continue the **same** reasoning-acting loop (no new `ReplyStart`, the
+///   paused `reply_id` is kept).
+/// - `Interrupt`: end an awaiting/in-progress reply with `ReplyEnd(INTERRUPTED)`,
+///   or silently no-op when the session is idle (Python semantics).
+async fn do_reply_stream_event(
+    inner: Arc<AgentInner>,
+    input: EventInput,
+) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
+    // Interrupt is a self-contained short-circuit that never resumes a loop.
+    if matches!(input, EventInput::Interrupt(_)) {
+        return do_interrupt_event(inner, input).await;
+    }
+
+    // Validate against the paused state (FR-007/008/010/015). On failure the
+    // state machine is untouched and the caller gets a clear error.
+    crate::hitl_resume::check_incoming_event(&inner, &input)?;
+
+    let cancel_token = fresh_cancel_token(&inner);
+    let session_id = {
+        let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
+        state.session_id.clone()
+    };
+    // Resume the SAME paused reply: keep its reply_id (already validated
+    // against the event's reply_id by check_incoming_event).
+    let reply_id = {
+        let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
+        state.reply_context.reply_id.clone()
+    };
+    let system_prompt = inner.config.system_prompt.clone();
+
+    let (event_tx, event_rx) = inner.event_emitter.create_channel();
+    let (stream_handle, cancel_tx) = StreamHandle::new(Arc::clone(&inner.is_streaming));
+    let is_streaming = Arc::clone(&inner.is_streaming);
+
+    let spawned_inner = Arc::clone(&inner);
+    let spawned_cancel = cancel_token.clone();
+    let session_id_for_spawn = session_id.clone();
+    let reply_id_for_spawn = reply_id.clone();
+    tokio::spawn(async move {
+        // Apply the event first (execute confirmed tools / append external
+        // execution results, emitting their tool result events), then continue
+        // the same reasoning-acting loop.
+        crate::hitl_resume::handle_incoming_event(
+            &spawned_inner,
+            &input,
+            &event_tx,
+            &reply_id_for_spawn,
+            &stream_handle,
+            &spawned_cancel,
+        )
+        .await;
+        streaming_reactor::run_streaming_loop(
+            spawned_inner,
+            session_id_for_spawn,
+            reply_id_for_spawn,
+            system_prompt,
+            stream_handle,
+            event_tx,
+            spawned_cancel,
+            // A resumed reply continues without a new ReplyStart.
+            true,
+        )
+        .await;
+    });
+
+    Ok(Box::pin(EventStream {
+        rx: event_rx,
+        cancel_tx: Some(cancel_tx),
+        is_streaming,
+    }))
+}
+
+/// Handle a `UserInterruptEvent`: emit `UserInterrupt` + `ReplyEnd(INTERRUPTED)`
+/// when the agent has awaiting tool calls, otherwise a silent no-op (aligned
+/// with Python `_agent.py:807-814`).
+async fn do_interrupt_event(
+    inner: Arc<AgentInner>,
+    input: EventInput,
+) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
+    let (event_tx, event_rx) = inner.event_emitter.create_channel();
+    let (stream_handle, cancel_tx) = StreamHandle::new(Arc::clone(&inner.is_streaming));
+    let is_streaming = Arc::clone(&inner.is_streaming);
+
+    let EventInput::Interrupt(evt) = input else {
+        unreachable!("do_interrupt_event called with a non-interrupt event")
+    };
+    let session_id = {
+        let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
+        state.session_id.clone()
+    };
+    let reply_id = evt.reply_id.clone();
+
+    tokio::spawn(async move {
+        if has_awaiting_tool_calls(&inner) {
+            streaming_reactor::emit_interrupted(
+                &event_tx,
+                &reply_id,
+                &session_id,
+                agent_scope_event::EventBase::new,
+            )
+            .await;
+        }
+        // No awaiting tool calls → the session is effectively idle: emit
+        // nothing (silent no-op).
+        drop(stream_handle);
+    });
+
+    Ok(Box::pin(EventStream {
+        rx: event_rx,
+        cancel_tx: Some(cancel_tx),
+        is_streaming,
+    }))
 }

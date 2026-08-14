@@ -314,6 +314,14 @@ impl ToolKit {
             .collect()
     }
 
+    /// Whether the tool with the given name is marked for external execution
+    /// (Feature 032). A tool that is not registered returns `false`.
+    pub fn is_external_tool(&self, tool_name: &str) -> bool {
+        self.tools
+            .get(tool_name)
+            .is_some_and(|tool| tool.is_external_tool())
+    }
+
     /// Build a [`ListSkillsCallback`](crate::skill_viewer::ListSkillsCallback)
     /// bound to this toolkit's live skill cache.
     ///

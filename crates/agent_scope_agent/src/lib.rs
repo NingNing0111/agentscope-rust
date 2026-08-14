@@ -40,6 +40,8 @@ pub mod context_policy;
 pub mod delegation;
 pub mod delegation_trace;
 pub mod event_emitter;
+pub mod event_input;
+pub mod hitl_resume;
 pub mod memory_middleware;
 pub mod middleware;
 pub mod permission;

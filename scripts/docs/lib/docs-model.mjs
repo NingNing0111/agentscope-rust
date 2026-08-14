@@ -51,7 +51,7 @@ export function flattenSidebar(items) {
   for (const item of items) {
     if (!item || typeof item !== 'object') continue
 
-    if (typeof item.link === 'string' && !/^https?:\/\//.test(item.link)) {
+    if (typeof item.link === 'string' && !/^https?:\/\//i.test(item.link)) {
       links.push(normalizePagePath(item.link))
     }
     if (Array.isArray(item.items)) links.push(...flattenSidebar(item.items))

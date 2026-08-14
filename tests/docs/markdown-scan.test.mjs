@@ -19,6 +19,20 @@ test('stripCode preserves line count for backtick and tilde fences', () => {
   assert.equal(stripCode(input).includes('/hidden'), false)
 })
 
+test('stripCode removes inline code with matching delimiter length', () => {
+  const input = 'Before ``<Card href="/hidden">use `tick`</Card>`` after'
+  assert.equal(stripCode(input).includes('<Card'), false)
+  assert.equal(extractComponents(input).has('Card'), false)
+  assert.deepEqual(extractLinks(input), [])
+})
+
+test('stripCode requires a closing fence at least as long as the opener', () => {
+  const input = 'before\n````md\n```\n<Card href="/hidden">Hidden</Card>\n````\nafter'
+  assert.equal(stripCode(input).split('\n').length, input.split('\n').length)
+  assert.equal(extractComponents(input).has('Card'), false)
+  assert.deepEqual(extractLinks(input), [])
+})
+
 test('extractComponents returns component names and attributes', () => {
   const found = extractComponents('<Card title="A" href="/a"><Badge color="green" size="sm">New</Badge></Card>')
   assert.deepEqual([...found.get('Card')].sort(), ['href', 'title'])

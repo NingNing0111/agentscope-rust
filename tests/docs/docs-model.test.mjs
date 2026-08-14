@@ -63,9 +63,10 @@ test('flattenSidebar recursively returns canonical links', () => {
   assert.deepEqual(flattenSidebar(sidebar), ['/', '/others/faq'])
 })
 
-test('flattenSidebar ignores external links', () => {
+test('flattenSidebar ignores external links case-insensitively', () => {
   const sidebar = [
-    { text: 'GitHub', link: 'https://github.com/NingNing0111/agentscope-rust' },
+    { text: 'GitHub', link: 'HtTpS://github.com/NingNing0111/agentscope-rust' },
+    { text: 'HTTP', link: 'hTtP://example.com/docs' },
     { text: '开始', items: [{ text: '快速开始', link: '/quickstart.md' }] }
   ]
   assert.deepEqual(flattenSidebar(sidebar), ['/quickstart'])

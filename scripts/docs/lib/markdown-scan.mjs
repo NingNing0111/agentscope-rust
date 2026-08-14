@@ -15,17 +15,24 @@ export function stripCode(markdown) {
   const withoutFences = lines.map((line) => {
     const marker = line.match(/^\s*(`{3,}|~{3,})/)
     if (!fence && marker) {
-      fence = marker[1][0]
+      fence = { character: marker[1][0], length: marker[1].length }
       return ''
     }
     if (fence) {
-      if (new RegExp(`^\\s*${fence}{3,}`).test(line)) fence = null
+      const closing = line.match(/^\s*(`+|~+)/)
+      if (
+        closing &&
+        closing[1][0] === fence.character &&
+        closing[1].length >= fence.length
+      ) {
+        fence = null
+      }
       return ''
     }
     return line
   }).join('\n')
 
-  return withoutFences.replace(/`[^`\n]*`/g, '')
+  return withoutFences.replace(/(`+)[^\n]*?\1/g, '')
 }
 
 export function extractComponents(markdown) {

@@ -17,7 +17,7 @@ use crate::agent_error::AgentError;
 /// only the hooks they need. Hooks are invoked in FIFO registration order.
 ///
 /// Note: Takes `agent_name: &str` instead of `&ReActAgent` to avoid
-/// circular dependency (ReActAgent has Vec<Arc<dyn Middleware>>).
+/// circular dependency (ReActAgent has `Vec<Arc<dyn Middleware>>`).
 #[async_trait::async_trait]
 pub trait Middleware: Send + Sync {
     /// Called before reply starts. Can modify input messages.

@@ -1,0 +1,24 @@
+[package]
+name = "chat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "chat"
+path = "src/main.rs"
+
+[dependencies]
+agent_scope_agent = { path = "../../crates/agent_scope_agent" }
+agent_scope_dashscope = { path = "../../crates/agent_scope_dashscope" }
+agent_scope_event = { path = "../../crates/agent_scope_event" }
+agent_scope_message = { path = "../../crates/agent_scope_message" }
+agent_scope_tool = { path = "../../crates/agent_scope_tool" }
+anyhow = "1"
+clap.workspace = true
+dotenv = "0.15"
+futures = "0.3"
+schemars.workspace = true
+serde.workspace = true
+tokio = { version = "1", features = ["full"] }

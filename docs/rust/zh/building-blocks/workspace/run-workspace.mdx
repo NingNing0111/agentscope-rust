@@ -1,0 +1,36 @@
+---
+title: "运行工作空间"
+description: "在受控环境执行命令与文件操作"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L2）。`WorkspaceBackend` 命令执行与内置工具注入在 AgentScope Rust 中可用。兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+工作空间通过 `WorkspaceBackend` 在受控环境执行命令与文件操作。`LocalWorkspace` 的本地后端把操作限定在 workdir 内，路径越界会被拒绝（`ContainedBackend` 做边界防护）。
+
+## 执行命令
+
+```rust
+use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase};
+
+let mut ws = LocalWorkspace::new(LocalWorkspaceConfig {
+    workdir: "/tmp/my-ws".into(),
+    ..Default::default()
+});
+ws.initialize().await?;
+
+let backend = ws.get_backend()?;
+let out = backend.exec_shell(&["ls", "-la"], "/tmp/my-ws", None).await?;
+println!("{}", String::from_utf8_lossy(&out.stdout));
+```
+
+`exec_shell` 接收 argv 数组、cwd 与可选的超时秒数，返回 stdout / stderr / 退出码。
+
+## 内置工具注入
+
+在 `AgentConfig` 中绑定 workspace 后，`Bash` / `Read` / `Write` / `Edit` / `Grep` / `Glob` / `ResetTools` / `Skill` 自动注入（`PowerShell` 在 Windows 注入）。智能体即可在受控工作区内执行文件与命令操作。
+
+## 完整示例
+
+见 [`examples/workspace`](../../../../../examples/workspace/)（`cargo run -p workspace`），演示命令执行与内置工具发现。

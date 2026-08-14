@@ -11,6 +11,7 @@ use agent_scope_state::AgentState;
 use futures::Stream;
 
 use crate::agent_error::AgentError;
+use crate::event_input::EventInput;
 
 /// Common interface for all agent types.
 ///
@@ -34,6 +35,28 @@ pub trait Agent: Send + Sync {
         &self,
         input: Option<Vec<Msg>>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError>;
+
+    /// Stream a reply resumed from a HITL event (Feature 032).
+    ///
+    /// Accepts the host-injected event inputs that Python's `_reply_impl`
+    /// dispatches: a `UserConfirmResultEvent` (resume a paused confirmation),
+    /// an `ExternalExecutionResultEvent` (resume a paused external execution)
+    /// or a `UserInterruptEvent` (end the current reply as interrupted).
+    ///
+    /// Resuming a paused reply continues the **same** reply: no new
+    /// `ReplyStart` is emitted and the paused `reply_id` is kept.
+    ///
+    /// The default implementation rejects the call so agent types that do not
+    /// participate in event-driven HITL fail loudly instead of silently
+    /// misbehaving.
+    async fn reply_stream_event(
+        &self,
+        _input: EventInput,
+    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
+        Err(AgentError::ValidationError {
+            message: "reply_stream_event is not supported by this agent type".into(),
+        })
+    }
 
     /// Observe messages without triggering a reply.
     ///

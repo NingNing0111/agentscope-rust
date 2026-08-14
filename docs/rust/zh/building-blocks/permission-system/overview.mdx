@@ -1,0 +1,60 @@
+---
+title: "概述"
+description: "规则、模式与工具检查如何共同决定每一次工具调用"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L2）。AgentScope Rust 提供完整的权限引擎（`PermissionEngine` / `PermissionMode` / `PermissionRule` / `PermissionDecision`）。**部分覆盖**：更细粒度的 admin policy 未实现。兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+权限系统拦截智能体发起的每一次工具调用，并给出三种决策之一：**允许**（Allow）执行、**拒绝**（Deny）执行，或**询问用户**（RequireConfirm）确认。
+
+决策由三个组件共同驱动（`agent_scope_agent::permission`）：
+
+| 组件 | 作用 |
+|------|------|
+| **权限规则**（`PermissionRule`） | 针对特定工具与调用的显式允许/拒绝/询问模式，以最高优先级评估 |
+| **权限模式**（`PermissionMode`） | 全局策略，决定哪些决策点生效，以及无人裁决时的兜底行为 |
+| **工具检查** | 工具自身在运行时基于真实输入做动态分析（只读判定、危险路径保护） |
+
+## 决策流程
+
+每一次工具调用走同样的决策点：
+
+| 决策点 | 结果 |
+|--------|------|
+| 规则匹配（allow/deny/ask） | 命中最优先 |
+| 模式策略（只读放行 / 全放行等） | 决定兜底行为 |
+| 工具自身检查 | 只读判定、危险路径保护 |
+
+最终产生 `PermissionResult`：`Allow` / `Deny` / `RequireConfirm`。`RequireConfirm` 在事件流中体现为 `RequireUserConfirmEvent`：引擎发出该事件后**暂停** reply_stream（不喂 denied、无 ReplyEnd），宿主收集确认后以 `UserConfirmResultEvent` 通过 `reply_stream_event` **恢复同一 agent**（见 [人机交互](../agent/human-in-the-loop)）。
+
+## 使用
+
+```rust
+use agent_scope_agent::{PermissionContext, PermissionMode, PermissionRule};
+
+let mut perm = PermissionContext::new(PermissionMode::Default);
+// allow/deny/ask 各接收一个匹配模式（通配符；规则语义见 permission-rule 页）。
+perm.add_rule(PermissionRule::allow("Read*"));
+
+// 在 AgentConfig 中注入权限上下文
+let config = agent_scope_agent::AgentConfig::builder()
+    .permission_context(perm)
+    // ...其他配置
+    .build()?;
+```
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="权限模式" icon="toggle" href="/versions/0.1.0/zh/building-blocks/permission-system/permission-mode">
+    五种全局策略的适用场景。
+  </Card>
+  <Card title="权限规则" icon="rule" href="/versions/0.1.0/zh/building-blocks/permission-system/permission-rule">
+    为特定工具与调用编写 allow/deny/ask 规则。
+  </Card>
+  <Card title="工具内置检查" icon="shield" href="/versions/0.1.0/zh/building-blocks/permission-system/tool-check">
+    工具运行时的只读判定与危险路径保护。
+  </Card>
+</CardGroup>

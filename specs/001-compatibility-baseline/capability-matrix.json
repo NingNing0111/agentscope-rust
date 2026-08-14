@@ -2831,9 +2831,9 @@
       "dependencies": [],
       "priority": "MVP_REQUIRED",
       "target_level": "L2",
-      "status": "NOT_ANALYZED",
+      "status": "IMPLEMENTED",
       "test_fixture_ids": [],
-      "notes": ""
+      "notes": "Naming deviation (Feature 029, Art.1 exception flow): the public tool name is `ResetTools` (Rust, per spec FR-019) vs `reset_tools` (Python `_meta.py` tool name). Dynamic input schema (one boolean field per non-basic authorized tool group, final-state semantics), `basic` always active, authorization-boundary enforced (FR-019). Aligned with vendored Python `_meta.py` upstream `9d1026fa`."
     },
     {
       "capability_id": "tool-task-create",

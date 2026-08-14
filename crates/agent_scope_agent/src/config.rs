@@ -9,6 +9,7 @@ use std::sync::Arc;
 use agent_scope_model::ChatModel;
 use agent_scope_state::SessionStore;
 use agent_scope_tool::ToolKit;
+use agent_scope_workspace::WorkspaceBase;
 
 use crate::agent_error::AgentError;
 use crate::permission::{PermissionContext, PermissionMode};
@@ -51,6 +52,16 @@ pub struct AgentConfig {
     /// Runtime-state injection configuration (Feature 026). Defaults to
     /// [`InjectionConfig::default()`] (injection enabled).
     pub injection_config: InjectionConfig,
+    /// Optional workspace bound to this agent (Feature 029).
+    ///
+    /// When set, the agent construction path automatically merges the
+    /// workspace built-in tools (`Bash`/`Read`/`Edit`/`Write`/`Grep`/`Glob`/
+    /// `ResetTools`/`Skill`, plus `PowerShell` on Windows) into the agent's
+    /// `ToolKit`. Agents without a workspace expose no file/command tools.
+    pub workspace: Option<Arc<dyn WorkspaceBase>>,
+    /// Whether workspace built-in tools are injected when a workspace is
+    /// present. Defaults to `true`.
+    pub workspace_tools_enabled: bool,
 }
 
 impl AgentConfig {
@@ -73,6 +84,8 @@ pub struct AgentConfigBuilder {
     session_id: Option<String>,
     auto_persist: bool,
     injection_config: InjectionConfig,
+    workspace: Option<Arc<dyn WorkspaceBase>>,
+    workspace_tools_enabled: bool,
 }
 
 impl Default for AgentConfigBuilder {
@@ -89,6 +102,8 @@ impl Default for AgentConfigBuilder {
             session_id: None,
             auto_persist: true,
             injection_config: InjectionConfig::default(),
+            workspace: None,
+            workspace_tools_enabled: true,
         }
     }
 }
@@ -170,6 +185,22 @@ impl AgentConfigBuilder {
         self
     }
 
+    /// Bind a workspace to this agent (Feature 029).
+    ///
+    /// When set, the workspace built-in tools are automatically injected into
+    /// the agent's `ToolKit` at construction time.
+    pub fn workspace(mut self, workspace: Arc<dyn WorkspaceBase>) -> Self {
+        self.workspace = Some(workspace);
+        self
+    }
+
+    /// Enable or disable automatic injection of workspace built-in tools.
+    /// Enabled by default when a workspace is bound.
+    pub fn workspace_tools_enabled(mut self, enabled: bool) -> Self {
+        self.workspace_tools_enabled = enabled;
+        self
+    }
+
     /// Set the streaming channel capacity.
     ///
     /// - `None` = unbounded channel (default, per FR-019)
@@ -217,6 +248,8 @@ impl AgentConfigBuilder {
             session_id: self.session_id,
             auto_persist: self.auto_persist,
             injection_config: self.injection_config,
+            workspace: self.workspace,
+            workspace_tools_enabled: self.workspace_tools_enabled,
         })
     }
 }

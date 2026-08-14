@@ -1,0 +1,44 @@
+---
+title: "计划模式"
+description: "为智能体提供结构化任务清单，用于规划、追踪并协调复杂工作"
+---
+
+<Note>
+**Rust 实现状态**: 已实现（兼容等级 L3）——形态为**内置任务规划工具**（Feature 024），替代早期独立的 Planner。兼容基线为 AgentScope Python v2.0.5。
+</Note>
+
+计划（Planning）是智能体把复杂请求拆分成离散、有序、可追踪步骤的方式。AgentScope Rust 通过一小组内置工具，让智能体用工具调用来维护一份**显式、结构化的任务清单**——任务的创建、查询与更新都走工具调用。
+
+## 内置任务工具
+
+| 工具 | 操作 | 只读 |
+|------|------|------|
+| `TaskCreate` | 向任务清单追加新任务 | 否 |
+| `TaskList` | 列出所有任务及其状态、依赖 | 是 |
+| `TaskGet` | 按 ID 获取单个任务的完整信息 | 是 |
+| `TaskUpdate` | 更新任务的状态、字段或依赖边，亦可删除任务 | 否 |
+
+四个工具在 `ReActAgent` 构造时自动注册（`task_tools_enabled` 默认 `true`）：
+
+```rust
+use agent_scope_agent::{AgentConfig, ReActAgent};
+
+let config = AgentConfig::builder()
+    .name("assistant")
+    .model(model)
+    .build()?;  // task_tools_enabled 默认 true
+
+// 注册后，agent 可通过 TaskCreate/TaskList/TaskGet/TaskUpdate 维护任务清单。
+```
+
+## 任务状态注入
+
+任务清单以智能体为作用域（`AgentState::tasks_context`），并随智能体状态持久化。此外，运行时状态注入会在上下文长度/未完成任务维度提醒智能体（见 [环境感知](context/environment-awareness)）。
+
+## 使用指引
+
+内置系统提示建议智能体仅对真正的多步工作（3+ 步）使用任务工具，遵循正确的生命周期：`TaskCreate` → 实际执行 → `TaskUpdate(status=completed)`，绝不在工作真正完成前标记完成。
+
+## 完整示例
+
+见 [`examples/agent`](../../../../examples/agent/)，其系统提示演示了任务工具的可用性。

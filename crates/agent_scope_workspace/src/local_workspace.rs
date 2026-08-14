@@ -412,6 +412,13 @@ impl WorkspaceBase for LocalWorkspace {
         }
         Ok(&*self._backend)
     }
+
+    fn get_backend_arc(&self) -> Result<Arc<dyn WorkspaceBackend>, WorkspaceError> {
+        if !self.is_alive {
+            return Err(WorkspaceError::NotInitialized);
+        }
+        Ok(Arc::clone(&self._backend))
+    }
 }
 
 impl McpConnectionsHost for LocalWorkspace {

@@ -1,6 +1,7 @@
 //! Reasoning→Acting loop — the core iteration logic for ReActAgent.
 
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use agent_scope_event::{
@@ -25,7 +26,7 @@ use crate::agent_error::AgentError;
 use crate::config::{ContextConfig, ReActConfig};
 use crate::context_compression::{compress_context, truncate_context};
 use crate::middleware::Middleware;
-use crate::permission::{PermissionBehavior, PermissionEngine};
+use crate::permission::PermissionBehavior;
 use crate::tool_feedback::tool_error_feedback;
 
 /// Aggregated context for `run_react_loop`, grouping the parameters
@@ -39,7 +40,9 @@ pub(crate) struct ReactLoopContext<'a> {
     pub context_config: &'a ContextConfig,
     pub model: &'a Arc<dyn agent_scope_model::ChatModel>,
     pub toolkit: &'a Option<ToolKit>,
-    pub permission_context: &'a crate::permission::PermissionContext,
+    /// Shared mutable permission engine (Feature 032). Read on every check so
+    /// rules adopted at resume time take effect immediately.
+    pub permission_engine: &'a Arc<RwLock<crate::permission::PermissionEngine>>,
     pub middlewares: &'a [Arc<dyn Middleware>],
     pub state: &'a std::sync::RwLock<AgentState>,
     pub interrupted: &'a AtomicBool,
@@ -520,10 +523,15 @@ pub(crate) async fn run_react_loop(
 
                     let permission_input = serde_json::from_str(&tc_mut.input)
                         .unwrap_or_else(|_| serde_json::Value::String(tc_mut.input.clone()));
-                    let permission_engine =
-                        PermissionEngine::with_context(ctx.permission_context.clone());
-                    let decision =
-                        permission_engine.check_decision(&tc_mut.name, &permission_input);
+                    // The guard is scoped so it is dropped before any `.await`
+                    // (RwLockReadGuard is not Send).
+                    let decision = {
+                        let permission_engine = ctx
+                            .permission_engine
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner());
+                        permission_engine.check_decision(&tc_mut.name, &permission_input)
+                    };
                     match decision.behavior {
                         PermissionBehavior::Deny => {
                             emit_permission_denied_result(
@@ -539,23 +547,49 @@ pub(crate) async fn run_react_loop(
                             continue;
                         }
                         PermissionBehavior::Ask => {
+                            // Feature 032 (Python-aligned): Ask pauses the reply.
+                            // Mark the tool_call `asking`, persist that state into
+                            // context (so resume can match it), emit the confirm
+                            // event and STOP — no denied result is fed back.
                             tc_mut.state = ToolCallState::Asking;
+                            tc_mut.suggested_rules = decision
+                                .suggested_rules
+                                .clone()
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(super::streaming_reactor::to_message_permission_rule)
+                                .collect();
+                            update_tool_call_state_in_context(ctx.state, &tc_mut);
                             emit_require_user_confirm(event_tx, ctx.reply_id, &tc_mut, base).await;
-                            emit_permission_denied_result(
-                                event_tx,
-                                ctx.reply_id,
-                                ctx.agent_name,
-                                ctx.state,
-                                &tc_mut,
-                                &decision.message,
-                                base,
-                            )
-                            .await;
-                            continue;
+                            return Ok(build_final_msg(&accumulated_texts));
                         }
                         PermissionBehavior::Allow | PermissionBehavior::Passthrough => {
                             tc_mut.state = ToolCallState::Allowed;
                         }
+                    }
+
+                    // External tool (Feature 032, FR-013): submit the call and
+                    // end the reply instead of executing it in-process. The
+                    // tool_call is marked `submitted` in context so a later
+                    // `ExternalExecutionResultEvent` resume can match it.
+                    if tc_mut.state == ToolCallState::Allowed
+                        && ctx
+                            .toolkit
+                            .as_ref()
+                            .is_some_and(|tk| tk.is_external_tool(&tc_mut.name))
+                    {
+                        tc_mut.state = ToolCallState::Submitted;
+                        update_tool_call_state_in_context(ctx.state, &tc_mut);
+                        let _ = event_tx
+                            .send(AgentEvent::RequireExternalExecution(
+                                agent_scope_event::RequireExternalExecutionEvent {
+                                    base: base(),
+                                    reply_id: ctx.reply_id.into(),
+                                    tool_calls: vec![tc_mut.clone()],
+                                },
+                            ))
+                            .await;
+                        return Ok(build_final_msg(&accumulated_texts));
                     }
 
                     let _ = event_tx
@@ -846,6 +880,29 @@ async fn emit_require_user_confirm(
             tool_calls: vec![tool_call.clone()],
         }))
         .await;
+}
+
+/// Update the matching tool_call block in the tail assistant message's context
+/// to reflect the new state (e.g. `asking` after an Ask decision). The block
+/// was written before permission checking, so its state was the original
+/// `Pending`; keeping it in sync lets resume match awaiting tool calls via
+/// `get_awaiting_tool_calls` (mirrors the streaming path).
+fn update_tool_call_state_in_context(
+    state: &std::sync::RwLock<AgentState>,
+    tc: &agent_scope_message::ToolCallBlock,
+) {
+    let mut state = state.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(last) = state.context.last_mut() {
+        for block in &mut last.content {
+            if let ContentBlock::ToolCall(existing) = block
+                && existing.id == tc.id
+            {
+                existing.state = tc.state.clone();
+                existing.suggested_rules = tc.suggested_rules.clone();
+                break;
+            }
+        }
+    }
 }
 
 async fn emit_permission_denied_result(

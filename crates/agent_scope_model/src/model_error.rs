@@ -1,8 +1,8 @@
 //! ModelError — unified error type for all model-layer operations.
 
-use std::fmt;
-
 use crate::formatter::FormatError;
+
+use thiserror::Error;
 
 /// Error categories for retryable error matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,94 +16,42 @@ pub enum ModelErrorKind {
 }
 
 /// Unified error type for the Model layer.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ModelError {
+    #[error("[{provider}] API error {status}: {message}")]
     ApiError {
         status: u16,
         message: String,
         provider: String,
     },
+    #[error("[{provider}] Retry exhausted after {attempts} attempts: {last_error}")]
     RetryExhausted {
         attempts: u32,
         last_error: Box<ModelError>,
         provider: String,
     },
+    #[error("Operation cancelled")]
     Cancelled,
-    ValidationError {
-        field: String,
-        message: String,
-    },
+    #[error("Validation error on '{field}': {message}")]
+    ValidationError { field: String, message: String },
+    #[error("Serialization error in {context}: {source}")]
     SerializationError {
         context: String,
+        #[source]
         source: serde_json::Error,
     },
+    #[error("Format error in {context}: {source}")]
     FormatError {
         context: String,
+        #[source]
         source: FormatError,
     },
-    StructuredOutputError {
-        reason: String,
-    },
-    UnsupportedFeature {
-        feature: String,
-        provider: String,
-    },
-    ConfigError {
-        message: String,
-    },
-}
-
-impl fmt::Display for ModelError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ApiError {
-                status,
-                message,
-                provider,
-            } => {
-                write!(f, "[{provider}] API error {status}: {message}")
-            }
-            Self::RetryExhausted {
-                attempts,
-                last_error,
-                provider,
-            } => {
-                write!(
-                    f,
-                    "[{provider}] Retry exhausted after {attempts} attempts: {last_error}"
-                )
-            }
-            Self::Cancelled => write!(f, "Operation cancelled"),
-            Self::ValidationError { field, message } => {
-                write!(f, "Validation error on '{field}': {message}")
-            }
-            Self::SerializationError { context, source } => {
-                write!(f, "Serialization error in {context}: {source}")
-            }
-            Self::FormatError { context, source } => {
-                write!(f, "Format error in {context}: {source}")
-            }
-            Self::StructuredOutputError { reason } => {
-                write!(f, "Structured output error: {reason}")
-            }
-            Self::UnsupportedFeature { feature, provider } => {
-                write!(f, "[{provider}] Unsupported feature: {feature}")
-            }
-            Self::ConfigError { message } => {
-                write!(f, "Config error: {message}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ModelError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::SerializationError { source, .. } => Some(source),
-            Self::FormatError { source, .. } => Some(source),
-            _ => None,
-        }
-    }
+    #[error("Structured output error: {reason}")]
+    StructuredOutputError { reason: String },
+    #[error("[{provider}] Unsupported feature: {feature}")]
+    UnsupportedFeature { feature: String, provider: String },
+    #[error("Config error: {message}")]
+    ConfigError { message: String },
 }
 
 impl ModelError {

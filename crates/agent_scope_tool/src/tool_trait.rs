@@ -94,6 +94,18 @@ pub enum ToolError {
         /// Name of the skill that was requested but not found.
         skill_name: String,
     },
+
+    /// The requested capability is not supported in the current environment
+    /// (e.g. `PowerShell` on a non-Windows host). Aligns with Constitution
+    /// Art.13 `UnsupportedFeature` — the call fails explicitly instead of
+    /// silently degrading (Art.5).
+    #[error("tool '{tool_name}' is not supported in the current environment")]
+    UnsupportedCapability {
+        /// Name of the tool that is unavailable in this environment.
+        tool_name: String,
+        /// Human-readable reason why the capability is unsupported.
+        reason: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +168,18 @@ pub trait Tool: Send + Sync {
     ///
     /// Default: `false`.
     fn is_read_only(&self) -> bool {
+        false
+    }
+
+    /// Whether this tool's execution happens outside the agent process.
+    ///
+    /// An external tool is *submitted* to the host (`RequireExternalExecutionEvent`)
+    /// instead of being executed by the engine; the reply pauses until the host
+    /// injects `ExternalExecutionResultEvent`. Aligned with Python's
+    /// `Tool.is_external_tool` (Feature 032).
+    ///
+    /// Default: `false`.
+    fn is_external_tool(&self) -> bool {
         false
     }
 

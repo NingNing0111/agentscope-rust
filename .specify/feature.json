@@ -1,1 +1,3 @@
-{"feature_directory": "specs/027-mcp-sdk-integration"}
+{
+  "feature_directory": "specs/032-hitl-event-driven"
+}

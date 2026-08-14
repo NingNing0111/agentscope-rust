@@ -7,12 +7,12 @@ repository.workspace = true
 
 [dependencies]
 agent_scope_embedding = { path = "../agent_scope_embedding" }
+agent_scope_utils = { path = "../agent_scope_utils" }
 agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_model = { path = "../agent_scope_model" }
 
 async-trait = "0.1"
 chrono.workspace = true
-regex = "1"
 schemars = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true

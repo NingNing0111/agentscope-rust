@@ -7,7 +7,7 @@ use agent_scope_agent::{
     Agent, AgentConfig, ContextConfig, PermissionContext, PermissionRule, ReActAgent, ReActConfig,
 };
 use agent_scope_event::AgentEvent;
-use agent_scope_message::{ToolCallBlock, ToolResultState, factory::user_msg};
+use agent_scope_message::{ToolCallBlock, ToolCallState, ToolResultState, factory::user_msg};
 use agent_scope_tool::{FunctionTool, ToolKit};
 use futures::StreamExt;
 
@@ -130,10 +130,21 @@ async fn ask_rule_emits_confirmation_and_blocks_execution() {
         AgentEvent::RequireUserConfirm(confirm)
             if confirm.tool_calls.len() == 1 && confirm.tool_calls[0].name == "dangerous_tool"
     )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AgentEvent::ToolResultEnd(end) if end.state == ToolResultState::Denied
-    )));
+    // Feature 032 (Python-aligned): Ask pauses the reply — the stream ends
+    // WITHOUT a denied tool result and without a ReplyEnd, so the host can
+    // resume with a UserConfirmResultEvent.
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ToolResultEnd(end) if end.state == ToolResultState::Denied)),
+        "暂停时不应喂 denied 给模型"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ReplyEnd(_))),
+        "暂停时不应有 ReplyEnd"
+    );
 }
 
 #[tokio::test]
@@ -156,7 +167,7 @@ async fn allow_rule_executes_tool() {
 }
 
 #[tokio::test]
-async fn ask_rule_blocks_execution_in_batch_reply_until_external_retry() {
+async fn ask_rule_blocks_execution_in_batch_reply_by_pausing() {
     let calls = Arc::new(AtomicUsize::new(0));
     let agent = agent_with_scripted_permission(
         PermissionRule::ask("dangerous_tool"),
@@ -176,22 +187,40 @@ async fn ask_rule_blocks_execution_in_batch_reply_until_external_retry() {
         .await
         .unwrap();
 
+    // Feature 032 (Python-aligned): batch Ask pauses the reply — the tool is
+    // NOT executed and NO denied result is fed back; the tool call stays
+    // `asking` in context so the host can resume with a UserConfirmResultEvent.
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let state = agent.state();
-    assert!(state.context.iter().any(|msg| {
-        msg.content.iter().any(|block| {
-            matches!(
-                block,
-                agent_scope_message::ContentBlock::ToolResult(result)
-                    if result.state == ToolResultState::Denied
-            )
-        })
-    }));
+    assert!(
+        !state.context.iter().any(|msg| {
+            msg.content.iter().any(|block| {
+                matches!(
+                    block,
+                    agent_scope_message::ContentBlock::ToolResult(result)
+                        if result.state == ToolResultState::Denied
+                )
+            })
+        }),
+        "batch Ask 不应喂 denied tool_result"
+    );
+    assert!(
+        state.context.iter().any(|msg| {
+            msg.content.iter().any(|block| {
+                matches!(
+                    block,
+                    agent_scope_message::ContentBlock::ToolCall(tc)
+                        if tc.state == ToolCallState::Asking
+                )
+            })
+        }),
+        "batch Ask 应把 tool_call 置为 asking"
+    );
     assert_eq!(reply.name, "assistant");
 }
 
 #[tokio::test]
-async fn ask_rule_streaming_emits_confirmation_and_denied_without_internal_wait() {
+async fn ask_rule_streaming_emits_confirmation_and_pauses_without_internal_wait() {
     let calls = Arc::new(AtomicUsize::new(0));
     let mut chunk = agent_scope_model::ChatResponse::default();
     chunk
@@ -238,10 +267,19 @@ async fn ask_rule_streaming_emits_confirmation_and_denied_without_internal_wait(
         AgentEvent::RequireUserConfirm(confirm)
             if confirm.tool_calls.len() == 1 && confirm.tool_calls[0].name == "dangerous_tool"
     )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AgentEvent::ToolResultEnd(end) if end.state == ToolResultState::Denied
-    )));
+    // Feature 032: Ask pauses the streaming reply — no denied result, no ReplyEnd.
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ToolResultEnd(end) if end.state == ToolResultState::Denied)),
+        "暂停时不应喂 denied 给模型"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ReplyEnd(_))),
+        "暂停时不应有 ReplyEnd"
+    );
 }
 
 #[tokio::test]

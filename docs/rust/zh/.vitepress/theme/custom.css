@@ -1,0 +1,60 @@
+.as-callout {
+  margin: 1rem 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--vp-c-divider);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft);
+}
+
+.as-note { border-left-color: var(--vp-c-brand-1); }
+.as-tip { border-left-color: var(--vp-c-tip-1); }
+.as-callout-label { display: block; margin-bottom: 0.35rem; color: var(--vp-c-text-1); }
+.as-callout-content > :first-child { margin-top: 0; }
+.as-callout-content > :last-child { margin-bottom: 0; }
+
+.as-card-group {
+  display: grid;
+  grid-template-columns: repeat(var(--as-card-cols, 1), minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.as-card {
+  display: block;
+  padding: 1rem;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  color: var(--vp-c-text-1);
+  background: var(--vp-c-bg-soft);
+}
+
+.as-card-link { text-decoration: none; transition: border-color 0.2s, background-color 0.2s; }
+.as-card-link:hover { border-color: var(--vp-c-brand-1); background: var(--vp-c-bg-elv); }
+.as-card-link:focus-visible,
+.as-accordion-button:focus-visible { outline: 3px solid var(--vp-c-brand-1); outline-offset: 3px; }
+.as-card-icon { display: block; color: var(--vp-c-brand-1); font-size: 0.85rem; }
+.as-card-title { display: block; margin-top: 0.25rem; font-size: 1.05rem; }
+.as-card-content { margin-top: 0.5rem; color: var(--vp-c-text-2); }
+.as-card-content > :first-child { margin-top: 0; }
+.as-card-content > :last-child { margin-bottom: 0; }
+.as-card-cta { display: block; margin-top: 0.75rem; color: var(--vp-c-brand-1); font-weight: 600; }
+
+.as-badge { display: inline-flex; align-items: center; border-radius: 999px; font-weight: 600; line-height: 1; vertical-align: middle; }
+.as-badge-sm { padding: 0.2rem 0.45rem; font-size: 0.75rem; }
+.as-badge-md { padding: 0.3rem 0.6rem; font-size: 0.85rem; }
+.as-badge-green { color: var(--vp-c-tip-1); background: var(--vp-c-tip-soft); }
+.as-badge-blue { color: var(--vp-c-brand-1); background: var(--vp-c-brand-soft); }
+.as-badge-amber { color: var(--vp-c-warning-1); background: var(--vp-c-warning-soft); }
+.as-badge-gray { color: var(--vp-c-text-2); background: var(--vp-c-default-soft); }
+
+.as-accordion-group { margin: 1rem 0; border-top: 1px solid var(--vp-c-divider); }
+.as-accordion { border-bottom: 1px solid var(--vp-c-divider); }
+.as-accordion-button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 0; border: 0; color: var(--vp-c-text-1); background: transparent; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.as-accordion-panel { padding: 0 0 1rem; color: var(--vp-c-text-2); }
+.as-accordion-panel > :first-child { margin-top: 0; }
+.as-accordion-panel > :last-child { margin-bottom: 0; }
+
+@media (max-width: 640px) {
+  .as-card-group { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "agentscope-rust-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "docs:dev": "vitepress dev docs/rust/zh",
+    "docs:build": "vitepress build docs/rust/zh",
+    "docs:preview": "vitepress preview docs/rust/zh --host 127.0.0.1",
+    "docs:check": "node scripts/docs/check-docs.mjs",
+    "docs:check-built": "node scripts/docs/check-built-site.mjs",
+    "docs:check-examples": "node scripts/docs/check-examples.mjs",
+    "test:docs": "node --test tests/docs/*.test.mjs",
+    "test:docs:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.54.2",
+    "vitepress": "1.6.4",
+    "vue": "3.5.18"
+  }
+}

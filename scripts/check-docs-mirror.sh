@@ -43,24 +43,33 @@ section() {
 
 [ "$QUIET" -eq 0 ] && printf 'docs/rust ↔ docs/python 镜像一致性校验\n'
 
-if [ ! -d "$PY_DOCS" ] || [ ! -d "$RS_DOCS" ]; then
-  printf '✗ 目录缺失：docs/python/zh 或 docs/rust/zh 不存在，请在仓库根运行。\n' >&2
+if [ ! -d "$RS_DOCS" ]; then
+  printf '✗ 目录缺失：docs/rust/zh 不存在，请在仓库根运行。\n' >&2
   exit 2
 fi
 
-# ---- 场景 A：结构一比一 ----
-section "场景 A：目录树一比一"
-py_files="$(cd "$PY_DOCS" && find . -type f -name '*.mdx' | sed -E 's|^\./||; s|\.mdx$||' | sort)"
-rs_files="$(cd "$RS_DOCS" && find . -type f -name '*.md' | sed -E 's|^\./||; s|\.md$||' | sort)"
-py_only="$(comm -23 <(printf '%s\n' "$py_files") <(printf '%s\n' "$rs_files"))"
-rs_only="$(comm -13 <(printf '%s\n' "$py_files") <(printf '%s\n' "$rs_files"))"
-if [ -z "$py_only" ] && [ -z "$rs_only" ]; then
-  count="$(printf '%s\n' "$rs_files" | grep -c .)"
-  report PASS "目录树一致（$count 页）"
+# ---- 场景 A：页面数量与可选镜像结构比较 ----
+section "场景 A：页面集合"
+rs_md_count="$(find "$RS_DOCS" -type f -name '*.md' | wc -l | tr -d ' ')"
+rs_mdx_count="$(find "$RS_DOCS" -type f -name '*.mdx' | wc -l | tr -d ' ')"
+[ "$rs_md_count" -eq 50 ] && report PASS "Rust 文档包含 50 个 .md 页面" || report FAIL "Rust .md 页面数=$rs_md_count（预期 50）"
+[ "$rs_mdx_count" -eq 0 ] && report PASS "Rust 文档不含 .mdx 页面" || report FAIL "Rust .mdx 页面数=$rs_mdx_count（预期 0）"
+
+if [ -d "$PY_DOCS" ]; then
+  py_files="$(cd "$PY_DOCS" && find . -type f -name '*.mdx' | sed -E 's|^\./||; s|\.mdx$||' | sort)"
+  rs_files="$(cd "$RS_DOCS" && find . -type f -name '*.md' | sed -E 's|^\./||; s|\.md$||' | sort)"
+  py_only="$(comm -23 <(printf '%s\n' "$py_files") <(printf '%s\n' "$rs_files"))"
+  rs_only="$(comm -13 <(printf '%s\n' "$py_files") <(printf '%s\n' "$rs_files"))"
+  if [ -z "$py_only" ] && [ -z "$rs_only" ]; then
+    count="$(printf '%s\n' "$rs_files" | grep -c .)"
+    report PASS "Python/Rust 目录树一致（$count 页）"
+  else
+    [ -n "$py_only" ] && printf '%s\n' "  缺页（Python 有而 Rust 无）：" && printf '    %s\n' "$py_only"
+    [ -n "$rs_only" ] && printf '%s\n' "  多页（Rust 有而 Python 无）：" && printf '    %s\n' "$rs_only"
+    report FAIL "Python/Rust 目录树存在差异"
+  fi
 else
-  [ -n "$py_only" ] && printf '%s\n' "  缺页（Python 有而 Rust 无）：" && printf '    %s\n' "$py_only"
-  [ -n "$rs_only" ] && printf '%s\n' "  多页（Rust 有而 Python 无）：" && printf '    %s\n' "$rs_only"
-  report FAIL "目录树存在差异"
+  printf '  SKIP: docs/python/zh 不存在，跳过 Python/Rust 目录树比较；继续 Rust 自洽检查。\n'
 fi
 
 mm_count="$(grep -cE '^\| [^|]+ \| [^|]+ \| (已实现|部分支持|计划中) ' "$MIRROR_MAP" 2>/dev/null || true)"

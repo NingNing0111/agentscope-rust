@@ -41,4 +41,4 @@ let config = AgentConfig::builder()
 
 ## 完整示例
 
-见 [`examples/agent`](../../../../examples/agent/)，其系统提示演示了任务工具的可用性。
+见 [`examples/agent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/agent/)，其系统提示演示了任务工具的可用性。

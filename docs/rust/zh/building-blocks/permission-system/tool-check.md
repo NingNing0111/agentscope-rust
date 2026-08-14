@@ -31,4 +31,4 @@ fn is_read_only(tool: &dyn Tool) -> bool {
 
 ## 完整示例
 
-见 [`examples/tool`](../../../../../examples/tool/) 与 [`examples/mcp`](../../../../../examples/mcp/)，其中打印每个工具的 `is_read_only()`。
+见 [`examples/tool`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/tool/) 与 [`examples/mcp`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/mcp/)，其中打印每个工具的 `is_read_only()`。

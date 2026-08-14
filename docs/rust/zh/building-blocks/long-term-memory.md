@@ -60,4 +60,4 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
 
 ## 完整示例
 
-见 [`examples/memory`](../../../../examples/memory/)（`cargo run -p memory`），演示 `FileMemory` 的写入 / 列出 / 读取 / 删除，无需模型凭据。
+见 [`examples/memory`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/memory/)（`cargo run -p memory`），演示 `FileMemory` 的写入 / 列出 / 读取 / 删除，无需模型凭据。

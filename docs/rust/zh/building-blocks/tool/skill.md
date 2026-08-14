@@ -36,4 +36,4 @@ for skill in &skills {
 
 ## 完整示例
 
-见 [`examples/skill`](../../../../../examples/skill/)（`cargo run -p skill`），临时创建一个 `SKILL.md` 并用 `LocalSkillLoader` 加载，无需模型凭据。
+见 [`examples/skill`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/skill/)（`cargo run -p skill`），临时创建一个 `SKILL.md` 并用 `LocalSkillLoader` 加载，无需模型凭据。

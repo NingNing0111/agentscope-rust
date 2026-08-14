@@ -50,8 +50,8 @@ fi
 
 # ---- 场景 A：结构一比一 ----
 section "场景 A：目录树一比一"
-py_files="$(cd "$PY_DOCS" && find . -type f | sed 's|^\./||' | sort)"
-rs_files="$(cd "$RS_DOCS" && find . -type f | sed 's|^\./||' | sort)"
+py_files="$(cd "$PY_DOCS" && find . -type f -name '*.mdx' | sed -E 's|^\./||; s|\.mdx$||' | sort)"
+rs_files="$(cd "$RS_DOCS" && find . -type f -name '*.md' | sed -E 's|^\./||; s|\.md$||' | sort)"
 py_only="$(comm -23 <(printf '%s\n' "$py_files") <(printf '%s\n' "$rs_files"))"
 rs_only="$(comm -13 <(printf '%s\n' "$py_files") <(printf '%s\n' "$rs_files"))"
 if [ -z "$py_only" ] && [ -z "$rs_only" ]; then
@@ -73,8 +73,8 @@ fi
 # ---- 场景 B：状态块与无伪兼容 ----
 section "场景 B：状态块 + 计划中页无 Rust"
 
-# 收集全部 mdx（zh 下所有深度）
-all_mdx="$(cd "$RS_DOCS" && find . -name "*.mdx" | sort)"
+# 收集全部页面（zh 下所有深度）
+all_pages="$(cd "$RS_DOCS" && find . -name "*.md" | sort)"
 
 missing_status=0
 rust_in_planned=0
@@ -90,7 +90,7 @@ while IFS= read -r rel; do
     printf '  计划中页含 Rust 代码: %s\n' "$rel"
     rust_in_planned=$((rust_in_planned + 1))
   fi
-done <<< "$all_mdx"
+done <<< "$all_pages"
 [ "$missing_status" -eq 0 ] && report PASS "全部页面含状态块" || report FAIL "$missing_status 页缺状态块"
 [ "$rust_in_planned" -eq 0 ] && report PASS "计划中页无 Rust 代码块" || report FAIL "$rust_in_planned 个计划中页含 Rust 代码"
 
@@ -110,7 +110,7 @@ while IFS= read -r rel; do
   grep -oE '\]\([.][^)]*\)' "$f" | sed -E 's/^\]\(//; s/\)$//' | sort -u | while read -r link; do
     printf '%s\t%s\n' "$f" "$link"
   done
-done <<< "$all_mdx" > "$links_tmp"
+done <<< "$all_pages" > "$links_tmp"
 
 dead_count=0
 if command -v python3 >/dev/null 2>&1; then
@@ -131,14 +131,9 @@ else:
 if os.path.isdir(t):
     print(os.path.normpath(t))
     sys.exit(0)
-# 无扩展名：先试 .mdx，再试 .md
+# 无扩展名：解析为 .md
 if not os.path.splitext(t)[1]:
-    if os.path.exists(t + '.mdx'):
-        t = t + '.mdx'
-    elif os.path.exists(t + '.md'):
-        t = t + '.md'
-    else:
-        t = t + '.mdx'
+    t = t + '.md'
 print(os.path.normpath(t))
 PY
 )"

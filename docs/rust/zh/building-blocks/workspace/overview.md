@@ -52,7 +52,7 @@ let config = AgentConfig::builder()
 
 ## 完整示例
 
-见 [`examples/workspace`](../../../../../examples/workspace/)（`cargo run -p workspace`），演示工作空间初始化、内置工具发现与命令执行，无需模型凭据。
+见 [`examples/workspace`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/workspace/)（`cargo run -p workspace`），演示工作空间初始化、内置工具发现与命令执行，无需模型凭据。
 
 ## 沙箱执行
 
@@ -60,18 +60,18 @@ let config = AgentConfig::builder()
 
 > **边界**：Rust 沙箱为**本地隔离**，非 Docker 容器；cpu/memory 资源限制在本地后端**不可强制**（Docker / E2B / K8s 沙箱为「计划中」）。
 
-沙箱示例见 [`examples/sandbox`](../../../../../examples/sandbox/)（`cargo run -p sandbox`），演示命令执行、路径防护与 CapabilityReport，无需模型凭据。
+沙箱示例见 [`examples/sandbox`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/sandbox/)（`cargo run -p sandbox`），演示命令执行、路径防护与 CapabilityReport，无需模型凭据。
 
 ## 下一步
 
-<CardGroup cols={2}>
-  <Card title="管理资源" icon="folder" href="/versions/0.1.0/zh/building-blocks/workspace/manage-resources">
+<CardGroup :cols="2">
+  <Card title="管理资源" icon="folder" href="/building-blocks/workspace/manage-resources">
     workdir、技能、MCP 配置与多租户管理。
   </Card>
-  <Card title="运行工作空间" icon="play" href="/versions/0.1.0/zh/building-blocks/workspace/run-workspace">
+  <Card title="运行工作空间" icon="play" href="/building-blocks/workspace/run-workspace">
     在受控环境执行命令与文件操作。
   </Card>
-  <Card title="MCP Gateway" icon="plug" href="/versions/0.1.0/zh/building-blocks/workspace/mcp-gateway">
+  <Card title="MCP Gateway" icon="plug" href="/building-blocks/workspace/mcp-gateway">
     MCP 客户端的接入方式。
   </Card>
 </CardGroup>

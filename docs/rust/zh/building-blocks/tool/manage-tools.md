@@ -35,4 +35,4 @@ let visible = toolkit.is_tool_visible("calculator"); // 某工具当前是否可
 
 ## 完整示例
 
-见 [`examples/tool`](../../../../../examples/tool/)，演示 ToolKit 注册、schema 输出与工具调用。
+见 [`examples/tool`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/tool/)，演示 ToolKit 注册、schema 输出与工具调用。

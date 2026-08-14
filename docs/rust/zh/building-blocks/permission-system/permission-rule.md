@@ -37,4 +37,4 @@ perm.add_rule(PermissionRule::ask("Write*"));
 
 ## 完整示例
 
-见 [`examples/agent`](../../../../../examples/agent/)，演示 allow 规则 + 流式确认事件。
+见 [`examples/agent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/agent/)，演示 allow 规则 + 流式确认事件。

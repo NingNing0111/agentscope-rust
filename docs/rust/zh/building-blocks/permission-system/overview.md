@@ -47,14 +47,14 @@ let config = agent_scope_agent::AgentConfig::builder()
 
 ## 下一步
 
-<CardGroup cols={2}>
-  <Card title="权限模式" icon="toggle" href="/versions/0.1.0/zh/building-blocks/permission-system/permission-mode">
+<CardGroup :cols="2">
+  <Card title="权限模式" icon="toggle" href="/building-blocks/permission-system/permission-mode">
     五种全局策略的适用场景。
   </Card>
-  <Card title="权限规则" icon="rule" href="/versions/0.1.0/zh/building-blocks/permission-system/permission-rule">
+  <Card title="权限规则" icon="rule" href="/building-blocks/permission-system/permission-rule">
     为特定工具与调用编写 allow/deny/ask 规则。
   </Card>
-  <Card title="工具内置检查" icon="shield" href="/versions/0.1.0/zh/building-blocks/permission-system/tool-check">
+  <Card title="工具内置检查" icon="shield" href="/building-blocks/permission-system/tool-check">
     工具运行时的只读判定与危险路径保护。
   </Card>
 </CardGroup>

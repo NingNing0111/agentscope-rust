@@ -12,7 +12,7 @@ description: "智能体通信与流式数据传输"
 - **消息** — 智能体间通信与上下文持久化的基本单元。
 - **事件** — 前后端交互与流式传输的基本单元，支持人工介入（Human-in-the-loop）场景。
 
-运行示例见 [`examples/chat`](../../../../examples/chat/)（`cargo run -p chat -- --prompt "..."`），它逐类型消费一次 `reply_stream` 产生的所有事件。
+运行示例见 [`examples/chat`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/chat/)（`cargo run -p chat -- --prompt "..."`），它逐类型消费一次 `reply_stream` 产生的所有事件。
 
 ## 消息
 
@@ -100,4 +100,4 @@ while let Some(event) = stream.next().await {
 }
 ```
 
-完整的事件分发写法见 [`examples/chat/src/main.rs`](../../../../examples/chat/src/main.rs)。
+完整的事件分发写法见 [`examples/chat/src/main.rs`](https://github.com/NingNing0111/agentscope-rust/blob/master/examples/chat/src/main.rs)。

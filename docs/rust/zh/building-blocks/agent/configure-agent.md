@@ -45,4 +45,4 @@ let agent = ReActAgent::new(agent_config, ReActConfig::default(), ContextConfig:
 
 ## 完整示例
 
-见 [`examples/agent`](../../../../../examples/agent/)，演示模型 + 工具 + 权限规则 + 中断的组装。
+见 [`examples/agent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/agent/)，演示模型 + 工具 + 权限规则 + 中断的组装。

@@ -6,7 +6,7 @@ AgentScope Rust（`agent_scope_*` crates）的中文使用文档。目录结构 
 
 - **镜像源**: `docs/python`（Mintlify，版本路径 `2.0.7dev`）
 - **Rust 兼容基线**: AgentScope Python **v2.0.5**（commit `27b6a0d2a2afedf53462c9a2add33932d54b2d20`）
-- **站内链接版本号**: `/versions/0.1.0/zh/...`（与 `Cargo.toml` `workspace.package.version` 一致）
+- **站内路由**: 文档内容使用站点根路由；部署前缀由 VitePress `base` 注入
 
 > `docs/python` 为 2.0.7dev 文档，Rust 兼容基线锁定 v2.0.5。2.0.7dev 新增而 v2.0.5/Rust 未实现的能力，在对应页面标注「计划中」。**这是有意的诚实标注，不是文档缺陷**——它保证每个页面的内容都是真实可用的，而非伪造（宪法 §5）。
 
@@ -24,12 +24,22 @@ AgentScope Rust（`agent_scope_*` crates）的中文使用文档。目录结构 
 
 ## 内容导航
 
-- **[index](zh/index.mdx)** — 索引入口，能力总览
-- **[quickstart](zh/quickstart.mdx)** — 快速上手，30 分钟跑起第一个 Agent
+- **[index](zh/index.md)** — 索引入口，能力总览
+- **[quickstart](zh/quickstart.md)** — 快速上手，30 分钟跑起第一个 Agent
 - **building-blocks/** — 各能力模块：agent / tool / model / memory / rag / workspace / sandbox / middleware / permission-system / context / message-and-event / plan
 - **deploy/** — 服务化部署能力（多数为「计划中」）
 - **others/** — change-log、faq
-- **[release-notes](zh/release-notes.mdx)** — 版本历史
+- **[release-notes](zh/release-notes.md)** — 版本历史
+
+## 文档站开发
+
+仅 `docs/rust/zh/**/*.md` 会作为公开页面发布；`docs/rust/README.md`、`STATUS-BLOCK.md` 与 `mirror-map.md` 是仓库维护文件，不进入站点。
+
+```bash
+npm run docs:dev
+npm run docs:check
+npm run docs:build
+```
 
 ## 示例
 

@@ -33,4 +33,4 @@ println!("{}", String::from_utf8_lossy(&out.stdout));
 
 ## 完整示例
 
-见 [`examples/workspace`](../../../../../examples/workspace/)（`cargo run -p workspace`），演示命令执行与内置工具发现。
+见 [`examples/workspace`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/workspace/)（`cargo run -p workspace`），演示命令执行与内置工具发现。

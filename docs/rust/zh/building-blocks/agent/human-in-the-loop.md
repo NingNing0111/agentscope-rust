@@ -78,4 +78,4 @@ if let Some(confirm) = confirm {
 
 ## 完整示例
 
-见 [`examples/human-in-the-loop`](../../../../../examples/human-in-the-loop/)（`cargo run -p human-in-the-loop`），完整演示暂停-确认-恢复闭环：`ask` 规则触发 `RequireUserConfirmEvent` → 宿主在 stdin 询问用户 y/n/a → `y` 以 `confirmed=true` 恢复执行、`n` 以 `confirmed=false` 拒绝、`a` 携带 allow 规则采纳进引擎（此后不再询问）。同一 agent 实例贯穿整个会话，**不截断历史、不重建 agent**。
+见 [`examples/human-in-the-loop`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/human-in-the-loop/)（`cargo run -p human-in-the-loop`），完整演示暂停-确认-恢复闭环：`ask` 规则触发 `RequireUserConfirmEvent` → 宿主在 stdin 询问用户 y/n/a → `y` 以 `confirmed=true` 恢复执行、`n` 以 `confirmed=false` 拒绝、`a` 携带 allow 规则采纳进引擎（此后不再询问）。同一 agent 实例贯穿整个会话，**不截断历史、不重建 agent**。

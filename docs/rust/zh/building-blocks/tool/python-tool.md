@@ -53,4 +53,4 @@ async fn main() -> anyhow::Result<()> {
 
 ## 完整示例
 
-见 [`examples/tool`](../../../../../examples/tool/)（`cargo run -p tool`），演示 `FunctionTool` 注册、ToolKit schema 输出与直接调用，无需模型凭据。
+见 [`examples/tool`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/tool/)（`cargo run -p tool`），演示 `FunctionTool` 注册、ToolKit schema 输出与直接调用，无需模型凭据。

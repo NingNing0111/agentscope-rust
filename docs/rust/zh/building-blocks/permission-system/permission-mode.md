@@ -39,4 +39,4 @@ let bypass = PermissionContext::new(PermissionMode::Bypass);
 
 ## 完整示例
 
-见 [`examples/agent`](../../../../../examples/agent/)，演示 `PermissionMode::Default` + allow 规则的组装。
+见 [`examples/agent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/agent/)，演示 `PermissionMode::Default` + allow 规则的组装。

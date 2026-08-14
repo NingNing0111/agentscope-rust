@@ -37,7 +37,7 @@ export DASHSCOPE_API_KEY="sk-your-key"
 
 ## 第一个智能体
 
-完整可运行的示例位于 [`examples/quickstart`](../../../examples/quickstart/)，运行方式：
+完整可运行的示例位于 [`examples/quickstart`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/quickstart/)，运行方式：
 
 ```bash
 cargo run -p quickstart -- --prompt "你好，请用一句话介绍你自己。"

@@ -61,4 +61,4 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
 
 ## 完整示例
 
-见 [`examples/rag`](../../../../examples/rag/)（`cargo run -p rag`），构建知识库并运行一个基于知识库回答的 Agent（需要 `DASHSCOPE_API_KEY`）。
+见 [`examples/rag`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/rag/)（`cargo run -p rag`），构建知识库并运行一个基于知识库回答的 Agent（需要 `DASHSCOPE_API_KEY`）。

@@ -55,4 +55,4 @@ let manager = WorkspaceManager::new(
 
 ## 完整示例
 
-见 [`examples/workspace`](../../../../../examples/workspace/)。
+见 [`examples/workspace`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/workspace/)。

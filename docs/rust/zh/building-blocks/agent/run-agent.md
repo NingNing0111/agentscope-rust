@@ -97,4 +97,4 @@ let agent = ReActAgent::build(config, ReActConfig::default(), ContextConfig::def
 
 ## 完整示例
 
-见 [`examples/chat`](../../../../../examples/chat/) 与 [`examples/agent`](../../../../../examples/agent/)。
+见 [`examples/chat`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/chat/) 与 [`examples/agent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/agent/)。

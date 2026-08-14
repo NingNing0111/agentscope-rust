@@ -42,17 +42,17 @@ toolkit.register(FunctionTool::new("calculator", "Evaluate a math expression.", 
 
 每种能力来源都有独立页面介绍：
 
-<CardGroup cols={2}>
-  <Card title="函数工具" icon="code" href="/versions/0.1.0/zh/building-blocks/tool/python-tool">
+<CardGroup :cols="2">
+  <Card title="函数工具" icon="code" href="/building-blocks/tool/python-tool">
     内置工具、自定义工具、函数包装与工具中间件。
   </Card>
-  <Card title="MCP" icon="plug" href="/versions/0.1.0/zh/building-blocks/tool/mcp">
+  <Card title="MCP" icon="plug" href="/building-blocks/tool/mcp">
     接入 MCP 服务并使用其工具。
   </Card>
-  <Card title="Skill" icon="book-open" href="/versions/0.1.0/zh/building-blocks/tool/skill">
+  <Card title="Skill" icon="book-open" href="/building-blocks/tool/skill">
     用 Markdown 指令集拓展智能体能力。
   </Card>
-  <Card title="元工具" icon="toggle-on" href="/versions/0.1.0/zh/building-blocks/tool/manage-tools">
+  <Card title="元工具" icon="toggle-on" href="/building-blocks/tool/manage-tools">
     让智能体在运行时激活或停用工具组。
   </Card>
 </CardGroup>

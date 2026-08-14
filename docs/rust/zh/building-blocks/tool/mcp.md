@@ -57,7 +57,7 @@ ws.disconnect_mcp("my-server").await?;
 
 ## 完整示例
 
-见 [`examples/mcp`](../../../../../examples/mcp/)：
+见 [`examples/mcp`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/mcp/)：
 
 ```bash
 # 列出任意 stdio MCP server 的工具

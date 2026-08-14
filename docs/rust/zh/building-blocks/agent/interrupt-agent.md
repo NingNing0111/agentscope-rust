@@ -63,4 +63,4 @@ while let Some(event) = stream.next().await {
 
 ## 完整示例
 
-见 [`examples/agent`](../../../../../examples/agent/)，演示延迟 `interrupt()` + 流式事件响应。
+见 [`examples/agent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/agent/)，演示延迟 `interrupt()` + 流式事件响应。

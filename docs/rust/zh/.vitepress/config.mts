@@ -11,8 +11,11 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: '首页', link: '/' },
-      { text: 'Agent', link: '/building-blocks/agent/overview' },
-      { text: 'FAQ', link: '/others/faq' }
+      { text: '快速开始', link: '/quickstart' },
+      { text: '构建模块', link: '/building-blocks/agent/overview' },
+      { text: '部署与集成', link: '/deploy/agent-service' },
+      { text: 'FAQ', link: '/others/faq' },
+      { text: 'GitHub', link: 'https://github.com/NingNing0111/agentscope-rust' }
     ],
     sidebar,
     search: { provider: 'local' },

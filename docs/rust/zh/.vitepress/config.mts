@@ -8,6 +8,14 @@ export default defineConfig({
   base: '/agentscope-rust/',
   cleanUrls: true,
   ignoreDeadLinks: false,
+  // 高对比度代码主题：默认 github-light/dark 的若干 token 与 .lang 标签
+  // 无法满足 WCAG AA 对比度（axe color-contrast serious）。
+  markdown: {
+    theme: {
+      light: 'github-light-high-contrast',
+      dark: 'github-dark-high-contrast'
+    }
+  },
   themeConfig: {
     nav: [
       { text: '首页', link: '/' },

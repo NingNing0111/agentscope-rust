@@ -1,3 +1,16 @@
+/* 无障碍对比度修正（axe color-contrast，WCAG AA） */
+/* 亮色主题主按钮：默认 #5672cd 对白字仅 4.48:1，改用品牌色 #3451b2（7.08:1）。
+   暗色主题按钮 #3e63dd 已满足要求，保持 .dark 覆盖不变。 */
+:root {
+  --vp-button-brand-bg: var(--vp-c-brand-1);
+}
+
+/* 代码块语言标签：默认 --vp-code-lang-color = text-3（亮色 #929295，2.87:1），
+   改用 text-2 保证可读性。 */
+.vp-doc div[class*='language-'] > span.lang {
+  color: var(--vp-c-text-2);
+}
+
 .as-callout {
   margin: 1rem 0;
   padding: 1rem 1.25rem;

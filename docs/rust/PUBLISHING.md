@@ -36,7 +36,7 @@ AgentScope Rust 中文文档站通过 `.github/workflows/docs.yml` 构建并发�
 
 ## 排障
 
-- **`deploy` job 失败且提示 Pages 未启用/未配置**：到 Settings → Pages 选择 GitHub Actions 为源，然后重新运行 `Documentation` workflow。不要为此改动 workflow 权限，也不要改为把构建产物推到分支。
+- **`deploy` job 失败且提示 Pages 未启用/未配置**：到 Settings → Pages 选择 GitHub Actions 为源，然后重新运行 `Documentation` workflow。不要为此改动 workflow 权限，也不要改为把构建产物推到分支。（`build` job 只读且不依赖 Pages 元数据，即使 Pages 未启用也能完成构建；Pages 未启用时失败只会出现在 `deploy` job。）
 - **PR 上 `build` 正常但 `deploy` skipped**：这是预期行为，PR 不部署。
 - **`docs:check` 失败**：多为页面集合不一致（mirror map / 文件系统 / sidebar 三方必须相等）、残留组件或旧路由；按 `ERROR:` 输出修复，不要通过放宽检查绕过。
 - **`docs:check-built` 失败**：确认是在 `docs:build` 之后运行；检查 dist 中是否有 `/agentscope-rust/` 前缀缺失或公开边界泄露。

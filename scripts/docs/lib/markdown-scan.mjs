@@ -59,30 +59,35 @@ export function extractLinks(markdown) {
   return links
 }
 
-const CARGO_PACKAGE = /\bcargo\b[^\n]*?\s-p\s+([A-Za-z0-9][A-Za-z0-9_-]*)/g
+// A cargo command block: starts at `cargo`, spans the logical line including
+// backslash line continuations; every `-p NAME` inside is a package reference.
+const CARGO_COMMAND = /\bcargo\b[^\\\n]*(?:\\\r?\n[^\\\n]*)*/g
 
 // Scans the raw markdown (fenced and inline code included) because cargo
 // commands inside doc code blocks are meant to be validated.
 export function extractCargoPackages(markdown) {
   const packages = new Set()
-  for (const match of markdown.matchAll(CARGO_PACKAGE)) {
-    packages.add(match[1])
+  for (const match of markdown.matchAll(CARGO_COMMAND)) {
+    for (const pkg of match[0].matchAll(/\s-p\s+([A-Za-z0-9][A-Za-z0-9_-]*)/g)) {
+      packages.add(pkg[1])
+    }
   }
   return [...packages].sort()
 }
 
-const REPOSITORY_URL = /https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/(blob|tree)\/master\/([^?#\s)'"]+)/gi
+const REPOSITORY_URL = /https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/(blob|tree)\/([^/?#\s]+)\/([^?#\s)'"]+)/gi
 
-// Extracts this repository's GitHub blob/tree URLs on the master ref and maps
-// them back to repository-root-relative paths (query/fragment stripped).
+// Extracts this repository's GitHub blob/tree URLs and maps them back to
+// repository-root-relative paths (query/fragment stripped). The ref is kept
+// so callers can enforce the master-only policy.
 export function extractRepositoryReferences(markdown) {
   const references = []
   for (const match of markdown.matchAll(REPOSITORY_URL)) {
     const owner = match[1].toLowerCase()
     const repository = match[2].toLowerCase()
     if (owner !== 'ningning0111' || repository !== 'agentscope-rust') continue
-    const path = decodeURIComponent(match[4].split(/[?#]/, 1)[0]).replace(/^\/+|\/+$/g, '')
-    references.push({ path, type: match[3] })
+    const path = decodeURIComponent(match[5].split(/[?#]/, 1)[0]).replace(/^\/+|\/+$/g, '')
+    references.push({ path, type: match[3], ref: match[4] })
   }
   return references
 }

@@ -75,6 +75,15 @@ async function checkPage({ content, docsRoot, pagePath, root }, errors) {
     errors.push(`${pagePath}: forbidden JSX attribute ${match[0]}`)
   }
 
+  // 路由政策也禁止出现在正文（不只是链接目标）。/agentscope-rust/ 的
+  // 前导排除符避免把 GitHub 仓库 URL 的路径段误判为部署前缀。
+  for (const match of scanned.matchAll(/\/versions\/0\.1\.0\/zh\//g)) {
+    errors.push(`${pagePath}: forbidden legacy route text ${match[0]}`)
+  }
+  for (const match of scanned.matchAll(/(?<![\w:./(-])\/agentscope-rust\/[^\s"'<>()]*/g)) {
+    errors.push(`${pagePath}: forbidden deployment prefix text ${match[0]}`)
+  }
+
   for (const link of extractLinks(content)) {
     const target = link.target
     if (target.includes('/versions/0.1.0/zh/')) {

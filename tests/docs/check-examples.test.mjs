@@ -47,28 +47,59 @@ test('extractCargoPackages deduplicates repeated package references', () => {
   )
 })
 
+test('extractCargoPackages follows backslash continuation lines', () => {
+  assert.deepEqual(
+    extractCargoPackages('cargo run \\\n  -p quickstart -- --prompt "hi"'),
+    ['quickstart']
+  )
+})
+
+test('extractCargoPackages captures every -p on a single command', () => {
+  assert.deepEqual(
+    extractCargoPackages('cargo run -p agent -p chat -- --prompt "x"'),
+    ['agent', 'chat']
+  )
+})
+
 test('extractRepositoryReferences extracts tree and blob master URLs', () => {
   const markdown = [
     '[Agent](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/agent)',
     '[Main](https://github.com/NingNing0111/agentscope-rust/blob/master/examples/chat/src/main.rs)'
   ].join('\n')
   assert.deepEqual(extractRepositoryReferences(markdown), [
-    { path: 'examples/agent', type: 'tree' },
-    { path: 'examples/chat/src/main.rs', type: 'blob' }
+    { path: 'examples/agent', type: 'tree', ref: 'master' },
+    { path: 'examples/chat/src/main.rs', type: 'blob', ref: 'master' }
   ])
+})
+
+test('extractRepositoryReferences reports non-master refs which the checker rejects', async () => {
+  assert.deepEqual(
+    extractRepositoryReferences(
+      '[Main](https://github.com/NingNing0111/agentscope-rust/blob/main/examples/chat/src/main.rs)'
+    ),
+    [{ path: 'examples/chat/src/main.rs', type: 'blob', ref: 'main' }]
+  )
+  const errors = await checkFixture({ pages: {
+    'index.md': '[Main](https://github.com/NingNing0111/agentscope-rust/blob/main/examples/chat/src/main.rs)'
+  } })
+  assert.ok(errors.some((error) =>
+    error.includes('index.md') &&
+    error.includes('non-master ref') &&
+    error.includes('main')
+  ))
 })
 
 test('extractRepositoryReferences matches owners and repositories case-insensitively', () => {
   assert.deepEqual(
     extractRepositoryReferences('[X](https://github.com/ningning0111/AGENTSCOPE-RUST/tree/master/examples/agent/)'),
-    [{ path: 'examples/agent', type: 'tree' }]
+    [{ path: 'examples/agent', type: 'tree', ref: 'master' }]
   )
 })
 
 test('extractRepositoryReferences strips fragments and queries from paths', () => {
   assert.deepEqual(
     extractRepositoryReferences('[X](https://github.com/NingNing0111/agentscope-rust/blob/master/examples/chat/src/main.rs#L10)'),
-    [{ path: 'examples/chat/src/main.rs', type: 'blob' }]
+    [{ path: 'examples/chat/src/main.rs', type: 'blob', ref: 'master' }]
   )
 })
 

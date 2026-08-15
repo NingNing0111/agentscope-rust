@@ -98,6 +98,28 @@ test('rejects legacy and deployment-prefixed content routes', async () => {
   assert.ok(errors.some((error) => error.includes('/agentscope-rust/')))
 })
 
+test('rejects legacy and base-prefix routes written as plain prose', async () => {
+  const errors = await checkFixture({ pages: {
+    'index.md': '旧路由见 /versions/0.1.0/zh/guide，部署前缀见 /agentscope-rust/quickstart',
+    'guide.md': '# Guide'
+  } })
+  assert.ok(errors.some((error) => error.includes('index.md') && error.includes('/versions/0.1.0/zh/')))
+  assert.ok(errors.some((error) => error.includes('index.md') && error.includes('/agentscope-rust/quickstart')))
+})
+
+test('does not flag agentscope-rust inside GitHub repository URLs', async () => {
+  const fixture = await createFixture({ pages: {
+    'index.md': '见 [源码](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/demo)',
+    'guide.md': '# Guide'
+  } })
+  try {
+    await mkdir(join(fixture.root, 'examples', 'demo'), { recursive: true })
+    assert.deepEqual(await runChecks(fixture), [])
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true })
+  }
+})
+
 test('rejects relative links that escape the docs root and preserves fragments in reports', async () => {
   const errors = await checkFixture({ pages: {
     'index.md': '[Private](../README.md#policy)',

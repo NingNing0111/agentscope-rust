@@ -35,8 +35,8 @@ export async function discoverExamplePackages(examplesRoot) {
   return names.sort()
 }
 
-function repositoryUrl({ path, type }) {
-  return `https://github.com/NingNing0111/agentscope-rust/${type}/master/${path}`
+function repositoryUrl({ path, type, ref }) {
+  return `https://github.com/NingNing0111/agentscope-rust/${type}/${ref}/${path}`
 }
 
 function cargoCommand(content, name) {
@@ -62,6 +62,11 @@ export async function runChecks({ root, docsRoot, packageNames }) {
     }
 
     for (const reference of extractRepositoryReferences(content)) {
+      if (reference.ref !== 'master') {
+        errors.push(
+          `${pagePath}: repository URL uses non-master ref ${reference.ref} for ${repositoryUrl(reference)}`
+        )
+      }
       if (!await exists(resolve(root, reference.path))) {
         errors.push(`${pagePath}: repository path does not exist for ${repositoryUrl(reference)}`)
       }

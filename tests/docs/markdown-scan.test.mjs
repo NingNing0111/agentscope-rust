@@ -39,10 +39,15 @@ test('extractComponents returns component names and attributes', () => {
   assert.deepEqual([...found.get('Badge')].sort(), ['color', 'size'])
 })
 
-test('extractComponents includes boolean attributes and ignores unknown components', () => {
+test('extractComponents includes boolean attributes and unknown components', () => {
   const found = extractComponents('<Accordion open title="A"><Unknown value="x" /></Accordion>')
   assert.deepEqual([...found.get('Accordion')].sort(), ['open', 'title'])
-  assert.equal(found.has('Unknown'), false)
+  assert.deepEqual([...found.get('Unknown')], ['value'])
+})
+
+test('extractComponents does not treat words inside quoted values as attributes', () => {
+  const found = extractComponents('<Accordion title="Does Rust support MCP and TTS?">Answer</Accordion>')
+  assert.deepEqual([...found.get('Accordion')], ['title'])
 })
 
 test('extractLinks finds markdown and component links', () => {

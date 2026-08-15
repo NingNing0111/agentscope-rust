@@ -1,13 +1,3 @@
-const COMPONENTS = new Set([
-  'Note',
-  'Tip',
-  'Card',
-  'CardGroup',
-  'Badge',
-  'Accordion',
-  'AccordionGroup'
-])
-
 export function stripCode(markdown) {
   const lines = markdown.split('\n')
   let fence = null
@@ -42,10 +32,9 @@ export function extractComponents(markdown) {
 
   for (const match of content.matchAll(tagPattern)) {
     const [, name, source = ''] = match
-    if (!COMPONENTS.has(name)) continue
 
     const attributes = found.get(name) ?? new Set()
-    const attributePattern = /(?:^|\s)([:@]?[A-Za-z_][\w:.-]*)(?=\s*=|\s|$)/g
+    const attributePattern = /(?:^|\s)([:@]?[A-Za-z_][\w:.-]*)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s]+))?/g
     for (const attribute of source.matchAll(attributePattern)) {
       attributes.add(attribute[1])
     }

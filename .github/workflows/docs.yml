@@ -1,0 +1,108 @@
+name: Documentation
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'docs/rust/zh/**'
+      - 'docs/rust/README.md'
+      - 'docs/rust/mirror-map.md'
+      - 'scripts/docs/**'
+      - 'scripts/check-docs-mirror.sh'
+      - 'tests/docs/**'
+      - 'playwright.config.mts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
+      - '.github/workflows/docs.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'docs/rust/zh/**'
+      - 'docs/rust/README.md'
+      - 'docs/rust/mirror-map.md'
+      - 'scripts/docs/**'
+      - 'scripts/check-docs-mirror.sh'
+      - 'tests/docs/**'
+      - 'playwright.config.mts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+# 最小权限：workflow 顶层仅 contents 只读；
+# 只有 deploy job 单独授予 pages: write 与 id-token: write。
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Check, build, and test docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Mirror map checks
+        run: scripts/check-docs-mirror.sh --quiet
+
+      - name: Unit tests
+        run: npm run test:docs
+
+      - name: Source documentation checks
+        run: npm run docs:check
+
+      - name: Example and repository reference checks
+        run: npm run docs:check-examples
+
+      - name: Build site
+        run: npm run docs:build
+
+      - name: Check built site
+        run: npm run docs:check-built
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser and accessibility tests
+        run: npm run test:docs:e2e
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/rust/zh/.vitepress/dist
+
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

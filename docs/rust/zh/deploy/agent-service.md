@@ -24,4 +24,4 @@ Rust 当前无 HTTP server（无 axum/actix 等依赖），因此 agent-service 
 ## 相关
 
 - 库级基础能力见对应的 building-blocks 页面。
-- 逐页状态对照见 `mirror-map.md`。
+- 各页面顶部状态块标注该能力的实现状态；仓库级逐页对照表为维护文件，不随站点发布。

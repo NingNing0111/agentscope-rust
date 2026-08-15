@@ -30,7 +30,7 @@ description: "关于 AgentScope Rust 的常见问题"
   </Accordion>
 
   <Accordion title="有控制台 / 前端吗？">
-    库级 console 模块未实现。仓库自带 `examples/pi-rust`（ratatui TUI + line REPL）作为可参考的终端交互示例。见 [控制台](../building-blocks/console)。
+    库级 console 模块未实现；终端交互参考实现已随示例体系重构移除。见 [控制台](../building-blocks/console)。
   </Accordion>
 
   <Accordion title="如何快速上手？">

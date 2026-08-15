@@ -12,18 +12,11 @@ description: "在终端快速测试和验证智能体行为（计划中）"
 ## Rust 侧现状
 
 - 库级 `console` 模块未实现。
-- 但仓库自带一个**可参考的终端交互实现**：`examples/pi-rust`（ratatui TUI + line REPL），基于 `ReActAgent` + 事件流构建，具备输入循环、工具确认、中断处理与消息渲染。它不是库 API，但展示了在 Rust 中构建终端交互的正确姿势。
-
-运行 pi-rust（TUI，需要真实 TTY）：
-
-```bash
-export DASHSCOPE_API_KEY=sk-your-key
-cargo run -p pi-rust -- --workdir .pi-rust --cwd .
-```
+- 终端交互参考实现 `examples/pi-rust`（ratatui TUI + line REPL）已随示例体系重构移除。如需终端交互，可基于 `examples/chat`（流式对话 + 事件分发）与 `AgentEvent` 事件流自行构建。
 
 ## 缺失范围
 
 | 能力 | Rust 现状 |
 |------|-----------|
 | 库级 console 模块（`launch_console` / `ConsoleRenderer`） | 未实现 |
-| 终端交互 | 仅示例 pi-rust 提供 |
+| 终端交互 | 无仓库内置示例；需基于事件流自行构建 |

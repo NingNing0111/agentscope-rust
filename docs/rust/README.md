@@ -33,13 +33,23 @@ AgentScope Rust（`agent_scope_*` crates）的中文使用文档。目录结构 
 
 ## 文档站开发
 
-仅 `docs/rust/zh/**/*.md` 会作为公开页面发布；`docs/rust/README.md`、`STATUS-BLOCK.md` 与 `mirror-map.md` 是仓库维护文件，不进入站点。
+仅 `docs/rust/zh/**/*.md` 会作为公开页面发布；`docs/rust/README.md`、`STATUS-BLOCK.md`、`mirror-map.md` 与 `PUBLISHING.md` 是仓库维护文件，不进入站点。站点生产地址：<https://ningning0111.github.io/agentscope-rust/>。
+
+### 常用命令
 
 ```bash
-npm run docs:dev
-npm run docs:check
-npm run docs:build
+npm run docs:dev            # 本地开发服务器
+npm run docs:check          # 源文档检查（页面集合/组件/路由/仓库路径）
+npm run docs:check-examples # 示例 package 与源码引用检查
+npm run docs:build          # 生产构建（输出 .vitepress/dist）
+npm run docs:check-built    # 构建产物检查（需先 docs:build）
+npm run test:docs           # Node 单元测试
+npm run test:docs:e2e       # Playwright 浏览器 + axe 无障碍测试（需先 docs:build）
 ```
+
+### 发布
+
+发布到 GitHub Pages 的流程、前置条件与排障见 [`PUBLISHING.md`](PUBLISHING.md)。PR 只检查与构建；`master` push 与手动触发（`workflow_dispatch`）会执行部署。
 
 ## 示例
 

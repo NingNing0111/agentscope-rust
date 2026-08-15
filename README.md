@@ -4,6 +4,11 @@
 
 当前可直接体验的完整交互式编码 Agent 位于 `examples/pi-rust`（ratatui TUI + ReActAgent + 工具 + 记忆 + Skills）。
 
+## 文档
+
+- [AgentScope Rust 中文文档](https://ningning0111.github.io/agentscope-rust/) — 中文文档站（VitePress，随 `master` 自动发布到 GitHub Pages）
+- [本地文档维护说明](docs/rust/README.md) — 文档结构、状态标注与本地构建/检查命令
+
 ## 特性一览
 
 - **Agent 编排**：`Agent` trait、`ReActAgent`（reasoning→acting 循环）、`Middleware` 管道、权限控制、`Planner`、`SubAgent`

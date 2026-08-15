@@ -58,3 +58,31 @@ export function extractLinks(markdown) {
 
   return links
 }
+
+const CARGO_PACKAGE = /\bcargo\b[^\n]*?\s-p\s+([A-Za-z0-9][A-Za-z0-9_-]*)/g
+
+// Scans the raw markdown (fenced and inline code included) because cargo
+// commands inside doc code blocks are meant to be validated.
+export function extractCargoPackages(markdown) {
+  const packages = new Set()
+  for (const match of markdown.matchAll(CARGO_PACKAGE)) {
+    packages.add(match[1])
+  }
+  return [...packages].sort()
+}
+
+const REPOSITORY_URL = /https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/(blob|tree)\/master\/([^?#\s)'"]+)/gi
+
+// Extracts this repository's GitHub blob/tree URLs on the master ref and maps
+// them back to repository-root-relative paths (query/fragment stripped).
+export function extractRepositoryReferences(markdown) {
+  const references = []
+  for (const match of markdown.matchAll(REPOSITORY_URL)) {
+    const owner = match[1].toLowerCase()
+    const repository = match[2].toLowerCase()
+    if (owner !== 'ningning0111' || repository !== 'agentscope-rust') continue
+    const path = decodeURIComponent(match[4].split(/[?#]/, 1)[0]).replace(/^\/+|\/+$/g, '')
+    references.push({ path, type: match[3] })
+  }
+  return references
+}

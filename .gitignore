@@ -8,6 +8,11 @@ release/
 *.log
 .env*
 .DS_Store
+# Node/VitePress toolchain
+node_modules/
+docs/rust/zh/.vitepress/dist/
+test-results/
+playwright-report/
 # personal tooling
 .claude/*
 !.claude/skills/

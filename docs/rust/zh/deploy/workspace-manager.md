@@ -4,7 +4,9 @@ description: "多租户工作空间的部署形态管理"
 ---
 
 <Note>
-**Rust 实现状态**: 部分支持（兼容等级 L2）。已支持：**库级多租户工作空间管理**（`WorkspaceManager`：按 ID 创建/获取、TTL 清理，`agent_scope_workspace::manager`）。尚未实现：服务化/远程部署形态的 `per_agent` / `per_session` / `per_user` 隔离策略与资源配额。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 部分支持。
+- 已支持：库级多租户工作空间管理（`WorkspaceManager`：按 key 创建/获取、TTL 清理，`agent_scope_workspace::manager`）。
+- 尚未实现：服务化/远程部署形态的 `per_agent` / `per_session` / `per_user` 隔离策略与资源配额。
 </Note>
 
 # 工作空间管理（部分支持）
@@ -15,7 +17,7 @@ description: "多租户工作空间的部署形态管理"
 
 | 能力 | Rust 状态 |
 |------|-----------|
-| 按 ID 创建 / 获取工作空间 | ✅ `WorkspaceManager::new` + `create` / `get` |
+| 按 key 创建 / 获取工作空间 | ✅ `WorkspaceManager::new` + `get`（get-or-create） |
 | 空闲 TTL 清理 | ✅ TTL 参数（`Duration`） |
 | per_agent / per_session / per_user 隔离策略 | ❌ 未实现 |
 | 远程 / 部署形态管理 | ❌ 未实现 |

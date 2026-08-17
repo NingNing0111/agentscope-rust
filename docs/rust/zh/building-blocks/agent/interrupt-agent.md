@@ -4,7 +4,7 @@ description: "干净地停止运行中的智能体，并从一致状态恢复"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。`ReActAgent::interrupt()` 置位中断 + 取消 token，并发出 `UserInterruptEvent`；同时支持以 `reply_stream_event(EventInput::Interrupt)` 注入中断事件（对齐 Python `_reply_impl` 的 `inputs`）。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。`ReActAgent::interrupt()` 置位中断标志 + 取消 token，并发出 `UserInterruptEvent`；同时支持以 `reply_stream_event(EventInput::Interrupt)` 注入中断事件。
 </Note>
 
 `ReActAgent` 基于显式中断标志 + 取消 token 实现中断机制，支持在模型推理或工具执行的任意阶段停止执行。中断之后，智能体的上下文保持一致状态，会话可以立即通过新的输入消息继续。
@@ -39,7 +39,7 @@ while let Some(event) = stream.next().await {
 
 ## 事件注入中断（Feature 032）
 
-除 `interrupt()` 方法外，还可向 `reply_stream_event` 注入 `EventInput::Interrupt` 以对齐 Python 的事件输入语义：
+除 `interrupt()` 方法外，还可向 `reply_stream_event` 注入 `EventInput::Interrupt`，用于从事件流一侧触发中断：
 
 ```rust
 use agent_scope_agent::event_input::EventInput;
@@ -56,10 +56,14 @@ while let Some(event) = stream.next().await {
 }
 ```
 
-中断语义与 Python 对齐：
+中断语义：
 
 - **有进行中回复 / 等待确认**：注入 `UserInterruptEvent` 后回复以 `ReplyEnd(finished_reason=INTERRUPTED)` 结束。
-- **无进行中回复**：静默 no-op（对齐 Python "session effectively idle" 语义）。
+- **无进行中回复**：静默 no-op（不产生任何副作用）。
+
+<Note>
+中断时返回给模型/上层的文本由 `ReActConfig.interruption_message` 决定，默认是 `"The execution was interrupted."`，可在构造时自定义。
+</Note>
 
 ## 完整示例
 

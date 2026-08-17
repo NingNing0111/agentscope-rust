@@ -4,7 +4,9 @@ description: "多智能体团队编排"
 ---
 
 <Note>
-**Rust 实现状态**: 部分支持（兼容等级 L3）。已支持：**库级多智能体委托**（`SubAgent` / `SubAgentRegistry` / `delegate_*` / `MultiAgentConversation`，`agent_scope_agent::subagent`）。尚未实现：服务级的完整 team 编排框架（leader 通过内置 `TeamCreate` / `AgentCreate` 等团队工具 spawn worker 并协调、跨会话消息路由）。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 部分支持。
+- 已支持：库级多智能体委托（`SubAgent` / `SubAgentRegistry` / `delegate_once` / `delegate_many` / `delegate_stream` / `MultiAgentConversation`，位于 `agent_scope_agent::subagent` 与 `agent_scope_agent::delegation`）。
+- 尚未实现：服务级的完整团队编排框架（leader 通过内置 `TeamCreate` / `AgentCreate` 等团队工具派生并协调 worker、跨会话消息路由）。
 </Note>
 
 # 智能体团队（部分支持）
@@ -16,13 +18,13 @@ description: "多智能体团队编排"
 | 能力 | Rust 状态 |
 |------|-----------|
 | 派生 SubAgent 会话 | ✅ `SubAgent` / `SubAgentRegistry` |
-| 委托任务并聚合结果 | ✅ `delegate_task` / `delegate_reasoning` 等 `delegate_*` |
+| 委托任务并聚合结果 | ✅ `delegate_once` / `delegate_many` / `delegate_stream` |
 | 多智能体对话 | ✅ `MultiAgentConversation` |
 | leader 内置团队工具（TeamCreate/AgentCreate） | ❌ 未实现 |
 | 跨会话消息路由（HintBlock team-message） | ❌ 未实现 |
 | 团队成员关系与 UI 渲染 | ❌ 未实现 |
 
-库级 SubAgent 委托的用法见 [子智能体](../building-blocks/agent/subagent)（SubAgent / SubAgentRegistry / delegate_*）。
+库级 SubAgent 委托的用法见 [子智能体](../building-blocks/agent/subagent)（`SubAgent` / `SubAgentRegistry` / `delegate_once` / `delegate_many` / `delegate_stream`）。
 
 ## 缺失范围
 

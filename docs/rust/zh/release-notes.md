@@ -11,11 +11,9 @@ description: "AgentScope Rust 的版本历史、新特性与变更，按模块�
 
 *发布于 2026-08-02。*
 
-兼容基线：AgentScope Python v2.0.5（commit `27b6a0d2a2afedf53462c9a2add33932d54b2d20`）。
-
 ### 基础层（Foundation）
 
-- **兼容性基准**：Python golden-snapshot 测试基础设施、能力矩阵、trace schema、JSON fixtures。
+- **兼容性基准**：golden-snapshot 测试基础设施、能力矩阵、trace schema、JSON fixtures。
 - **消息与内容块模型**：`Msg`、`ContentBlock`（Text / Thinking / ToolCall / ToolResult / Data / Hint / Unknown）、工厂函数、序列化往返测试。
 - **事件系统**：33 种 `AgentEvent`，覆盖回复生命周期、模型调用、流式块、工具执行、用户交互与控制事件。
 - **类型定义**：`ErrorInfo`、`ErrorType`、`ReplyFinishedReason`、`JsonValue`、`Embedding`。
@@ -24,7 +22,7 @@ description: "AgentScope Rust 的版本历史、新特性与变更，按模块�
 
 - **模型 API**：`ChatModel` trait、`ChatResponse`、`StreamAccumulator`、`Formatter`、`ModelCard`、`ToolChoice`、结构化输出。
 - **Provider 架构**：可插拔 Provider 设计，`DashScopeFormatter` 分离。
-- **DashScope Provider**：`DashScopeChatModel`、`DashScopeEmbeddingModel`，Qwen/Model Studio 模型，OpenAI 兼容端点，流式 SSE。
+- **DashScope Provider**：`DashScopeChatModel`、`DashScopeEmbeddingModel`，Qwen/Model Studio 模型，OpenAI 兼容端点，流式 SSE。（Feature 034 已迁移至 rig）
 
 ### 工具系统
 
@@ -36,7 +34,7 @@ description: "AgentScope Rust 的版本历史、新特性与变更，按模块�
 
 - **Agent 系统**：`Agent` trait、`ReActAgent` 实现、`Middleware`（9 个钩子点）、权限检查、中断处理。
 - **流式基础设施**：`reply_stream()`、`AgentEvent` 流、流式工具调用与思考块事件。
-- **事件驱动 HITL**：暂停-确认-恢复状态机（对齐 Python），`reply_stream_event` 接受三类事件输入（`UserConfirmResultEvent` / `ExternalExecutionResultEvent` / `UserInterruptEvent`），按 tool_call_id 精确匹配、支持多工具并发确认与 rules 采纳。
+- **事件驱动 HITL**：暂停-确认-恢复状态机，`reply_stream_event` 接受三类事件输入（`UserConfirmResultEvent` / `ExternalExecutionResultEvent` / `UserInterruptEvent`），按 tool_call_id 精确匹配、支持多工具并发确认与 rules 采纳。
 - **端事件内容**：流式结束事件携带累计内容，便于渲染。
 - **子 Agent**：`SubAgent`、委托模式、子 Agent 生命周期管理。
 - **任务规划**：内置任务规划工具 `TaskCreate`/`TaskList`/`TaskGet`/`TaskUpdate`（Feature 024，替代独立的 Planner）。

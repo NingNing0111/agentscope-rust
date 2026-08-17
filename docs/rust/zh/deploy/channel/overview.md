@@ -11,7 +11,15 @@ description: "通过 IM 平台与智能体交互"
 
 ## 能力概述
 
-channel 模块是 AgentScope 连接即时通讯平台的方式，`ChannelBase` 抽象平台，内置 `FeishuChannel` / `DiscordChannel` 实现，`ChannelGateway` 协调每个入站事件。
+渠道（Channel）是把智能体「接上」即时通讯（IM）平台的桥：用户在你的飞书或 Discord 群里发消息，消息经过渠道转成智能体能读懂的 `Msg`，智能体的回复再由渠道发回群里。这样一来，使用者不必打开专门的网页或终端，在平时用的聊天软件里就能直接对话。
+
+渠道层要解决的核心问题是**平台差异的屏蔽**：
+
+- `ChannelBase` 抽象出「一个 IM 平台」的通用行为（接收消息、发送消息、处理会话）；
+- 内置 `FeishuChannel` / `DiscordChannel` 等实现，各自封装对应平台的接入细节；
+- `ChannelGateway` 统一协调每个入站事件，把不同平台的请求转成一致的内部消息流。
+
+典型工作流：**IM 收到消息 → 渠道把消息转成 `Msg` → 送入智能体 → 智能体回复 → 渠道把回复发回 IM**。
 
 ## Rust 缺失范围
 

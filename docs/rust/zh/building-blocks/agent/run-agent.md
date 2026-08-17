@@ -4,7 +4,9 @@ description: "运行智能体，处理它的回复、上下文与状态"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。`reply` / `reply_stream` / `reply_stream_event` / `observe` 在 AgentScope Rust 中可用。**结构化输出**在 Agent 循环中为「部分支持」——模型层 `generate_structured_output` 已实现，但 `ReActAgent` 循环尚未直接接线。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 部分支持。
+- 已支持：`reply` / `reply_stream` / `reply_stream_event` / `observe` 四个核心行为，以及基于 `session_id` 的进程间状态持久化。
+- 尚未实现：`ReActAgent` 循环对结构化输出的直接接线——模型层的 `generate_structured_output` 已可用，但需由调用方直接使用模型层接口（见 [LLM](../model/llm)）。
 </Note>
 
 `Agent` trait 将智能体的行为抽象为一组接口：
@@ -46,7 +48,7 @@ while let Some(event) = stream.next().await {
 
 ### 事件输入（暂停-确认-恢复）
 
-当回复因工具确认（`RequireUserConfirmEvent`）或外部执行（`RequireExternalExecutionEvent`）而**暂停**时，可用 `reply_stream_event` 注入事件**恢复同一回复**——不新建 `ReplyStart`、保留暂停的 `reply_id`，对齐 Python `_reply_impl` 的 `inputs` 语义：
+当回复因工具确认（`RequireUserConfirmEvent`）或外部执行（`RequireExternalExecutionEvent`）而**暂停**时，可用 `reply_stream_event` 注入事件**恢复同一回复**——不新建 `ReplyStart`、保留暂停的 `reply_id`：
 
 ```rust
 use agent_scope_agent::event_input::EventInput;
@@ -68,7 +70,7 @@ let mut stream = agent.reply_stream_event(EventInput::Confirm(resume)).await?;
 
 ## 观察消息
 
-`observe` 将消息添加到上下文而不触发推理，常用于会话恢复：
+`observe` 将消息追加到上下文而不触发推理。它适合「只补充背景、不期待立即回应」的场景：比如把一段历史记录或外部系统推送的事实注入会话，让智能体在下一次 `reply` / `reply_stream` 时能参考这些信息。`observe(None)` 是 no-op：
 
 ```rust
 agent.observe(Some(vec![user_msg("user", "历史消息")?])).await?;
@@ -76,7 +78,7 @@ agent.observe(Some(vec![user_msg("user", "历史消息")?])).await?;
 
 ## 持久化状态
 
-设置 `session_id` 并让 `ReActAgent` 使用会话存储（默认 `JsonFileSessionStore`）即可在进程间恢复会话：
+设置 `session_id` 并让 `ReActAgent` 使用会话存储（默认 `JsonFileSessionStore`，落在 `sessions/` 目录下）即可在进程间恢复会话。`auto_persist` 默认 `true`，每次回复结束后自动把最新状态落盘；中断或取消的回复也会被持久化。设为 `false` 则完全不写存储：
 
 ```rust
 use agent_scope_agent::{AgentConfig, ReActAgent};

@@ -4,20 +4,20 @@ description: "根据智能体的部署方式选择合适的全局策略"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。五种 `PermissionMode` 在 AgentScope Rust 中可用。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。五种 `PermissionMode` 在 AgentScope Rust 中可用。
 </Note>
 
-权限模式是每次工具调用决策背后的全局策略：它决定哪些决策点生效，以及无人裁决的调用如何收尾。AgentScope Rust 支持五种模式：
+权限模式是每次工具调用决策背后的全局策略：它决定哪些决策点生效，以及没有任何规则命中时的兜底行为。AgentScope Rust 支持五种模式：
 
-| 模式（Rust 变体） | 行为 | 适用场景 |
-|-------------------|------|----------|
-| `Default` | 默认：未命中规则时允许（MVP 行为以规则为准） | 最安全，推荐默认值 |
-| `AcceptEdits` | 默认允许编辑操作；显式 deny/ask 规则仍生效 | 用户在场的活跃开发 |
-| `Explore` | 只读规划模式：未命中规则时拒绝调用 | 代码探索、规划 |
-| `Bypass` | 完全信任：显式 deny/ask 规则仍生效 | 沙箱环境或完全可信的运行 |
-| `DontAsk` | 无人值守：任何 ask 决策转为 deny，永不返回 ASK | 无人值守 / 计划任务 |
+| 模式（Rust 变体） | 未命中规则时的兜底行为 | 说明 |
+|-------------------|------------------------|------|
+| `Default` | 允许 | 默认模式。显式 deny/ask 规则仍生效 |
+| `AcceptEdits` | 允许 | 语义上默认接受编辑类操作；显式 deny/ask 规则仍生效 |
+| `Explore` | 拒绝 | 只读规划模式，只放行命中 allow 规则的调用 |
+| `Bypass` | 允许 | 完全信任模式；显式 deny/ask 规则仍生效 |
+| `DontAsk` | 允许 | 无人值守模式；ask 决策转为 deny，永不返回确认 |
 
-> 注意：Rust 版的模式行为以「未命中规则时允许/拒绝」为语义核心；更细粒度的「只读命令自动放行」「工作目录内编辑自动放行」「危险路径安全 ASK」等内建检查为部分覆盖（见 [工具内置检查](tool-check)）。
+> 无论哪种模式，规则的优先级都固定不变：`deny` > `ask` > `allow`。模式只决定「无规则命中、且不是内置任务工具」时的兜底行为。`DontAsk` 额外把命中的 `ask` 规则就地转为拒绝。
 
 ## 设置模式
 
@@ -26,7 +26,7 @@ description: "根据智能体的部署方式选择合适的全局策略"
 ```rust
 use agent_scope_agent::{PermissionContext, PermissionMode, PermissionRule};
 
-// DEFAULT：显式规则裁决
+// DEFAULT：未命中规则时允许
 let mut perm = PermissionContext::new(PermissionMode::Default);
 perm.add_rule(PermissionRule::allow("Read*"));
 

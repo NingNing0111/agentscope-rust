@@ -5,10 +5,9 @@ AgentScope Rust（`agent_scope_*` crates）的中文使用文档。目录结构 
 ## 版本声明
 
 - **镜像源**: `docs/python`（Mintlify，版本路径 `2.0.7dev`）
-- **Rust 兼容基线**: AgentScope Python **v2.0.5**（commit `27b6a0d2a2afedf53462c9a2add33932d54b2d20`）
 - **站内路由**: 文档内容使用站点根路由；部署前缀由 VitePress `base` 注入
 
-> `docs/python` 为 2.0.7dev 文档，Rust 兼容基线锁定 v2.0.5。2.0.7dev 新增而 v2.0.5/Rust 未实现的能力，在对应页面标注「计划中」。**这是有意的诚实标注，不是文档缺陷**——它保证每个页面的内容都是真实可用的，而非伪造（宪法 §5）。
+> 对照源文档中 Rust 尚未实现的能力，在对应页面标注「计划中」。**这是有意的诚实标注，不是文档缺陷**——它保证每个页面的内容都是真实可用的，而非伪造（宪法 §5）。
 
 ## 实现状态三档
 
@@ -18,7 +17,7 @@ AgentScope Rust（`agent_scope_*` crates）的中文使用文档。目录结构 
 |------|------|
 | **已实现** | 该能力在 AgentScope Rust 中可用，文档内容为真实 Rust 用法 |
 | **部分支持** | 部分可用，页面列出「已支持 / 尚未实现」边界 |
-| **计划中** | Rust 尚未实现，页面只描述 Python 侧能力与缺失范围，无 Rust 代码 |
+| **计划中** | Rust 尚未实现，页面说明缺失范围与可用的替代能力，无 Rust 代码 |
 
 状态标注规范见 [`STATUS-BLOCK.md`](STATUS-BLOCK.md)；逐页状态对照见 [`mirror-map.md`](mirror-map.md)。
 

@@ -4,24 +4,26 @@ description: "将文本转换为语音（计划中）"
 ---
 
 <Note>
-**Rust 实现状态**: 计划中。TTS 模型族（`DashScopeTTSModel`、`OpenAITTSModel` 等）在 AgentScope Rust 中尚未实现，预计在后续版本推出。
+**Rust 实现状态**: 计划中。该能力在 AgentScope Rust 中尚未实现。当前可用的替代能力见 [消息与事件](../message-and-event)（音频 `DataBlock` 与事件流）。
 </Note>
 
-语音合成模型（TTS）将文本转换为合成语音音频，支持标准模式和实时（流式输入）合成模式，覆盖 OpenAI、Gemini、DashScope 等多个 Provider。
+语音合成模型（TTS，Text-to-Speech）把一段文本转换为合成语音音频，让智能体不仅能「读写」，还能「开口说话」。它常用于语音助手、有声内容生成、无障碍交互等需要语音输出的场景，通常分为标准合成（整段文本一次性转音频）与实时合成（边输入边产出音频流）两种模式。
 
 ## Rust 侧现状
 
-- 尚无 TTS trait 或类型。
-- 消息层具备音频数据块能力（`DataBlock` + base64，见 [消息与事件](../message-and-event)），用于携带/传输音频数据，但**不包含 TTS 生成**。
+AgentScope Rust 目前尚未提供 TTS 模型抽象与内置实现：
+
+- 尚无 TTS trait 或模型类型。
+- 消息层具备音频数据块能力（`DataBlock` + base64，见 [消息与事件](../message-and-event)），可用于携带与传输音频数据，但**不包含 TTS 生成**。
 
 ## 缺失范围
 
 | 能力 | Rust 现状 |
 |------|-----------|
-| TTS 模型抽象（`TTSModel` 族） | 未实现 |
-| 标准合成（`DashScopeTTSModel` 等） | 未实现 |
-| 实时合成（`DashScopeRealtimeTTSModel`） | 未实现 |
+| TTS 模型抽象（trait） | 未实现 |
+| 标准合成（整段文本转音频） | 未实现 |
+| 实时流式合成 | 未实现 |
 
 ## 替代能力
 
-当前无 TTS 替代。若需要语音能力，可在 Rust 侧自行调用语音服务 API 并将结果作为 `DataBlock` 音频块放入消息。
+若需要语音能力，可在 Rust 侧自行调用语音服务 API，将生成的音频作为 `DataBlock`（`Base64Source`，`media_type` 设为如 `audio/mp3`）放入消息，通过事件流传输给前端播放。这样即可在现有消息 / 事件模型内表达语音内容，无需等待 TTS 模块落地。

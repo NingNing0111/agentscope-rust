@@ -4,7 +4,7 @@ description: "为智能体构建检索增强生成（RAG）能力"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）——**库级 / 中间件形态**。RAG 在 AgentScope Rust 中以 `KnowledgeBase` + `RAGMiddleware` 形式提供；服务化 RAG（HTTP 服务）为「计划中」，见 [deploy/rag](../deploy/rag)。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现——**库级 / 中间件形态**。RAG 在 AgentScope Rust 中以 `KnowledgeBase` + `RAGMiddleware` 形式提供；服务化 RAG（HTTP 服务）为「计划中」，见 [deploy/rag](../deploy/rag)。
 </Note>
 
 AgentScope Rust 中的 RAG 由**可独立替换**的功能模块组成（`agent_scope_rag`）：
@@ -21,11 +21,10 @@ AgentScope Rust 中的 RAG 由**可独立替换**的功能模块组成（`agent_
 
 ```rust
 use std::sync::Arc;
-use agent_scope_dashscope::DashScopeEmbeddingModel;
-use agent_scope_embedding::EmbeddingModelCard;
+use agent_scope_rig::RigEmbeddingModel;
 use agent_scope_rag::{Chunk, KnowledgeBase, TurbovecVectorStore};
 
-let embedding = Arc::new(DashScopeEmbeddingModel::new(api_key, EmbeddingModelCard::new("text-embedding-v3", 1024, false)));
+let embedding = Arc::new(RigEmbeddingModel::openai(api_key, "text-embedding-3-small")?);
 let vector_store = Arc::new(TurbovecVectorStore::new(4)?);
 let kb = Arc::new(KnowledgeBase::new(
     "project".into(),
@@ -61,4 +60,4 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
 
 ## 完整示例
 
-见 [`examples/rag`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/rag/)（`cargo run -p rag`），构建知识库并运行一个基于知识库回答的 Agent（需要 `DASHSCOPE_API_KEY`）。
+见 [`examples/rag`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/rag/)（`cargo run -p rag`），构建知识库并运行一个基于知识库回答的 Agent（需要 `DEFAULT_API_KEY`）。

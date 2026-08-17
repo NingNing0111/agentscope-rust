@@ -4,7 +4,7 @@ description: "用 Markdown 指令集拓展智能体能力"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。技能加载与查看在 AgentScope Rust 中可用。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。技能加载与查看在 AgentScope Rust 中可用。
 </Note>
 
 Skill（技能）是 Markdown 格式的指令集，无需写代码即可拓展智能体能力。每个 skill 是一个目录，固定包含一个带 frontmatter 元数据与详细指令的 `SKILL.md` 文件。

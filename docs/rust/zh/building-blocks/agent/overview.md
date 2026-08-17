@@ -4,7 +4,7 @@ description: "AgentScope Rust 的核心抽象：推理-行动循环引擎"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。Agent 系统在 AgentScope Rust 中可用，兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。本文档描述的能力在 AgentScope Rust 中可用。
 </Note>
 
 `Agent` 是 AgentScope Rust 的核心抽象：一个**推理-行动循环**引擎，将模型、工具、权限系统、人机交互、上下文管理、中间件、状态管理和事件系统整合到一个统一接口中。
@@ -22,14 +22,14 @@ description: "AgentScope Rust 的核心抽象：推理-行动循环引擎"
 
 `Agent` trait（`agent_scope_agent`）的主要方法：
 
-| 方法 | 描述 |
-|------|------|
-| `reply(input)` | 运行推理-行动循环并返回最终 `Msg` |
-| `reply_stream(input)` | 同 `reply`，但以流式方式逐一产出 `AgentEvent` |
-| `reply_stream_event(input)` | 以 HITL 事件（确认 / 外部执行 / 中断）恢复暂停的同一回复 |
-| `observe(input)` | 将消息添加到上下文，不触发推理 |
-| `name()` | 智能体名称 |
-| `state()` | 智能体运行时状态（`AgentState`） |
+| 方法 | 签名 | 说明 |
+|------|------|------|
+| `reply` | `async fn reply(&self, input: Option<Vec<Msg>>) -> Result<Msg, AgentError>` | 运行一轮推理-行动循环，返回最终助手消息；空上下文返回 `NoContentToReply` 错误 |
+| `reply_stream` | `async fn reply_stream(&self, input: Option<Vec<Msg>>) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError>` | 同 `reply`，但实时逐一产出 `AgentEvent`，以 `ReplyEnd` 结束 |
+| `reply_stream_event` | `async fn reply_stream_event(&self, input: EventInput) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError>` | 以 HITL 事件（确认 / 外部执行 / 中断）恢复暂停的同一回复；默认实现返回错误 |
+| `observe` | `async fn observe(&self, input: Option<Vec<Msg>>) -> Result<(), AgentError>` | 将消息追加到上下文，不触发推理；`observe(None)` 为 no-op |
+| `name` | `fn name(&self) -> &str` | 智能体名称 |
+| `state` | `fn state(&self) -> std::sync::RwLockReadGuard<'_, AgentState>` | 智能体运行时状态（`AgentState`）的读锁；调用方不得跨 `.await` 持有该锁 |
 
 内置实现为 `ReActAgent`（reasoning → acting 循环），由 `AgentConfig`（含 `ReActConfig`、`ContextConfig`）组装：
 

@@ -4,7 +4,7 @@ description: "为特定工具与调用编写允许、拒绝和询问规则"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。`PermissionRule` 在 AgentScope Rust 中可用。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。`PermissionRule` 在 AgentScope Rust 中可用。
 </Note>
 
 `PermissionRule` 把某个工具与具体的调用模式映射到三种行为之一：`Allow`、`Deny`、`Ask`。规则在每种[权限模式](permission-mode)下都以最高优先级评估。

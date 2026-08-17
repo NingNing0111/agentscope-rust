@@ -4,7 +4,7 @@ description: "智能体通信与流式数据传输"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现。本文档描述的能力在 AgentScope Rust 中可用（兼容等级 L1），兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。本文档描述的能力在 AgentScope Rust 中可用。
 </Note>
 
 消息（Message）与事件（Event）是 AgentScope Rust 中两种基础数据结构。

@@ -10,11 +10,11 @@ description: "关于 AgentScope Rust 的常见问题"
 <AccordionGroup>
 
   <Accordion title="AgentScope Rust 是什么？">
-    AgentScope Rust（`agent_scope_*` crates）是 AgentScope 的 Rust 重构版，以 Rust 多 crate workspace 组织。Rust 实现的兼容基线锁定 **AgentScope Python v2.0.5**。每页顶部的「Rust 实现状态」标注该能力在 Rust 中的真实可用性（已实现 / 部分支持 / 计划中）。
+    AgentScope Rust（`agent_scope_*` crates）是 AgentScope 的 Rust 重构版，以 Rust 多 crate workspace 组织，各能力真实可用性以每页顶部「Rust 实现状态」标注为准（已实现 / 部分支持 / 计划中）。
   </Accordion>
 
   <Accordion title="支持哪些模型提供商？">
-    当前内置 provider 为 **DashScope / Qwen**（`DashScopeChatModel`、`DashScopeEmbeddingModel`，OpenAI 兼容端点）。`ChatModel` / `EmbeddingModel` trait 支持接入自定义 provider，但尚无 OpenAI 官方 provider crate。
+    当前内置 provider 为 **rig-backed**（`agent_scope_rig`），支持 OpenAI / Anthropic / DeepSeek 三套后端（`RigChatModel`、`RigEmbeddingModel`，示例默认 OpenAI）。`ChatModel` / `EmbeddingModel` trait 支持接入自定义 provider。
   </Accordion>
 
   <Accordion title="支持 TTS / 语音合成吗？">
@@ -34,7 +34,7 @@ description: "关于 AgentScope Rust 的常见问题"
   </Accordion>
 
   <Accordion title="如何快速上手？">
-    按 [快速开始](../quickstart) 操作：设置 `DASHSCOPE_API_KEY`，运行 `examples/quickstart`，30 分钟跑起第一个对话 Agent。
+    按 [快速开始](../quickstart) 操作：设置 `DEFAULT_API_KEY`，运行 `examples/quickstart`，30 分钟跑起第一个对话 Agent。
   </Accordion>
 
   <Accordion title="需要启用什么 feature 开关？">

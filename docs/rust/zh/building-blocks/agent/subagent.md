@@ -4,10 +4,10 @@ description: "库级多智能体委托：SubAgent / SubAgentRegistry / delegate_
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L3）。本文档描述的能力在 AgentScope Rust 中可用，兼容基线为 AgentScope Python v2.0.5。形态为**库级多智能体委托**（`SubAgent` / `SubAgentRegistry` / `delegate_*` / `MultiAgentConversation`）；服务级的完整 team 编排框架尚未实现（见 [智能体团队](/deploy/agent-team)）。
+**Rust 实现状态**: 已实现。本文档描述的能力在 AgentScope Rust 中可用。形态为**库级多智能体委托**（`SubAgent` / `SubAgentRegistry` / `delegate_*` / `MultiAgentConversation`）；服务级的完整 team 编排框架尚未实现（见 [智能体团队](/deploy/agent-team)）。
 </Note>
 
-子智能体（SubAgent）是 AgentScope Rust 的**库级多智能体委托**能力：一个父智能体可以把职责清晰的任务委托给一组预注册的协作方，收取各自结果并继续推进主会话。与 Python 的服务级 team 不同，Rust 侧由应用层自行组装、委托与协调，运行在同一进程内。
+子智能体（SubAgent）是 AgentScope Rust 的**库级多智能体委托**能力：一个父智能体可以把职责清晰的任务委托给一组预注册的协作方，收取各自结果并继续推进主会话。所有协作方运行在同一进程内，由应用层自行组装、委托与协调。
 
 ## 核心抽象
 
@@ -20,6 +20,27 @@ description: "库级多智能体委托：SubAgent / SubAgentRegistry / delegate_
 | `CollaborationResult` | 委托结果：状态（成功 / 失败 / 超时 / 取消……）、消息、错误信息、`DelegationTrace` 轨迹 |
 | `MultiAgentConversation` | 多智能体对话记录：保留参与者角色与发言顺序 |
 | `DelegationTrace` | 一次委托的关联事件序列（`DelegationEventType`）与净化记录 |
+
+### SubAgentTemplate 与 SubAgent 的字段
+
+`SubAgentTemplate::new(name, description, instructions)` 生成一份「创建蓝图」，`create_subagent(agent)` 校验后派生具体实例；`SubAgent::new(name, description, agent)` 则直接包装一个现成智能体。两者的 `name` 都必须与内部 agent 的 `name()` 一致，否则报错。
+
+| 结构体 | 字段 | 类型 | 说明 |
+|--------|------|------|------|
+| `SubAgentTemplate` | `template_id` | `String` | 模板唯一 ID（`new` 时自动生成 UUID） |
+| | `name` | `String` | 协作方名称（须与内部 agent 名一致） |
+| | `description` | `String` | 职责描述，用于 `ResponsibilityMatch` 匹配 |
+| | `instructions` | `String` | 创建指令（蓝图校验非空） |
+| | `capability_scope` | `CapabilityScope` | 能力范围（模型访问 / 副作用等） |
+| | `context_policy` | `ContextSharingPolicy` | 上下文共享策略 |
+| | `default_budget` | `DelegationBudget` | 默认预算 |
+| | `status` | `TemplateStatus` | `Draft` / `Validated` / `Disabled` / `Invalid` |
+| `SubAgent` | `agent_id` | `String` | 实例唯一 ID |
+| | `name` / `description` | `String` | 名称与描述 |
+| | `template_id` | `Option<String>` | 来源模板（直接 `new` 时为 `None`） |
+| | `state` | `SubAgentState` | `Configured` / `Selected` / `Running` / `Completed` / `Failed` / `TimedOut` / `Cancelled` / `Disabled` |
+| | `capability_scope` / `context_policy` / `default_budget` | 同模板 | 能力范围、共享策略、默认预算 |
+| | `agent` | `Arc<dyn Agent>` | 被包装的真实智能体 |
 
 ## 快速上手
 
@@ -91,6 +112,28 @@ let shared: SharedContext = ctx_policy.build_shared_context(&[], Some("父智能
 
 `DelegationBudget` 约束一次委托：最大深度、最大调用次数、超时（毫秒）、最大上下文消息数、是否允许并发。`effective_budget` 取目标默认与请求值的**更严格组合**，调用方无法放宽目标默认。`CapabilityScope` 声明目标能力范围；委托前会拒绝「完全禁用」的模型访问与副作用范围（fail-closed）。
 
+| 结构体 | 字段 | 类型 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| `DelegationBudget` | `max_depth` | `u32` | `1` | 最大委托深度 |
+| | `max_calls` | `u32` | `1` | 最大调用次数 |
+| | `timeout_ms` | `u64` | `30_000` | 超时（毫秒） |
+| | `max_context_messages` | `usize` | `32` | 最大共享上下文消息数 |
+| | `allow_concurrent` | `bool` | `false` | 是否允许并发委托 |
+| `DelegationRequest` | `parent_agent_name` | `String` | — | 父智能体名 |
+| | `target_subagent_name` | `String` | — | 目标子智能体名 |
+| | `task` | `String` | — | 任务文本 |
+| | `context` | `SharedContext` | `empty()` | 共享上下文 |
+| | `budget` | `DelegationBudget` | `default()` | 预算（`effective_budget` 取更严组合） |
+| | `reply_mode` | `DelegationReplyMode` | `FinalOnly` | 结果返回方式 |
+
+`ContextSharingPolicy` 逐类控制共享范围，`sanitize_shared_context` 会按此策略净化调用方传入的上下文：
+
+| 字段 | 类型 | 默认值 |
+|------|------|--------|
+| `message_policy` | `MessageContextPolicy` | `None`（另有 `SummaryOnly` / `Selected` / `Full`） |
+| `memory_policy` / `session_policy` / `workspace_policy` / `tool_policy` | `ResourceSharingPolicy` | `None`（另有 `ReadOnly` / `Scoped` / `Inherited`） |
+| `promote_results_to_parent` | `bool` | `false` |
+
 ## 选择策略
 
 `SubAgentRegistry` 用 `SelectionPolicy` 决定如何挑选目标：
@@ -108,6 +151,18 @@ let shared: SharedContext = ctx_policy.build_shared_context(&[], Some("父智能
 - 子智能体执行报错 → `CollaborationStatus::Failed`（`result.error` 携带错误码与信息）；
 - 超时（`budget.timeout_ms`）→ `TimedOut`；
 - 取消 → `Cancelled`；能力范围拒绝 → `PermissionDenied`；未支持特性 → `UnsupportedFeature`。
+
+`CollaborationResult` 的字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `delegation_id` | `String` | 本次委托 ID |
+| `subagent_name` | `String` | 目标子智能体名 |
+| `status` | `CollaborationStatus` | 终态：`Succeeded` / `Failed` / `TimedOut` / `Cancelled` / `PermissionDenied` / `UnsupportedFeature` |
+| `message` | `Option<Msg>` | 成功时的结果消息 |
+| `error` | `Option<SubAgentErrorInfo>` | 失败时的错误码与信息 |
+| `trace` | `DelegationTrace` | 一次委托的关联事件序列 |
+| `side_effects` | `Vec<SideEffectRecord>` | 归属到子智能体的副作用记录 |
 
 ## 多智能体对话
 
@@ -137,15 +192,15 @@ conversation.push_message(...);
 见 [`examples/subagent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/subagent/)（独立示例 crate，实现位于 [`src/main.rs`](https://github.com/NingNing0111/agentscope-rust/blob/master/examples/subagent/src/main.rs)）：
 
 ```bash
-# 工具驱动：主 Agent 自主创建并委托子智能体（真实 DashScope 模型调用）
-cargo run -p subagent                            # 默认模型 qwen-plus + 内置示例任务
-cargo run -p subagent -- --model qwen-max        # 指定模型
+# 工具驱动：主 Agent 自主创建并委托子智能体（真实 OpenAI 模型调用）
+cargo run -p subagent                            # 默认模型 qwen3.7-plus（可用 .env 的 DEFAULT_CHAT_MODEL 覆盖）+ 内置示例任务
+cargo run -p subagent -- --model <model>         # 指定模型
 cargo run -p subagent -- --task "你的自定义任务"  # 自定义任务
 ```
 
 示例把 SubAgent 封装成 `SubAgentCreate` / `SubAgentDelegate` 两个工具注册进主 Agent，主 Agent 通过 ReAct 循环自主完成创建与委托；运行结束后从共享注册表列出实际创建的子智能体，验证「由主 Agent 自己创建」。
 
-示例需要真实模型调用，凭据从项目根目录 `.env` 读取（`DASHSCOPE_API_KEY`），也支持环境变量；缺凭据时程序给出明确错误提示。
+示例需要真实模型调用，凭据从项目根目录 `.env` 读取（`DEFAULT_API_KEY`），也支持环境变量；缺凭据时程序给出明确错误提示。
 
 ### 流式查看主 Agent 的决策过程
 
@@ -181,12 +236,6 @@ while let Some(event) = stream.next().await {
 ```
 
 若委托的目标子智能体超时（`DelegationBudget.timeout_ms`），主 Agent 会收到 `ToolResultEnd` 返回的失败结果文本，并据其在后续循环里**附带上下文重新委托**——这种「自主纠错」正是流式事件观察 ReAct 闭环的价值所在。
-
-## 兼容性等级
-
-| 模块 | 兼容等级 | 说明 |
-|------|----------|------|
-| 库级多智能体委托（SubAgent / Registry / delegate_* / MultiAgentConversation） | L3 | 进程内父→子委托，与应用层协调的协作组装 |
 
 ## 延伸阅读
 

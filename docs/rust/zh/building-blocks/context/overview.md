@@ -4,7 +4,7 @@ description: "管理智能体的工作记忆，让长任务稳定推进"
 ---
 
 <Note>
-**Rust 实现状态**: 部分支持（兼容等级 L2）。已支持：上下文压缩（`ContextConfig`）、上下文卸载（`offload_context` / `offload_tool_result`）、环境感知（运行时状态注入，Feature 026）。尚未实现：更复杂的模型摘要压缩策略（当前为移除最旧消息 + 占位摘要）。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 部分支持。已支持：上下文压缩（`ContextConfig`）、上下文卸载（`offload_context` / `offload_tool_result`）、环境感知（运行时状态注入，Feature 026）。尚未实现：更复杂的模型摘要压缩策略（当前为移除最旧消息 + 占位摘要）。
 </Note>
 
 上下文是智能体的工作记忆：大模型在每一步推理时看到的全部消息（用户输入、智能体回复、工具调用、工具结果）。上下文管理包含三种机制：

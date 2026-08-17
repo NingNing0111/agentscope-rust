@@ -4,7 +4,7 @@ description: "把上下文长度控制在模型窗口之内"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。`ContextConfig` + `compress_context` 在 AgentScope Rust 中可用。**注意**：当前策略为「移除最旧消息 + 占位摘要」；更复杂的模型摘要策略（调用模型生成摘要）为 deferred。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。`ContextConfig` + `compress_context` 在 AgentScope Rust 中可用。**注意**：当前策略为「移除最旧消息 + 占位摘要」；更复杂的模型摘要策略（调用模型生成摘要）为 deferred。
 </Note>
 
 当上下文 token 数超过阈值时，智能体会压缩上下文，使长对话保持在模型窗口之内。

@@ -4,7 +4,7 @@ description: "暂停以等待用户确认，再通过结果事件恢复"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）——事件级 + 权限级，对齐 Python 的「暂停 → 确认 → 恢复」状态机。当权限系统判定某工具调用需要确认时，`ReActAgent` 发出 `RequireUserConfirmEvent` 并**暂停**当前 reply_stream（不喂 denied、无 ReplyEnd）。宿主收集确认后以 `UserConfirmResultEvent` 通过 `reply_stream_event` **恢复同一 agent**，按 tool_call_id 精确匹配执行/拒绝。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。本文档描述的能力在 AgentScope Rust 中可用，基于事件级 + 权限级的「暂停 → 确认 → 恢复」状态机。当权限系统判定某工具调用需要确认时，`ReActAgent` 发出 `RequireUserConfirmEvent` 并**暂停**当前 `reply_stream`（不喂 denied、无 `ReplyEnd`）。宿主收集确认后以 `UserConfirmResultEvent` 通过 `reply_stream_event` **恢复同一 agent**，按 tool_call_id 精确匹配执行/拒绝。
 </Note>
 
 当权限系统判断某个工具调用需要用户批准时，智能体会发出 `RequireUserConfirmEvent` 并暂停，等待宿主（调用方）以确认事件恢复。
@@ -51,13 +51,15 @@ if let Some(confirm) = confirm {
 
 ## 事件输入
 
-`reply_stream_event` 接受三类 HITL 事件（对齐 Python `_reply_impl` 的 `inputs` 联合）：
+`reply_stream_event` 接受三类 HITL 事件：
 
 | 事件 | 语义 |
 |------|------|
 | `UserConfirmResultEvent` | 恢复暂停的确认：`confirmed=true` 执行工具（可带 `rules` 采纳）、`confirmed=false` 生成 `DENIED` 结果 |
 | `ExternalExecutionResultEvent` | 恢复外部执行暂停（外部工具触发 `RequireExternalExecutionEvent` 后暂停） |
 | `UserInterruptEvent` | 中断当前回复，以 `ReplyEnd(finished_reason=INTERRUPTED)` 结束；无进行中回复时静默 no-op |
+
+三类事件对应 `EventInput` 枚举的三个变体 `Confirm` / `ExternalResult` / `Interrupt`。
 
 校验契约（非法恢复返回明确错误）：无 awaiting 时注入确认事件报错；tool_call_id 与等待状态不匹配报错；`reply_id` 与暂停回复不匹配报错。
 
@@ -67,6 +69,18 @@ if let Some(confirm) = confirm {
 |------|------|------|
 | `reply_id` | `String` | 当前回复的 ID（恢复时需匹配） |
 | `tool_calls` | `Vec<ToolCallBlock>` | 等待确认的工具调用列表，每个含 `name` / `input` / `state="asking"` / `suggested_rules` |
+
+## 恢复事件的结构
+
+宿主恢复时构造的 `UserConfirmResultEvent` 与每条 `ConfirmResult` 字段如下：
+
+| 结构体 | 字段 | 类型 | 说明 |
+|--------|------|------|------|
+| `UserConfirmResultEvent` | `reply_id` | `String` | 暂停回复的 ID（取自 `RequireUserConfirmEvent`） |
+| | `confirm_results` | `Vec<ConfirmResult>` | 每个待确认工具对应一条结果 |
+| `ConfirmResult` | `confirmed` | `bool` | `true` 执行、`false` 拒绝（生成 `DENIED` 结果） |
+| | `tool_call` | `ToolCallBlock` | 待确认的工具调用（`state="asking"`） |
+| | `rules` | `Option<Vec<PermissionRule>>` | 可携带 allow 规则，采纳后不再询问 |
 
 ## 权限系统联动
 

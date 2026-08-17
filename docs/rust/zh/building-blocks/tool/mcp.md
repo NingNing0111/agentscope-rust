@@ -4,7 +4,7 @@ description: "接入 MCP 服务并使用其工具"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）——**客户端接入**。Rust 通过官方 SDK（`rmcp`）连接外部 MCP server 并接入其工具；**尚无将本地工具暴露为 MCP 服务端的 gateway**。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现——**客户端接入**。Rust 通过官方 SDK（`rmcp`）连接外部 MCP server 并接入其工具；**尚无将本地工具暴露为 MCP 服务端的 gateway**。
 </Note>
 
 AgentScope Rust 集成 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)，让智能体可以接入任意兼容 MCP 的工具服务。框架自动处理协议协商、工具发现与结果转换。

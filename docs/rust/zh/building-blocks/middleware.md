@@ -4,7 +4,7 @@ description: "在智能体生命周期的关键位置拦截并扩展行为"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L3）。`Middleware` trait（9 个钩子点）在 AgentScope Rust 中可用。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。`Middleware` trait（9 个钩子点）在 AgentScope Rust 中可用。
 </Note>
 
 智能体中间件是在不修改智能体或模型代码的前提下，向智能体执行流程中的关键位置注入自定义逻辑（日志、追踪、输入改写、访问控制等）的机制。

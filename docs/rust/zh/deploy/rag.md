@@ -4,7 +4,9 @@ description: "服务化检索增强问答"
 ---
 
 <Note>
-**Rust 实现状态**: 部分支持（兼容等级 L2）。已支持：**库级 RAG**（`KnowledgeBase` + `RAGMiddleware`，Static/Agentic 两种模式）。尚未实现：服务化 RAG（HTTP 服务、文件托管、分布式索引）。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 部分支持。
+- 已支持：库级 RAG（`KnowledgeBase` + `RAGMiddleware`，Static / Agentic 两种模式）。
+- 尚未实现：服务化 RAG（HTTP 服务、文件托管、分布式索引）。
 </Note>
 
 # RAG 服务（部分支持）

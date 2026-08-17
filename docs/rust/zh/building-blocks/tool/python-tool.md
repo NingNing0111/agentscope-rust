@@ -4,7 +4,7 @@ description: "把 Rust 函数包装为工具，自动生成 JSON Schema"
 ---
 
 <Note>
-**Rust 实现状态**: 部分支持（兼容等级 L3）。已支持：`FunctionTool`（把 Rust 异步函数包装为工具）、内置工具、工具中间件相关能力。尚未实现：Python 执行器与 Docker/E2B 等工具后端切换。
+**Rust 实现状态**: 部分支持。已支持：`FunctionTool`（把 Rust 异步函数包装为工具）、内置工具、工具中间件相关能力。尚未实现：Docker/E2B 等远程工具后端切换。
 </Note>
 
 工具是任意实现 `Tool` trait 的对象。AgentScope Rust 提供一组内置工具覆盖常见操作，并对外暴露统一接口供开发者自定义：

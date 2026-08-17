@@ -4,12 +4,12 @@ description: "快速上手 AgentScope Rust"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现。本文档描述的能力在 AgentScope Rust 中可用，兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。本文档描述的能力在 AgentScope Rust 中可用。
 </Note>
 
 ## 环境准备
 
-AgentScope Rust 需要 Rust 工具链（edition 2024，stable 即可）。同时需要一个模型服务的 API Key（当前内置 provider 为 DashScope / Qwen）。
+AgentScope Rust 需要 Rust 工具链（edition 2024，stable 即可）。同时需要一个模型服务的 API Key（当前内置 provider 为 rig：OpenAI / Anthropic / DeepSeek，示例默认 OpenAI）。
 
 ### 引入依赖
 
@@ -18,7 +18,7 @@ AgentScope Rust 需要 Rust 工具链（edition 2024，stable 即可）。同时
 ```toml
 [dependencies]
 agent_scope_agent = { path = "crates/agent_scope_agent" }
-agent_scope_dashscope = { path = "crates/agent_scope_dashscope" }
+agent_scope_rig = { path = "crates/agent_scope_rig" }
 agent_scope_tool = { path = "crates/agent_scope_tool" }
 agent_scope_message = { path = "crates/agent_scope_message" }
 agent_scope_event = { path = "crates/agent_scope_event" }
@@ -29,10 +29,10 @@ tokio = { version = "1", features = ["full"] }
 
 ### 配置凭据
 
-设置环境变量（或将 `DASHSCOPE_API_KEY=sk-your-key` 写入仓库根目录 `.env`，示例会通过 dotenv 自动加载）：
+设置环境变量（或将 `DEFAULT_API_KEY` 等变量写入仓库根目录 `.env`，变量名见仓库根目录 `.env.example`；示例会通过 dotenv 自动加载）：
 
 ```bash
-export DASHSCOPE_API_KEY="sk-your-key"
+export DEFAULT_API_KEY="sk-your-key"
 ```
 
 ## 第一个智能体
@@ -43,13 +43,13 @@ export DASHSCOPE_API_KEY="sk-your-key"
 cargo run -p quickstart -- --prompt "你好，请用一句话介绍你自己。"
 ```
 
-示例构建了一个最简智能体：一个 DashScope 凭据、对应的聊天模型、一个空工具集，以及一个 `ReActAgent`。智能体提供两个调用入口 —— `reply` 返回最终消息，`reply_stream` 以流式方式逐步产出事件，适合展示推理和工具调用的中间过程。
+示例构建了一个最简智能体：一个 OpenAI 凭据、对应的聊天模型、一个空工具集，以及一个 `ReActAgent`。智能体提供两个调用入口 —— `reply` 返回最终消息，`reply_stream` 以流式方式逐步产出事件，适合展示推理和工具调用的中间过程。
 
 ```rust
 use std::sync::Arc;
 
 use agent_scope_agent::{Agent, AgentConfig, ContextConfig, ReActAgent, ReActConfig};
-use agent_scope_dashscope::DashScopeChatModel;
+use agent_scope_rig::RigChatModel;
 use agent_scope_event::AgentEvent;
 use agent_scope_message::factory::user_msg;
 use agent_scope_tool::ToolKit;
@@ -57,12 +57,19 @@ use futures::StreamExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 1. 凭据 —— 从环境变量读取。
-    let api_key = std::env::var("DASHSCOPE_API_KEY")
-        .map_err(|_| anyhow::anyhow!("error: 缺少环境变量 DASHSCOPE_API_KEY"))?;
+    // 1. 凭据 —— 从环境变量读取（变量名见 .env.example）。
+    let api_key = std::env::var("DEFAULT_API_KEY")
+        .map_err(|_| anyhow::anyhow!("error: 缺少环境变量 DEFAULT_API_KEY"))?;
 
-    // 2. 聊天模型 —— DashScope / Qwen（OpenAI 兼容端点）。
-    let model = Arc::new(DashScopeChatModel::new(&api_key, "qwen-plus").with_stream(true));
+    // 2. 聊天模型 —— 模型名从 DEFAULT_CHAT_MODEL 读取（fallback qwen3.7-plus）；
+    //    DEFAULT_URL 可选覆盖端点（默认指向百炼 DashScope 的 OpenAI 兼容端点）。
+    let model_name =
+        std::env::var("DEFAULT_CHAT_MODEL").unwrap_or_else(|_| "qwen3.7-plus".to_string());
+    let mut model = RigChatModel::openai(&api_key, &model_name)?;
+    if let Ok(base_url) = std::env::var("DEFAULT_URL") {
+        model = model.with_base_url(base_url);
+    }
+    let model = Arc::new(model.with_stream(true));
 
     // 3. 工具集 —— 这里为空；注册 Bash/Read/Write 等即可启用工具调用。
     let toolkit = ToolKit::new();
@@ -109,12 +116,12 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 <Tip>
-运行前在环境变量中设置 `DASHSCOPE_API_KEY`。当前内置模型 provider 为 DashScope（`DashScopeChatModel`）；要使用其他提供商，需要实现 `ChatModel` trait 或在后续版本接入对应 provider crate。
+运行前在环境变量中设置 `DEFAULT_API_KEY`。当前内置模型 provider 为 rig-backed（`agent_scope_rig`），支持 OpenAI / Anthropic / DeepSeek 三套后端（`RigChatModel::openai/anthropic/deepseek`）；模型能力与支持范围见 [模型概览](/building-blocks/model/overview)。
 </Tip>
 
 ### 预期输出
 
-有凭据时，程序先打印 `reply()` 的最终助手消息，再以 `reply_stream()` 流式输出文本增量并以 `[reply end]` 结束。未设置 `DASHSCOPE_API_KEY` 时，程序输出明确的缺凭据错误并退出（不会静默失败或 panic）。
+有凭据时，程序先打印 `reply()` 的最终助手消息，再以 `reply_stream()` 流式输出文本增量并以 `[reply end]` 结束。未设置 `DEFAULT_API_KEY` 时，程序输出明确的缺凭据错误并退出（不会静默失败或 panic）。
 
 ## 按需使用其他能力
 

@@ -4,7 +4,7 @@ description: "为智能体提供结构化任务清单，用于规划、追踪并
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L3）——形态为**内置任务规划工具**（Feature 024），替代早期独立的 Planner。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现——形态为**内置任务规划工具**（Feature 024），替代早期独立的 Planner。
 </Note>
 
 计划（Planning）是智能体把复杂请求拆分成离散、有序、可追踪步骤的方式。AgentScope Rust 通过一小组内置工具，让智能体用工具调用来维护一份**显式、结构化的任务清单**——任务的创建、查询与更新都走工具调用。
@@ -155,7 +155,7 @@ cargo run -p plan-react-agent -- --prompt "请规划并执行：1) 阅读本仓�
 
 运行后，智能体应当先调用 `TaskCreate` 建立清单，再逐项执行并在完成后用 `TaskUpdate` 翻转状态；回复结束时打印的任务清单应确认每个任务均已 `completed`。
 
-需要真实模型调用，运行前设置 `DASHSCOPE_API_KEY`。
+需要真实模型调用，运行前设置 `DEFAULT_API_KEY`。
 
 ## 延伸阅读
 

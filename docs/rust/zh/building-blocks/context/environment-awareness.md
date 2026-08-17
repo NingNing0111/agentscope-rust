@@ -4,7 +4,7 @@ description: "让智能体感知时间、任务与上下文用量等运行时状
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。运行时状态注入（Feature 026）在 AgentScope Rust 中可用。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。运行时状态注入（Feature 026）在 AgentScope Rust 中可用。
 </Note>
 
 智能体通过**运行时状态注入**感知跨轮次变化的运行环境（时间、未完成任务、上下文长度），把提示注入上下文，让智能体持续保持方向感。

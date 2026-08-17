@@ -4,7 +4,7 @@ description: "让智能体在运行时激活或停用工具组"
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。`ToolKit` 支持工具组注册与激活过滤，内置 `ResetTools` 元工具。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。`ToolKit` 支持工具组注册与激活过滤，内置 `ResetTools` 元工具。
 </Note>
 
 AgentScope Rust 提供工具组（`ToolGroup`）与内置元工具 `ResetTools`，让智能体在运行时管理哪些工具组处于激活状态，从而保持上下文聚焦：只有与当前任务相关的工具才会暴露给模型。

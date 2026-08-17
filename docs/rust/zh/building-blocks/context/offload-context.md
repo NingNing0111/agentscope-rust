@@ -4,7 +4,7 @@ description: "把被移除的内容持久化到外部存储，细节仍可找回
 ---
 
 <Note>
-**Rust 实现状态**: 已实现（兼容等级 L2）。上下文卸载在 AgentScope Rust 中可用（`WorkspaceBase::offload_context` / `offload_tool_result`）。兼容基线为 AgentScope Python v2.0.5。
+**Rust 实现状态**: 已实现。上下文卸载在 AgentScope Rust 中可用（`WorkspaceBase::offload_context` / `offload_tool_result`）。
 </Note>
 
 当上下文被压缩或工具结果被截断时，卸载机制把被移除的内容持久化到工作空间的外部存储，使细节在需要时仍可找回——只需一次文件读取。

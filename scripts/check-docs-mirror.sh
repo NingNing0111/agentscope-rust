@@ -52,8 +52,8 @@ fi
 section "场景 A：页面集合"
 rs_md_count="$(find "$RS_DOCS" -type f -name '*.md' | wc -l | tr -d ' ')"
 rs_mdx_count="$(find "$RS_DOCS" -type f -name '*.mdx' | wc -l | tr -d ' ')"
-[ "$rs_md_count" -eq 50 ] && report PASS "Rust 文档包含 50 个 .md 页面" || report FAIL "Rust .md 页面数=$rs_md_count（预期 50）"
-[ "$rs_mdx_count" -eq 0 ] && report PASS "Rust 文档不含 .mdx 页面" || report FAIL "Rust .mdx 页面数=$rs_mdx_count（预期 0）"
+[ "$rs_md_count" -eq 51 ] && report PASS "Rust 文档包含 51 个 .md 页面" || report FAIL "Rust .md 页面数=${rs_md_count}（预期 51）"
+[ "$rs_mdx_count" -eq 0 ] && report PASS "Rust 文档不含 .mdx 页面" || report FAIL "Rust .mdx 页面数=${rs_mdx_count}（预期 0）"
 
 if [ -d "$PY_DOCS" ]; then
   py_files="$(cd "$PY_DOCS" && find . -type f -name '*.mdx' | sed -E 's|^\./||; s|\.mdx$||' | sort)"
@@ -73,10 +73,10 @@ else
 fi
 
 mm_count="$(grep -cE '^\| [^|]+ \| [^|]+ \| (已实现|部分支持|计划中) ' "$MIRROR_MAP" 2>/dev/null || true)"
-if [ "$mm_count" -eq 50 ]; then
-  report PASS "mirror-map 覆盖 50 页登记"
+if [ "$mm_count" -eq 51 ]; then
+  report PASS "mirror-map 覆盖 51 页登记"
 else
-  report FAIL "mirror-map 登记数=$mm_count（预期 50）"
+  report FAIL "mirror-map 登记数=${mm_count}（预期 51）"
 fi
 
 # ---- 场景 B：状态块与无伪兼容 ----

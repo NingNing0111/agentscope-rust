@@ -129,19 +129,15 @@ let agent = ReActAgent::new(
 
 Static 模式直接作为 middleware 注入即可。
 
-## 7. 完整接入示例(参考 pi-rust)
+## 7. 完整接入示例
 
 ```rust
 use std::sync::Arc;
-use agent_scope_embedding::EmbeddingModelCard;
-use agent_scope_dashscope::DashScopeEmbeddingModel;
 use agent_scope_rag::{KnowledgeBase, RAGMiddleware, RAGMode, TurbovecVectorStore};
+use agent_scope_rig::RigEmbeddingModel;
 
-// Embedding 模型
-let embedding = Arc::new(DashScopeEmbeddingModel::new(
-    api_key.clone(),
-    EmbeddingModelCard::new("text-embedding-v3", 1024, false),
-));
+// Embedding 模型(仅 OpenAI 支持;维度由模型卡片自动探知)
+let embedding = Arc::new(RigEmbeddingModel::openai(&api_key, "text-embedding-3-small")?);
 
 // 向量存储
 let vector_store = Arc::new(TurbovecVectorStore::new(4)?);

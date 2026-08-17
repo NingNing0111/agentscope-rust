@@ -11,7 +11,7 @@
 //!   - n = 拒绝（confirmed=false）→ 生成 DENIED 结果，模型调整
 //!   - a = 总是允许（confirmed=true + rules:[allow]）→ 规则采纳进引擎，此后不再询问
 //!
-//! Requires `DASHSCOPE_API_KEY` for real model calls.
+//! Requires `DEFAULT_API_KEY` for real model calls.
 
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -22,11 +22,11 @@ use agent_scope_agent::{
     Agent, AgentConfig, ContextConfig, PermissionContext, PermissionMode, PermissionRule,
     ReActAgent, ReActConfig,
 };
-use agent_scope_dashscope::DashScopeChatModel;
 use agent_scope_event::{AgentEvent, ConfirmResult, EventBase, UserConfirmResultEvent};
 use agent_scope_message::Msg;
 use agent_scope_message::PermissionRule as MsgPermissionRule;
 use agent_scope_message::factory::user_msg;
+use agent_scope_rig::RigChatModel;
 use agent_scope_tool::{FunctionTool, ToolKit};
 use clap::Parser;
 use futures::StreamExt;
@@ -80,7 +80,7 @@ fn allow_rule(tool: &str) -> MsgPermissionRule {
     MsgPermissionRule { extras }
 }
 
-fn build_agent(model: Arc<DashScopeChatModel>) -> anyhow::Result<ReActAgent> {
+fn build_agent(model: Arc<RigChatModel>) -> anyhow::Result<ReActAgent> {
     let mut toolkit = ToolKit::new();
     toolkit.register(FunctionTool::new(
         "write_note",
@@ -231,11 +231,18 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     dotenv::dotenv().ok();
 
-    let api_key = std::env::var("DASHSCOPE_API_KEY")
+    let api_key = std::env::var("DEFAULT_API_KEY")
         .ok()
         .filter(|k| !k.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("error: 缺少环境变量 DASHSCOPE_API_KEY。请设置后重试。"))?;
-    let model = Arc::new(DashScopeChatModel::new(&api_key, "qwen-plus").with_stream(true));
+        .ok_or_else(|| anyhow::anyhow!("error: 缺少环境变量 DEFAULT_API_KEY。请设置后重试。"))?;
+    // 模型名从 DEFAULT_CHAT_MODEL 读取（fallback qwen3.7-plus）；DEFAULT_URL 可选覆盖端点。
+    let model_name =
+        std::env::var("DEFAULT_CHAT_MODEL").unwrap_or_else(|_| "qwen3.7-plus".to_string());
+    let mut model = RigChatModel::openai(&api_key, &model_name)?;
+    if let Ok(base_url) = std::env::var("DEFAULT_URL") {
+        model = model.with_base_url(base_url);
+    }
+    let model = Arc::new(model.with_stream(true));
 
     // 同一 agent 实例贯穿整个会话：暂停-确认-恢复不重建、不截断历史。
     let agent = build_agent(model)?;

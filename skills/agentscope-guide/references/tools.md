@@ -57,7 +57,7 @@ let tool = FunctionTool::new("calculator", "Evaluate a math expression", calc);
 - `String` → `ToolOutput::Text`,state=Success,`is_last: true`。
 - `ToolResultBlock` → 透传,但强制 `is_last = true`。
 
-**带状态的 handler**:如需访问共享状态,用 `Arc` 共享并在闭包里 clone(参考 `examples/pi-rust` 的 `read_state`/`write_state` 模式)。
+**带状态的 handler**:如需访问共享状态,用 `Arc` 共享并在闭包里 clone。
 
 ```rust
 use std::sync::Arc;
@@ -143,9 +143,9 @@ let block = ToolResultBlock {
 - 自定义 loader:`add_skill_loader(loader)`
 - `ToolKit::new()` 默认带 `SkillViewer`,把可用 Skill 暴露给 Agent。
 
-`SkillViewer::new(callback)` 注册为工具后,Agent 通过 `Skill` 工具按需读取技能说明(参考 `examples/pi-rust` 的 skill 集成)。
+`SkillViewer::new(callback)` 注册为工具后,Agent 通过 `Skill` 工具按需读取技能说明。
 
-**实时扫描**(pi-rust 用法):用 `LocalSkillLoader` 作为回调,每次调用实时重扫目录,运行期新增的 skill 立即生效,无需重启:
+**实时扫描**:用 `LocalSkillLoader` 作为回调,每次调用实时重扫目录,运行期新增的 skill 立即生效,无需重启:
 
 ```rust
 use agent_scope_tool::{LocalSkillLoader, SkillViewer};

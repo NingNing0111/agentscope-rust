@@ -4,16 +4,16 @@
 //! read-only tool calls), a streaming reply that also reacts to a mid-flight
 //! `interrupt()`, and shows how built-in task tools are injected when enabled.
 //!
-//! Requires `DASHSCOPE_API_KEY` for real model calls.
+//! Requires `DEFAULT_API_KEY` for real model calls.
 
 use std::sync::Arc;
 
 use agent_scope_agent::{
     Agent, AgentConfig, ContextConfig, PermissionContext, PermissionRule, ReActAgent, ReActConfig,
 };
-use agent_scope_dashscope::DashScopeChatModel;
 use agent_scope_event::AgentEvent;
 use agent_scope_message::factory::user_msg;
+use agent_scope_rig::RigChatModel;
 use agent_scope_tool::FunctionTool;
 use clap::Parser;
 use futures::StreamExt;
@@ -44,9 +44,16 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     dotenv::dotenv().ok();
 
-    let api_key = std::env::var("DASHSCOPE_API_KEY")
-        .map_err(|_| anyhow::anyhow!("error: 缺少环境变量 DASHSCOPE_API_KEY。请设置后重试。"))?;
-    let model = Arc::new(DashScopeChatModel::new(&api_key, "qwen-plus").with_stream(true));
+    let api_key = std::env::var("DEFAULT_API_KEY")
+        .map_err(|_| anyhow::anyhow!("error: 缺少环境变量 DEFAULT_API_KEY。请设置后重试。"))?;
+    // 模型名从 DEFAULT_CHAT_MODEL 读取（fallback qwen3.7-plus）；DEFAULT_URL 可选覆盖端点。
+    let model_name =
+        std::env::var("DEFAULT_CHAT_MODEL").unwrap_or_else(|_| "qwen3.7-plus".to_string());
+    let mut model = RigChatModel::openai(&api_key, &model_name)?;
+    if let Ok(base_url) = std::env::var("DEFAULT_URL") {
+        model = model.with_base_url(base_url);
+    }
+    let model = Arc::new(model.with_stream(true));
 
     // Tool + a permission context that only allows read-only tools.
     let mut toolkit = agent_scope_tool::ToolKit::new();

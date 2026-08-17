@@ -19,7 +19,7 @@
 ```toml
 [dependencies]
 agent_scope_agent = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
-agent_scope_dashscope = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_rig = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 agent_scope_tool = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 agent_scope_message = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 agent_scope_event = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
@@ -46,7 +46,7 @@ agent_scope_agent = { git = "https://github.com/NingNing0111/agentscope-rust", r
 ```toml
 [dependencies]
 agent_scope_agent = "0.1"
-agent_scope_dashscope = "0.1"
+agent_scope_rig = "0.1"
 agent_scope_tool = "0.1"
 agent_scope_message = "0.1"
 agent_scope_event = "0.1"
@@ -56,7 +56,7 @@ agent_scope_event = "0.1"
 
 | 需要的能力 | 必须依赖 | 可选依赖 |
 |-----------|---------|---------|
-| 最小对话 Agent | `agent_scope_agent`, `agent_scope_dashscope`, `agent_scope_message` | `agent_scope_tool`(加工具) |
+| 最小对话 Agent | `agent_scope_agent`, `agent_scope_rig`, `agent_scope_message` | `agent_scope_tool`(加工具) |
 | 工具调用 | + `agent_scope_tool` | `schemars`(自动生成 schema) |
 | 流式事件渲染 | `agent_scope_event` | `futures`(StreamExt) |
 | 长期记忆 | `agent_scope_memory` | — |

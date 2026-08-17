@@ -88,10 +88,19 @@ impl KnowledgeBase {
 
                 if !exists {
                     let dims = self.embedding_model.model_card().dimensions;
-                    self.vector_store
-                        .create_collection(&self.collection, dims)
-                        .await
-                        .map_err(|e| KnowledgeBaseError::VectorStoreError(e.to_string()))?;
+                    // 维度未知（0）时跳过显式创建：集合由首次 `insert` 的
+                    // `ensure_collection` 按实际向量维度自动创建。常见于 embedding
+                    // 模型不在 provider 内置模型表中（如阿里云 text-embedding-v4），
+                    // rig 查表返回 0，无法在此预建集合（否则 create_collection(0)
+                    // 会因维度非法而失败）。
+                    if dims > 0 {
+                        self.vector_store
+                            .create_collection(&self.collection, dims)
+                            .await
+                            .map_err(|e| {
+                                KnowledgeBaseError::VectorStoreError(e.to_string())
+                            })?;
+                    }
                 }
                 Ok(())
             })

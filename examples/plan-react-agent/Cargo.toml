@@ -11,11 +11,14 @@ path = "src/main.rs"
 
 [dependencies]
 agent_scope_agent = { path = "../../crates/agent_scope_agent" }
-agent_scope_dashscope = { path = "../../crates/agent_scope_dashscope" }
+agent_scope_rig = { path = "../../crates/agent_scope_rig" }
 agent_scope_event = { path = "../../crates/agent_scope_event" }
 agent_scope_message = { path = "../../crates/agent_scope_message" }
 agent_scope_state = { path = "../../crates/agent_scope_state" }
+agent_scope_tool = { path = "../../crates/agent_scope_tool" }
 clap.workspace = true
 dotenv = "0.15"
 futures = "0.3"
+schemars = "0.8"
+serde.workspace = true
 tokio = { version = "1", features = ["full"] }

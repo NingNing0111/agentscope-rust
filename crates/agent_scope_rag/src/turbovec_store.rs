@@ -419,7 +419,15 @@ impl VectorStore for TurbovecVectorStore {
 
     /// Delete all chunks belonging to a document.
     async fn delete(&self, collection: &str, document_id: &str) -> Result<(), VectorStoreError> {
-        let inner = self.collection(collection).await?;
+        // 集合不存在时视为空（幂等删除）：delete 本身是幂等操作，集合缺失
+        // 不应是错误。`KnowledgeBase::insert_document` 会先 delete 再 insert，
+        // 首次插入时集合可能尚未创建（embedding 模型维度未知时由 insert 自动
+        // 建集），此时 delete 必须静默成功。
+        let inner = match self.collection(collection).await {
+            Ok(inner) => inner,
+            Err(VectorStoreError::CollectionNotFound(_)) => return Ok(()),
+            Err(e) => return Err(e),
+        };
         let document_id = document_id.to_string();
         task::spawn_blocking(move || {
             let mut guard = inner

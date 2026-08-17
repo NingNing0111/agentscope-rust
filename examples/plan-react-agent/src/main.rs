@@ -15,17 +15,34 @@
 //! cargo run -p plan-react-agent -- --prompt "..."
 //! ```
 //!
-//! Requires `DASHSCOPE_API_KEY` for real model calls.
+//! Requires `DEFAULT_API_KEY` for real model calls.
 
 use std::sync::Arc;
 
 use agent_scope_agent::{Agent, AgentConfig, ContextConfig, ReActAgent, ReActConfig};
-use agent_scope_dashscope::DashScopeChatModel;
 use agent_scope_event::AgentEvent;
 use agent_scope_message::factory::user_msg;
+use agent_scope_rig::RigChatModel;
 use agent_scope_state::TaskState;
+use agent_scope_tool::{FunctionTool, ToolKit};
 use clap::Parser;
 use futures::StreamExt;
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+/// Arguments for the `read_file` tool — the plan prompt needs to actually read
+/// the README it is asked to summarize, so a read tool must be registered.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+struct ReadInput {
+    path: String,
+}
+
+async fn read_file(input: ReadInput) -> String {
+    match tokio::fs::read_to_string(&input.path).await {
+        Ok(text) => format!("{} bytes:\n{}", text.len(), text),
+        Err(err) => format!("read error: {err}"),
+    }
+}
 
 #[derive(Parser)]
 struct Cli {
@@ -43,23 +60,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     dotenv::dotenv().ok();
 
-    let api_key = std::env::var("DASHSCOPE_API_KEY").map_err(|e| {
+    let api_key = std::env::var("DEFAULT_API_KEY").map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("缺少环境变量 DASHSCOPE_API_KEY。请设置后重试（{e}）。"),
+            format!("缺少环境变量 DEFAULT_API_KEY。请设置后重试（{e}）。"),
         )
     })?;
 
-    let model = Arc::new(DashScopeChatModel::new(&api_key, "qwen-plus").with_stream(true));
+    // 模型名从 DEFAULT_CHAT_MODEL 读取（fallback qwen3.7-plus）；DEFAULT_URL 可选覆盖端点。
+    let model_name =
+        std::env::var("DEFAULT_CHAT_MODEL").unwrap_or_else(|_| "qwen3.7-plus".to_string());
+    let mut model = RigChatModel::openai(&api_key, &model_name)?;
+    if let Ok(base_url) = std::env::var("DEFAULT_URL") {
+        model = model.with_base_url(base_url);
+    }
+    let model = Arc::new(model.with_stream(true));
+
+    // 注册 read_file 工具：默认任务需要实际读取 README.md 才能汇总 crate 清单，
+    // 仅靠内置任务工具无法完成"阅读文件"这一步。
+    let mut toolkit = ToolKit::new();
+    toolkit.register(FunctionTool::new(
+        "read_file",
+        "Read a text file from disk.",
+        read_file,
+    ));
 
     let config = AgentConfig::builder()
         .name("assistant")
         .system_prompt(
             "你是一个任务规划助手。面对 3 步以上的多步工作时，\
              先用 TaskCreate 拆分任务，开始执行前用 TaskUpdate 标记 in_progress，\
-             完成后再用 TaskUpdate 标记 completed，并调用 TaskList 检查进度。",
+             完成后再用 TaskUpdate 标记 completed，并调用 TaskList 检查进度。\
+             需要读取文件内容时使用 read_file 工具。",
         )
         .model(model)
+        .toolkit(toolkit)
         .build()?;
 
     let agent = ReActAgent::new(

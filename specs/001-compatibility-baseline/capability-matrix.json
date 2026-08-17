@@ -3731,6 +3731,63 @@
       "notes": "Speaker identity is preserved via Msg.name; provider-specific formatter compatibility is deferred."
     },
     {
+      "capability_id": "provider-openai-rig-adapter",
+      "category": "provider",
+      "upstream_symbol": "agent_scope_rig::RigChatModel::openai + RigEmbeddingModel::openai",
+      "source_location": "specs/034-rig-llm-integration (rig 0.41.0, OpenAI Chat Completions / Embeddings)",
+      "description": "Feature 034 rig-backed OpenAI provider: chat, streaming, tool calls, structured output (output_schema/bypass), thinking (o-series), embedding (text-embedding-3-*).",
+      "dependencies": [
+        "model-open-ai-chat-model",
+        "embedding-open-ai-embedding-model"
+      ],
+      "priority": "MVP_REQUIRED",
+      "target_level": "L2",
+      "status": "IMPLEMENTED",
+      "test_fixture_ids": [
+        "rig_e2e_tests",
+        "rig_openai_tests",
+        "rig_embedding_tests",
+        "rig_streaming_tests"
+      ],
+      "notes": "仅 OpenAI 提供 embedding；thinking 与 tool_choice=required 无互斥（能力位 false）。DashScope 特有 enable_search 不迁移（已知限制）。"
+    },
+    {
+      "capability_id": "provider-anthropic-rig-adapter",
+      "category": "provider",
+      "upstream_symbol": "agent_scope_rig::RigChatModel::anthropic",
+      "source_location": "specs/034-rig-llm-integration (rig 0.41.0, Anthropic Messages API)",
+      "description": "Feature 034 rig-backed Anthropic provider: chat, streaming, tool calls, structured output (bypass fallback), thinking (extended thinking).",
+      "dependencies": [
+        "model-anthropic-chat-model"
+      ],
+      "priority": "MVP_REQUIRED",
+      "target_level": "L2",
+      "status": "IMPLEMENTED",
+      "test_fixture_ids": [
+        "rig_e2e_tests",
+        "rig_streaming_tests"
+      ],
+      "notes": "无 embedding（编译期不构造 RigEmbeddingModel）。extended thinking 与 tool_choice=required 互斥：能力位 true，call_api 降级 auto + tracing 事件（T030）。DashScope 特有 enable_search 不迁移（已知限制）。"
+    },
+    {
+      "capability_id": "provider-deepseek-rig-adapter",
+      "category": "provider",
+      "upstream_symbol": "agent_scope_rig::RigChatModel::deepseek",
+      "source_location": "specs/034-rig-llm-integration (rig 0.41.0, DeepSeek API)",
+      "description": "Feature 034 rig-backed DeepSeek provider: chat, streaming, tool calls, structured output (bypass fallback), thinking (reasoner).",
+      "dependencies": [
+        "model-deep-seek-chat-model"
+      ],
+      "priority": "MVP_REQUIRED",
+      "target_level": "L2",
+      "status": "IMPLEMENTED",
+      "test_fixture_ids": [
+        "rig_e2e_tests",
+        "rig_streaming_tests"
+      ],
+      "notes": "无 embedding（编译期不构造 RigEmbeddingModel）；thinking 与 tool_choice=required 无互斥。DashScope 特有 enable_search 不迁移（已知限制）。"
+    },
+    {
       "capability_id": "planner-react-agent-in-process",
       "category": "agent",
       "upstream_symbol": "agent.ReActAgent + planner-compatible task decomposition",

@@ -46,10 +46,15 @@ gray_matter = { version = "0.3.2", default-features = false, features = [
 ] }
 globset = "0.4.20"
 walkdir = "2.5.0"
+# Feature 034: rig LLM provider framework. Pinned to crates.io release 0.41.0
+# (0.42.0 is only in the rig repo main branch, unpublished). Default features
+# (rig-core reqwest/derive/rustls + agent) are used; openai/anthropic/deepseek
+# providers are built into rig-core with no extra feature gate.
+rig = "0.41"
 
 [dependencies]
 agent_scope_agent = { path = "crates/agent_scope_agent" }
-agent_scope_dashscope = { path = "crates/agent_scope_dashscope" }
+agent_scope_rig = { path = "crates/agent_scope_rig" }
 agent_scope_tool = { path = "crates/agent_scope_tool" }
 agent_scope_message = { path = "crates/agent_scope_message" }
 agent_scope_event = { path = "crates/agent_scope_event" }

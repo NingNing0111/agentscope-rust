@@ -24,7 +24,7 @@ AgentScope Rust 是一个用 Rust 重构的 Agent 开发框架,以**多 crate wo
 |-------|------|
 | `agent_scope_agent` | **Agent 编排层**:`Agent` trait、`ReActAgent`(reasoning→acting 循环)、`Middleware`、`MemoryMiddleware`、权限、`Planner`、`SubAgent` |
 | `agent_scope_model` | **模型抽象**:`ChatModel` trait、`ChatResponse`、`StreamAccumulator`、`ModelCard` |
-| `agent_scope_dashscope` | **Provider**:`DashScopeChatModel` / `DashScopeEmbeddingModel`(Qwen,OpenAI 兼容端点) |
+| `agent_scope_rig` | **Provider**:`RigChatModel` / `RigEmbeddingModel`(rig-backed,OpenAI / Anthropic / DeepSeek) |
 | `agent_scope_message` | **消息与内容块**:`Msg`、`ContentBlock`、`user_msg`/`assistant_msg`/`system_msg` 工厂 |
 | `agent_scope_event` | **事件类型**:`AgentEvent`(33 变体)流式事件定义 |
 | `agent_scope_tool` | **工具系统**:`Tool` trait、`FunctionTool`、`ToolKit`、Skill 集成 |
@@ -51,7 +51,7 @@ AgentScope Rust 是一个用 Rust 重构的 Agent 开发框架,以**多 crate wo
 ```toml
 [dependencies]
 agent_scope_agent = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
-agent_scope_dashscope = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_rig = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 agent_scope_tool = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 agent_scope_message = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 agent_scope_event = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
@@ -73,7 +73,7 @@ serde_json = "1"
 ```toml
 [dependencies]
 agent_scope_agent = "0.1"
-agent_scope_dashscope = "0.1"
+agent_scope_rig = "0.1"
 agent_scope_tool = "0.1"
 agent_scope_message = "0.1"
 agent_scope_event = "0.1"
@@ -85,37 +85,38 @@ agent_scope_event = "0.1"
 
 ## 3. 配置模型凭据
 
-- 使用 DashScope(Qwen)需要 API Key(以 `sk-` 开头,阿里云百炼平台申请)。
+- 使用 OpenAI 需要 API Key(以 `sk-` 开头,OpenAI 平台申请;也可用 Anthropic / DeepSeek 构造器)。
 - **crate 不读取环境变量**,凭据由你的应用显式传入模型构造函数。
-- 常见做法:入口用 `dotenv` 加载 `.env`,再经 clap 参数或环境变量读入,最后传给 `DashScopeChatModel::new(api_key, model_name)`。
+- 常见做法:入口用 `dotenv` 加载 `.env`,再经 clap 参数或环境变量读入,最后传给 `RigChatModel::openai(api_key, model_name)`。
 
 ```rust
-let api_key = std::env::var("API_KEY")?; // 或从 clap --api-key 读取
+let api_key = std::env::var("DEFAULT_API_KEY")?; // 或从 clap --api-key 读取
+let model_name = std::env::var("DEFAULT_CHAT_MODEL").unwrap_or_else(|_| "qwen3.7-plus".to_string());
 let model = std::sync::Arc::new(
-    agent_scope_dashscope::DashScopeChatModel::new(&api_key, "qwen-plus").with_stream(true)
+    agent_scope_rig::RigChatModel::openai(&api_key, &model_name)?.with_stream(true)
 );
 ```
 
-常用模型名:`qwen-plus`、`qwen-turbo`、`qwen-max`。`with_stream(true)` 让模型默认以流式返回(thinking 内容也会以流式 `ThinkingBlock` 返回)。
+构造器:`openai`(Chat Completions)/ `anthropic`(Messages API)/ `deepseek`(OpenAI 兼容端点)。`with_stream(true)` 让模型默认以流式返回(thinking 内容也会以流式 `ThinkingBlock` 返回)。
 
-🔗 详细参考:[`references/model.md`](references/model.md)(`DashScopeChatModel` 全部字段、`DashScopeParameters`、thinking 模式、自定义 Provider)
+🔗 详细参考:[`references/model.md`](references/model.md)(`RigChatModel` 配置、`RigParameters`、thinking 模式、自定义 Provider)
 
 ---
 
 ## 4. 实现你的第一个 Agent
 
-完整代码见仓库 `examples/pi-rust`(端到端 coding Agent)。下面是最小可运行路径,共四步。
+下面是最小可运行路径,共四步。
 
 ### 4.1 创建模型
 
 ```rust
 use std::sync::Arc;
-use agent_scope_dashscope::DashScopeChatModel;
+use agent_scope_rig::RigChatModel;
 
-let model = Arc::new(DashScopeChatModel::new(api_key, "qwen-plus").with_stream(true));
+let model = Arc::new(RigChatModel::openai(api_key, "qwen3.7-plus")?.with_stream(true));
 ```
 
-需要接入非 DashScope 服务时,实现 `agent_scope_model::ChatModel` trait 即可(参考 `agent_scope_dashscope` 的实现)。
+需要接入非内置厂商(OpenAI / Anthropic / DeepSeek 之外)时,实现 `agent_scope_model::ChatModel` trait 即可(参考 `agent_scope_rig` 的实现)。
 
 ### 4.2 注册工具
 
@@ -279,14 +280,10 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
 
 ```rust
 use std::sync::Arc;
-use agent_scope_embedding::EmbeddingModelCard;
-use agent_scope_dashscope::DashScopeEmbeddingModel;
 use agent_scope_rag::{KnowledgeBase, RAGMiddleware, RAGMode, TurbovecVectorStore};
+use agent_scope_rig::RigEmbeddingModel;
 
-let embedding = Arc::new(DashScopeEmbeddingModel::new(
-    api_key.clone(),
-    EmbeddingModelCard::new("text-embedding-v3", 1024, false),
-));
+let embedding = Arc::new(RigEmbeddingModel::openai(&api_key, "text-embedding-3-small")?);
 let vector_store = Arc::new(TurbovecVectorStore::new(4)?); // 参数为 bit_width,合法值 2/3/4
 let kb = Arc::new(KnowledgeBase::new(
     "project".to_string(),
@@ -406,18 +403,24 @@ use agent_scope_agent::{
     Agent, AgentConfig, ContextConfig, MemoryMiddleware, PermissionContext, PermissionRule,
     ReActAgent, ReActConfig,
 };
-use agent_scope_dashscope::DashScopeChatModel;
 use agent_scope_memory::MemoryConfig;
 use agent_scope_message::factory::user_msg;
+use agent_scope_rig::RigChatModel;
 use futures::StreamExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
-    let api_key = std::env::var("API_KEY").expect("set API_KEY");
+    let api_key = std::env::var("DEFAULT_API_KEY").expect("set DEFAULT_API_KEY");
 
-    // 1. 模型
-    let model = Arc::new(DashScopeChatModel::new(&api_key, "qwen-plus").with_stream(true));
+    // 1. 模型（模型名 DEFAULT_CHAT_MODEL，fallback qwen3.7-plus；DEFAULT_URL 可选覆盖端点）
+    let model_name =
+        std::env::var("DEFAULT_CHAT_MODEL").unwrap_or_else(|_| "qwen3.7-plus".to_string());
+    let mut model = RigChatModel::openai(&api_key, &model_name)?;
+    if let Ok(base_url) = std::env::var("DEFAULT_URL") {
+        model = model.with_base_url(base_url);
+    }
+    let model = Arc::new(model.with_stream(true));
 
     // 2. 工具(见第 4.2 节)
     let mut toolkit = /* 注册你的 FunctionTool */;
@@ -468,32 +471,31 @@ async fn main() -> anyhow::Result<()> {
 | 想加的能力 | 改动位置 | 参考 |
 |-----------|---------|------|
 | 更多工具 | `ToolKit` 里 `register` | `references/tools.md` |
-| thinking 模式 | `model.parameters.enable_thinking = true` | `references/model.md` |
+| thinking 模式 | 用支持 thinking 的模型(如 OpenAI o 系)构造 `RigChatModel`,流式返回 `ThinkingBlock` | `references/model.md` |
 | RAG 文档知识库 | 构造 `RAGMiddleware` 加入 middlewares | `references/rag.md` |
 | 自定义 middleware(日志/审计) | 实现 `Middleware` trait | `references/agent.md` §6 |
 | 会话持久化 | `agent_scope_state` 的 `SessionStore` | `references/session.md` |
 | 多步骤规划 | `Planner::new(agent, planner_model, config)` | `references/agent.md` §8 |
 | 子任务委派 | `SubAgentRegistry` + `delegate_once()` | `references/agent.md` §9 |
 | 文件/Shell 操作 | `LocalWorkspace` 或 `LocalSandboxSession` | `references/workspace.md` |
-| 事件完整渲染 | match 全部事件族,参考 `examples/pi-rust/src/render.rs` | `references/events.md` |
+| 事件完整渲染 | match 全部事件族,分派并打印每个变体 | `references/events.md` |
 
 ---
 
 ## 11. 运行仓库自带示例
 
-```bash
-# 从仓库根目录克隆后
-cargo run -p pi-rust -- --help
-cargo run -p pi-rust -- --prompt "请用一句话说明你是什么。"
+从仓库根目录运行任意示例（先按「配置凭据」在 `.env` 设置 `DEFAULT_API_KEY`）：
 
-# 交互式 coding Agent(需 API_KEY)
-export API_KEY="sk-your-key"
-cargo run -p pi-rust -- --workdir .pi-rust --cwd . --model qwen-plus --mode coding --show-events
+```bash
+cargo run -p quickstart -- --prompt "你好，请用一句话介绍你自己。"
+cargo run -p chat -- --prompt "你好"
+cargo run -p agent -- --prompt "请用一句话介绍你自己。"
+cargo run -p subagent                # 工具驱动：主 Agent 自主创建并委托子智能体
 ```
 
-`examples/pi-rust` 演示了完整的真实用法:模型、ReAct 循环、四个编码工具(Read/Write/Edit/Bash)、Coding workflow、Skills 加载、权限、MemoryMiddleware、RAGMiddleware、会话持久化。它是"真实 Agent 长什么样"的最佳参考。
+`examples/` 下的 13 个示例按能力拆分（工具、MCP、Skill、记忆、RAG、Workspace、沙箱、ReAct 规划、SubAgent、HITL 等），每个演示一个真实用法。`examples/chat` 展示流式事件全量分派，`examples/subagent` 展示工具驱动的多智能体协作。
 
-> **Skill 实时扫描**:pi-rust 的 `Skill` 工具不再使用启动时快照,而是每次调用实时扫描 `workspace/skills` 目录(`LocalSkillLoader::list_skills_blocking`)。运行中把新 skill 目录复制进 `workspace/skills` 立即生效,无需重启;`PermissionRule::allow("Skill")` 始终开启以支持运行期动态装入。
+> **Skill 实时扫描**:`Skill` 工具不再使用启动时快照,而是每次调用实时扫描 `workspace/skills` 目录(`LocalSkillLoader::list_skills_blocking`)。运行中把新 skill 目录复制进 `workspace/skills` 立即生效,无需重启;`PermissionRule::allow("Skill")` 始终开启以支持运行期动态装入。
 
 ---
 
@@ -507,7 +509,7 @@ cargo run -p pi-rust -- --workdir .pi-rust --cwd . --model qwen-plus --mode codi
 | `reply(None)` 报 `NoContentToReply` | 上下文为空;先传用户消息或调用 `observe(Some(...))` |
 | 工具输入解析失败 | 模型生成的 JSON 与参数类型不符;工具 schema 描述写清楚 |
 | 模型不调用工具 | 确认 `AgentConfig` 传了 `toolkit`,且 system prompt 里引导使用工具 |
-| 事件里没有 thinking 内容 | thinking 需要 `enable_thinking = true` 且模型默认流式(`with_stream(true)`) |
+| 事件里没有 thinking 内容 | 需要支持 thinking 的模型(如 OpenAI o 系)且模型默认流式(`with_stream(true)`) |
 | 想禁止某些工具被调用 | 加 `PermissionRule::deny("tool_name*")`,或用 `PermissionMode::Explore` 白名单 |
 
 ---
@@ -521,7 +523,7 @@ cargo run -p pi-rust -- --workdir .pi-rust --cwd . --model qwen-plus --mode codi
 | [`references/overview.md`](references/overview.md) | 项目概览、crate 地图、依赖 DAG、何时用哪个 crate |
 | [`references/dependencies.md`](references/dependencies.md) | Cargo.toml 三种引入方式、按能力选依赖、常见坑 |
 | [`references/messages.md`](references/messages.md) | `Msg`/`ContentBlock` 全字段、工厂函数、角色校验、序列化协议 |
-| [`references/model.md`](references/model.md) | `ChatModel` trait、`ModelCallResult`、`StreamAccumulator`、`DashScopeChatModel`/`Parameters`、thinking |
+| [`references/model.md`](references/model.md) | `ChatModel` trait、`ModelCallResult`、`StreamAccumulator`、`RigChatModel`/`RigParameters`、thinking |
 | [`references/events.md`](references/events.md) | `AgentEvent` 33 变体分组、发布顺序、End 累积内容、`AppendEvent`、取消 |
 | [`references/tools.md`](references/tools.md) | `Tool` trait、`FunctionTool`、`ToolKit`、`ToolExecOutput`、生命周期、Skill 集成 |
 | [`references/agent.md`](references/agent.md) | `Agent` trait、`ReActAgent`、`AgentConfig`/`ReActConfig`/`ContextConfig`、`Middleware`、权限、`Planner`、`SubAgent` |
@@ -535,6 +537,6 @@ cargo run -p pi-rust -- --workdir .pi-rust --cwd . --model qwen-plus --mode codi
 ## 14. 进一步阅读
 
 - 仓库内文档:`docs/zh/getting-started.md`(30 分钟上手)、`docs/zh/modules/*.md`(消息、事件、模型、工具、Agent、记忆、RAG、Workspace、Sandbox 等分模块详解)
-- 完整参考实现:`examples/pi-rust`(crate 用法、CLI、REPL、会话)
+- 示例参考:`examples/quickstart`(最简)、`examples/chat`(流式事件)、`examples/subagent`(多智能体协作)
 - 版本说明:`CHANGELOG.md`;Python 版参考:`migration.md`
 - 相关外部项目:TurboVec(向量存储)、microsandbox(沙箱后端)

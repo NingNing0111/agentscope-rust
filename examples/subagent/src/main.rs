@@ -5,15 +5,15 @@
 //! - `SubAgentDelegate`：主 Agent 调用它把任务**委托**给已创建的子智能体并收取结果。
 //!
 //! 主 Agent 的 ReAct 循环会自主决定何时创建哪些子智能体、如何拆解与派发任务，
-//! 最后汇总各子智能体的产出向用户汇报。子智能体本身也是真实 DashScope 模型调用，
+//! 最后汇总各子智能体的产出向用户汇报。子智能体本身也是真实 OpenAI 模型调用，
 //! 工具与主 Agent 通过共享的 `SubAgentRegistry` 协作。
 //!
-//! 凭据从项目根目录 `.env` 读取（`DASHSCOPE_API_KEY`），也支持环境变量。
+//! 凭据从项目根目录 `.env` 读取（`DEFAULT_API_KEY`），也支持环境变量。
 //!
 //! 运行：
 //! ```bash
-//! cargo run -p subagent                            # 默认模型 qwen-plus
-//! cargo run -p subagent -- --model qwen-max        # 指定模型
+//! cargo run -p subagent                            # 默认模型 qwen3.7-plus（可用 .env 的 DEFAULT_CHAT_MODEL 覆盖）
+//! cargo run -p subagent -- --model <model>         # 指定模型
 //! cargo run -p subagent -- --task "你的自定义任务"  # 自定义任务
 //! ```
 
@@ -24,9 +24,9 @@ use agent_scope_agent::{
     Agent, AgentConfig, CollaborationResult, CollaborationStatus, ContextConfig, DelegationRequest,
     ReActAgent, ReActConfig, SubAgent, SubAgentRegistry, delegate_once,
 };
-use agent_scope_dashscope::DashScopeChatModel;
 use agent_scope_event::AgentEvent;
 use agent_scope_message::{ContentBlock, Msg, Role, TextBlock};
+use agent_scope_rig::RigChatModel;
 use agent_scope_tool::{FunctionTool, ToolKit};
 use clap::Parser;
 use futures::StreamExt;
@@ -40,8 +40,8 @@ use tokio::sync::RwLock as AsyncRwLock;
 
 #[derive(Parser)]
 struct Cli {
-    /// 使用的模型名
-    #[arg(long, default_value = "qwen-plus")]
+    /// 使用的模型名（也可用 .env 的 DEFAULT_CHAT_MODEL 覆盖）
+    #[arg(long, default_value = "qwen3.7-plus")]
     model: String,
     /// 委派给主 Agent 的任务（默认使用内置示例任务）
     #[arg(long)]
@@ -83,7 +83,11 @@ fn agent_config(
     model_name: &str,
     toolkit: Option<ToolKit>,
 ) -> Result<AgentConfig, Box<dyn std::error::Error>> {
-    let model = Arc::new(DashScopeChatModel::new(api_key, model_name).with_stream(false));
+    let mut model = RigChatModel::openai(api_key, model_name)?;
+    if let Ok(base_url) = std::env::var("DEFAULT_URL") {
+        model = model.with_base_url(base_url);
+    }
+    let model = Arc::new(model.with_stream(false));
     let mut builder = AgentConfig::builder()
         .name(name)
         .system_prompt(format!(
@@ -246,16 +250,19 @@ const DEFAULT_TASK: &str = "\
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     dotenv::dotenv().ok();
-    let api_key = std::env::var("DASHSCOPE_API_KEY").map_err(|e| {
+    let api_key = std::env::var("DEFAULT_API_KEY").map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("缺少环境变量 DASHSCOPE_API_KEY。请确认项目根目录 .env 中已配置（{e}）。"),
+            format!("缺少环境变量 DEFAULT_API_KEY。请确认项目根目录 .env 中已配置（{e}）。"),
         )
     })?;
 
+    // 模型名：优先 .env 的 DEFAULT_CHAT_MODEL，fallback CLI --model（默认 qwen3.7-plus）。
+    let model_name = std::env::var("DEFAULT_CHAT_MODEL").unwrap_or_else(|_| cli.model.clone());
+
     println!(
-        "=== SubAgent 工具驱动演示（真实 DashScope 模型: {}）===",
-        cli.model
+        "=== SubAgent 工具驱动演示（真实 OpenAI 模型: {}）===",
+        model_name
     );
 
     // 1. 共享注册表：两个工具与主 Agent 共用一个 registry。
@@ -263,7 +270,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. 把 SubAgent 封装成两个内置工具，注册进主 Agent 的 ToolKit。
     let (create_tool, delegate_tool) =
-        make_subagent_tools(registry.clone(), api_key.clone(), cli.model.clone());
+        make_subagent_tools(registry.clone(), api_key.clone(), model_name.clone());
     let mut toolkit = ToolKit::new();
     toolkit.register(create_tool);
     toolkit.register(delegate_tool);
@@ -277,7 +284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "你会通过 SubAgentCreate / SubAgentDelegate 工具指挥一组真实子智能体完成任务。\
              先创建再委托，不要调用未创建的子智能体。",
             &api_key,
-            &cli.model,
+            &model_name,
             Some(toolkit),
         )?,
         ReActConfig::default(),

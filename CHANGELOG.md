@@ -20,7 +20,8 @@ Compatibility baseline: AgentScope Python v2.0.5 (commit `27b6a0d2a2afedf53462c9
 #### Model & Provider
 - **Model API** (Feature 003): `ChatModel` trait, `ChatResponse`, `StreamAccumulator`, `Formatter`, `ModelCard`, `ToolChoice`, `ChatUsage`, `ModelError`, structured output support
 - **Provider Architecture** (Feature 004): Pluggable provider design with `DashScopeFormatter` separation
-- **DashScope Provider** (Feature 005): `DashScopeChatModel`, `DashScopeEmbeddingModel`, Qwen/Model Studio models via OpenAI-compatible API, streaming SSE support
+- **DashScope Provider** (Feature 005): `DashScopeChatModel`, `DashScopeEmbeddingModel`, Qwen/Model Studio models via OpenAI-compatible API, streaming SSE support. **Superseded by Feature 034 (removed).**
+- **Rig LLM Integration** (Feature 034): `agent_scope_rig` provider crate — `RigChatModel`/`RigEmbeddingModel` backed by the `rig` framework for OpenAI / Anthropic / DeepSeek, streaming SSE, tool calls, structured output, thinking blocks, deterministic e2e tests, capability matrix update; `agent_scope_dashscope` removed and 7 examples migrated
 
 #### Tool System
 - **Tool System** (Feature 006): `Tool` trait, `FunctionTool` adapter (auto schema generation via `schemars`), `ToolKit` registry with OpenAI-compatible schema output

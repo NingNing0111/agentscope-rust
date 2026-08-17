@@ -1229,6 +1229,10 @@ pub(crate) async fn emit_denied_tool_result(
     message: &str,
     base: fn() -> EventBase,
 ) {
+    // FR-002: a denied result is a complete result — newline-terminate it
+    // (idempotent) for both the emitted delta and the stored context text.
+    let mut message = message.to_string();
+    ensure_trailing_newline(&mut message);
     let _ = event_tx
         .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
             base: base(),
@@ -1242,7 +1246,7 @@ pub(crate) async fn emit_denied_tool_result(
             base: base(),
             reply_id: reply_id.into(),
             tool_call_id: tool_call.id.clone(),
-            delta: message.to_string(),
+            delta: message.clone(),
         }))
         .await;
     let _ = event_tx
@@ -1252,10 +1256,10 @@ pub(crate) async fn emit_denied_tool_result(
             tool_call_id: tool_call.id.clone(),
             state: ToolResultState::Denied,
             metadata: std::collections::HashMap::new(),
-            output: Some(message.to_string()),
+            output: Some(message.clone()),
         }))
         .await;
-    add_tool_result_to_context(inner, tool_call, message, ToolResultState::Denied);
+    add_tool_result_to_context(inner, tool_call, &message, ToolResultState::Denied);
 }
 
 pub(crate) fn add_tool_result_to_context(
@@ -1638,6 +1642,16 @@ async fn emit_text_events_only(
 // Tool result emission (US3: streaming tool output)
 // ---------------------------------------------------------------------------
 
+/// Append a trailing newline to a complete tool result text if missing
+/// (idempotent). Feature 033 FR-002 — consecutive tool results must stay on
+/// their own lines. Interrupted/cancelled results (contract §0.3) must NOT go
+/// through this path.
+pub(crate) fn ensure_trailing_newline(text: &mut String) {
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+}
+
 /// Emit tool result events and return the collected output text.
 ///
 /// For `ToolExecOutput::Complete`: emits Start → Delta → End, returns the text.
@@ -1656,12 +1670,15 @@ pub(crate) async fn emit_tool_result_and_collect(
     match result {
         Ok(ToolExecOutput::Complete(chunk)) => {
             let st = chunk.state.clone();
-            let text = match &chunk.output {
+            let mut text = match &chunk.output {
                 ToolOutput::Text(t) => t.clone(),
                 ToolOutput::Blocks(_) => "[blocks]".into(),
             };
+            // FR-002: a complete result is newline-terminated so consecutive
+            // tool results don't concatenate (idempotent).
+            ensure_trailing_newline(&mut text);
             let output = match &chunk.output {
-                ToolOutput::Text(t) => Some(t.clone()),
+                ToolOutput::Text(_) => Some(text.clone()),
                 // [blocks] output is a placeholder; omit complete output to avoid
                 // misleading consumers (research Decision 5).
                 ToolOutput::Blocks(_) => None,
@@ -1771,6 +1788,10 @@ pub(crate) async fn emit_tool_result_and_collect(
                     }
                 }
             }
+
+            // FR-002: the completed (Success or Error) stream result is
+            // newline-terminated; the Interrupted returns above already exited.
+            ensure_trailing_newline(&mut collected);
 
             let _ = tx
                 .send(AgentEvent::ToolResultEnd(ToolResultEndEvent {

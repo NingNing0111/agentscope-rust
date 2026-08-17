@@ -680,6 +680,13 @@ pub(crate) async fn run_react_loop(
                                 }
                             }
 
+                            // FR-002: newline-terminate the completed stream
+                            // result; the Interrupted path cleared `collected`
+                            // above and must stay bare (contract §0.3).
+                            if final_state != ToolResultState::Interrupted {
+                                super::streaming_reactor::ensure_trailing_newline(&mut collected);
+                            }
+
                             let _ = event_tx
                                 .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
                                     base: base(),
@@ -733,12 +740,15 @@ pub(crate) async fn run_react_loop(
                         }
                         Ok(ToolExecOutput::Complete(chunk)) => {
                             let result_state = chunk.state.clone();
-                            let output_text = match &chunk.output {
+                            let mut output_text = match &chunk.output {
                                 ToolOutput::Text(t) => t.clone(),
                                 ToolOutput::Blocks(_) => "[blocks]".into(),
                             };
+                            // FR-002: a complete batch result is newline-terminated
+                            // (idempotent) so consecutive results don't concatenate.
+                            super::streaming_reactor::ensure_trailing_newline(&mut output_text);
                             let output = match &chunk.output {
-                                ToolOutput::Text(t) => Some(t.clone()),
+                                ToolOutput::Text(_) => Some(output_text.clone()),
                                 ToolOutput::Blocks(_) => None,
                             };
 
@@ -798,7 +808,11 @@ pub(crate) async fn run_react_loop(
                         Err(tool_err) => {
                             // Emit an actionable feedback delta so the failure is
                             // visible in the event stream (batch path).
-                            let feedback = tool_error_feedback(&tc_mut.name, &tool_err, retries);
+                            let mut feedback =
+                                tool_error_feedback(&tc_mut.name, &tool_err, retries);
+                            // FR-002: error feedback is a complete result —
+                            // newline-terminate it (idempotent).
+                            super::streaming_reactor::ensure_trailing_newline(&mut feedback);
                             let _ = event_tx
                                 .send(AgentEvent::ToolResultStart(ToolResultStartEvent {
                                     base: base(),

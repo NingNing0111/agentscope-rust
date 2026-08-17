@@ -30,7 +30,11 @@ use futures::StreamExt;
 #[derive(Parser)]
 struct Cli {
     /// Prompt sent to the agent.
-    #[arg(short, long, default_value = "请规划并执行：1) 阅读本仓库根目录的 README.md；2) 列出其中提到的三个 crate；3) 汇总成一段话。")]
+    #[arg(
+        short,
+        long,
+        default_value = "请规划并执行：1) 阅读本仓库根目录的 README.md；2) 列出其中提到的三个 crate；3) 汇总成一段话。"
+    )]
     prompt: String,
 }
 
@@ -85,6 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(input) = &e.input {
                     println!("  input: {input}");
                 }
+                // Feature 033: blank line so each tool call's input↔result pair
+                // reads as a unit (tool results now carry a trailing newline).
+                println!();
             }
             AgentEvent::ToolResultTextDelta(d) => print!("{}", d.delta),
             AgentEvent::TextBlockDelta(d) => print!("{}", d.delta),

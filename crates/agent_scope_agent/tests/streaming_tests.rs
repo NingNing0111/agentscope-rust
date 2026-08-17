@@ -35,7 +35,7 @@ async fn wait_until_reusable(agent: &ReActAgent) {
 }
 
 mod mocks;
-use mocks::{MockModel, MockStreamingModel, MockStreamingTool};
+use mocks::{MockModel, MockStreamingModel, MockStreamingTool, ScriptedModel, ScriptedResponse};
 
 // ---------------------------------------------------------------------------
 // Pre-existing streaming tests
@@ -1324,4 +1324,269 @@ async fn test_streaming_cancellation_after_pre_acting_prevents_tool_dispatch() {
     wait_until_reusable(&agent).await;
 
     assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
+}
+
+// ===========================================================================
+// Feature 033 US1: display-layer newline completion (T004 tests)
+// ===========================================================================
+
+/// Collect the text payloads of stored tool-result blocks from agent state.
+fn stored_tool_result_texts(state: &agent_scope_state::AgentState) -> Vec<String> {
+    state
+        .context
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|cb| match cb {
+            ContentBlock::ToolResult(tr) => match &tr.output {
+                ToolOutput::Text(t) => Some(t.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// T004: Three consecutive TaskCreate results in one reply — each complete
+/// `ToolResultTextDelta` must be newline-terminated and consecutive results
+/// must not concatenate into a single line.
+#[tokio::test]
+async fn test_streaming_consecutive_task_tool_results_newline_terminated() {
+    let model = Arc::new(ScriptedModel::new(
+        "scripted",
+        vec![
+            ScriptedResponse::ToolCall {
+                id: "c1".into(),
+                name: "TaskCreate".into(),
+                input: r#"{"subject":"First","description":"d"}"#.into(),
+            },
+            ScriptedResponse::ToolCall {
+                id: "c2".into(),
+                name: "TaskCreate".into(),
+                input: r#"{"subject":"Second","description":"d"}"#.into(),
+            },
+            ScriptedResponse::ToolCall {
+                id: "c3".into(),
+                name: "TaskCreate".into(),
+                input: r#"{"subject":"Third","description":"d"}"#.into(),
+            },
+            ScriptedResponse::Text("all done".into()),
+        ],
+    ));
+    let config = AgentConfig::builder()
+        .name("tasker")
+        .model(model)
+        .task_tools_enabled(true)
+        .build()
+        .unwrap();
+    let agent = ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![],
+    )
+    .unwrap();
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "create three tasks").unwrap()]))
+        .await
+        .unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    let deltas: Vec<String> = events
+        .iter()
+        .filter_map(|e| {
+            if let agent_scope_event::AgentEvent::ToolResultTextDelta(te) = e {
+                Some(te.delta.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        deltas.len(),
+        3,
+        "expected exactly 3 complete ToolResultTextDelta events, got {deltas:?}"
+    );
+    for d in &deltas {
+        assert!(d.ends_with('\n'), "tool result must end with \\n: {d:?}");
+        assert!(
+            !d.ends_with("\n\n"),
+            "tool result must not double-newline: {d:?}"
+        );
+    }
+    // Consecutive results must not concatenate: joining keeps 3 lines.
+    assert_eq!(
+        deltas.join("").lines().count(),
+        3,
+        "consecutive tool results concatenated: {deltas:?}"
+    );
+}
+
+/// A non-task tool whose complete result text has no trailing newline —
+/// FR-002 requires the display layer to append it idempotently.
+struct PlainTool;
+#[async_trait::async_trait]
+impl Tool for PlainTool {
+    fn name(&self) -> &str {
+        "plain"
+    }
+    fn description(&self) -> &str {
+        "A plain text tool"
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    async fn call(
+        &self,
+        _input: serde_json::Value,
+    ) -> Result<ToolExecOutput, agent_scope_tool::ToolError> {
+        Ok(ToolExecOutput::Complete(ToolResultBlock::new(
+            "p1".into(),
+            "plain".into(),
+            ToolOutput::Text("plain result".into()),
+        )))
+    }
+}
+
+/// T004 (FR-002): a non-task tool result lacking a trailing newline must be
+/// newline-completed both in the emitted delta and in the context-stored text.
+#[tokio::test]
+async fn test_streaming_display_layer_appends_newline_to_plain_tool_text() {
+    let model = Arc::new(ScriptedModel::new(
+        "scripted",
+        vec![
+            ScriptedResponse::ToolCall {
+                id: "p1".into(),
+                name: "plain".into(),
+                input: "{}".into(),
+            },
+            ScriptedResponse::Text("done".into()),
+        ],
+    ));
+    let mut tk = ToolKit::new();
+    tk.register(PlainTool);
+    let config = AgentConfig::builder()
+        .name("agent")
+        .model(model)
+        .toolkit(tk)
+        .build()
+        .unwrap();
+    let agent = ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![],
+    )
+    .unwrap();
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run plain").unwrap()]))
+        .await
+        .unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    let deltas: Vec<String> = events
+        .iter()
+        .filter_map(|e| {
+            if let agent_scope_event::AgentEvent::ToolResultTextDelta(te) = e {
+                Some(te.delta.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        deltas.len(),
+        1,
+        "expected exactly 1 complete ToolResultTextDelta event, got {deltas:?}"
+    );
+    assert!(
+        deltas[0].ends_with('\n'),
+        "complete tool result must be newline-terminated (FR-002): {:?}",
+        deltas[0]
+    );
+
+    // The text persisted via add_tool_result_to_context matches the delta.
+    let stored = stored_tool_result_texts(&agent.try_state());
+    assert_eq!(
+        stored.len(),
+        1,
+        "expected 1 stored tool result, got {stored:?}"
+    );
+    assert!(
+        stored[0].ends_with('\n'),
+        "stored tool result must be newline-terminated: {:?}",
+        stored[0]
+    );
+}
+
+/// T004 (contract §0.3): an interrupted/cancelled tool result must NOT be
+/// newline-completed — in particular no bare `\n` residue may be left behind.
+#[tokio::test]
+async fn test_streaming_no_newline_residue_on_interrupted_tool() {
+    let chunks = vec![tool_call_chunk("tc1", "stream_echo", r#"{"text":"hello"}"#)];
+    let model = Arc::new(MockStreamingModel::new("mock", chunks));
+
+    let tool_chunks: Vec<Result<ToolResultBlock, agent_scope_tool::ToolError>> = (0..10)
+        .map(|i| {
+            let mut trb = ToolResultBlock::new(
+                "tc1".into(),
+                "stream_echo".into(),
+                ToolOutput::Text(format!("c{i} ")),
+            );
+            trb.is_last = i == 9;
+            Ok(trb)
+        })
+        .collect();
+    let stream_tool = MockStreamingTool::new("stream_echo", tool_chunks);
+
+    let mut tk = ToolKit::new();
+    tk.register(stream_tool);
+    let config = AgentConfig::builder()
+        .name("agent")
+        .model(model)
+        .toolkit(tk)
+        .build()
+        .unwrap();
+    let agent = ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![],
+    )
+    .unwrap();
+
+    {
+        let mut stream = agent
+            .reply_stream(Some(vec![user_msg("user", "stream hello").unwrap()]))
+            .await
+            .unwrap();
+        // Read a single event then drop the stream to interrupt the tool mid-flight.
+        let _ = stream.next().await;
+        drop(stream);
+    }
+
+    wait_until_reusable(&agent).await;
+
+    // The interrupted result is not persisted at all (streaming_reactor.rs
+    // guards add_tool_result_to_context on cancellation) — and in no case may a
+    // bare `\n` residue be stored.
+    let stored = stored_tool_result_texts(&agent.try_state());
+    for t in &stored {
+        assert_ne!(
+            t.as_str(),
+            "\n",
+            "interrupted tool left bare newline residue"
+        );
+        assert!(
+            !t.ends_with("\n\n"),
+            "interrupted tool left double-newline residue: {t:?}"
+        );
+    }
 }

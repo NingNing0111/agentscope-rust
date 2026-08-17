@@ -21,12 +21,40 @@ use serde_json::Value as JsonValue;
 /// Names of the built-in task planning tools.
 pub const TASK_TOOL_NAMES: [&str; 4] = ["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"];
 
+/// Descriptions longer than this are truncated in TaskGet output (Feature 033,
+/// contract §3). Counted in characters (not bytes) so multi-byte text is safe.
+pub const TASK_DESCRIPTION_MAX_CHARS: usize = 200;
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
+/// Truncate a description for TaskGet output when it exceeds
+/// `TASK_DESCRIPTION_MAX_CHARS`. Truncation only affects the rendered text —
+/// the stored `Task.description` and the data model are unchanged (§3).
+fn truncate_description(description: &str) -> String {
+    let len = description.chars().count();
+    if len > TASK_DESCRIPTION_MAX_CHARS {
+        let prefix: String = description
+            .chars()
+            .take(TASK_DESCRIPTION_MAX_CHARS)
+            .collect();
+        format!("{prefix}… (truncated, {len} chars total)")
+    } else {
+        description.to_string()
+    }
+}
+
 /// Build a one-shot text tool result with the given state.
+///
+/// The output text is always newline-terminated (Feature 033, approved output
+/// deviation): a trailing `\n` is appended if the text does not already end
+/// with one, so consecutive complete tool results render as separate lines.
 fn text_chunk(name: &str, text: String, state: ToolResultState) -> ToolExecOutput {
+    let mut text = text;
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
     ToolExecOutput::Complete(ToolResultBlock {
         id: uuid::Uuid::new_v4().as_simple().to_string(),
         name: name.to_string(),
@@ -289,7 +317,7 @@ impl Tool for TaskGetTool {
         let mut lines = vec![
             format!("Task (id={}): {}", task.id, task.subject),
             format!("Status: {}", state_str(task.state)),
-            format!("Description: {}", task.description),
+            format!("Description: {}", truncate_description(&task.description)),
         ];
         if let Some(owner) = &task.owner {
             lines.push(format!("Owner: {owner}"));
@@ -422,24 +450,26 @@ impl Tool for TaskUpdateTool {
             ));
         };
 
-        let mut updated_fields: Vec<&'static str> = Vec::new();
+        // Feature 033 US2 (FR-003): report the ACTUAL applied values, not just
+        // field names — (field, value) pairs rendered in processing order.
+        let mut updated_fields: Vec<(String, String)> = Vec::new();
 
         // subject — empty string counts as "not provided" (Python truthiness)
         if let Some(subject) = &params.subject
             && !subject.is_empty()
         {
             state.tasks_context.tasks[index].subject = subject.clone();
-            updated_fields.push("subject");
+            updated_fields.push(("subject".to_string(), subject.clone()));
         }
 
         // description — provided (even empty) updates
         if let Some(description) = &params.description {
             state.tasks_context.tasks[index].description = description.clone();
-            updated_fields.push("description");
+            updated_fields.push(("description".to_string(), description.clone()));
         }
 
         // add_blocks — only non-empty lists are processed; references to
-        // non-existent ids are ignored
+        // non-existent ids are ignored; report only ACTUALLY added ids
         if let Some(new_blocks) = &params.add_blocks
             && !new_blocks.is_empty()
         {
@@ -450,7 +480,7 @@ impl Tool for TaskUpdateTool {
                 .map(|t| t.id.clone())
                 .collect();
             let current = state.tasks_context.tasks[index].blocks.clone();
-            let mut added_any = false;
+            let mut added_ids: Vec<String> = Vec::new();
             for block_id in new_blocks {
                 // Guard against a task blocking itself (a self-cycle would make
                 // it permanently blocked).
@@ -461,11 +491,14 @@ impl Tool for TaskUpdateTool {
                     state
                         .tasks_context
                         .update_block_relation(&params.task_id, block_id);
-                    added_any = true;
+                    added_ids.push(block_id.clone());
                 }
             }
-            if added_any {
-                updated_fields.push("add_blocks");
+            if !added_ids.is_empty() {
+                updated_fields.push((
+                    "add_blocks".to_string(),
+                    format!("[{}]", added_ids.join(", ")),
+                ));
             }
         }
 
@@ -478,7 +511,7 @@ impl Tool for TaskUpdateTool {
                 .map(|t| t.id.clone())
                 .collect();
             let current = state.tasks_context.tasks[index].blocked_by.clone();
-            let mut added_any = false;
+            let mut added_ids: Vec<String> = Vec::new();
             for blocked_by_id in new_blocked_by {
                 // Guard against a task blocking itself.
                 if blocked_by_id != &params.task_id
@@ -488,11 +521,14 @@ impl Tool for TaskUpdateTool {
                     state
                         .tasks_context
                         .update_block_relation(blocked_by_id, &params.task_id);
-                    added_any = true;
+                    added_ids.push(blocked_by_id.clone());
                 }
             }
-            if added_any {
-                updated_fields.push("add_blocked_by");
+            if !added_ids.is_empty() {
+                updated_fields.push((
+                    "add_blocked_by".to_string(),
+                    format!("[{}]", added_ids.join(", ")),
+                ));
             }
         }
 
@@ -517,29 +553,41 @@ impl Tool for TaskUpdateTool {
                     state.tasks_context.tasks[index].state = TaskState::Completed;
                 }
             }
-            updated_fields.push("status");
+            // The Deleted arm returns above; it never reaches this mapping.
+            let status_value = match status {
+                TaskUpdateStatusInput::Pending => "pending",
+                TaskUpdateStatusInput::InProgress => "in_progress",
+                TaskUpdateStatusInput::Completed => "completed",
+                TaskUpdateStatusInput::Deleted => "deleted",
+            };
+            updated_fields.push(("status".to_string(), status_value.to_string()));
         }
 
         // owner
         if let Some(owner) = &params.owner {
             state.tasks_context.tasks[index].owner = Some(owner.clone());
-            updated_fields.push("owner");
+            updated_fields.push(("owner".to_string(), owner.clone()));
         }
 
         // metadata — merge; a null value deletes the key; only non-empty maps
-        // are processed (Python truthiness)
+        // are processed (Python truthiness); report the affected keys
         if let Some(meta) = &params.metadata
             && !meta.is_empty()
         {
             let task_meta = &mut state.tasks_context.tasks[index].metadata;
+            let mut affected_keys: Vec<String> = Vec::new();
             for (k, v) in meta {
                 if v.is_null() {
                     task_meta.remove(k);
                 } else {
                     task_meta.insert(k.clone(), v.clone());
                 }
+                affected_keys.push(k.clone());
             }
-            updated_fields.push("metadata");
+            updated_fields.push((
+                "metadata".to_string(),
+                format!("[{}]", affected_keys.join(", ")),
+            ));
         }
 
         if updated_fields.is_empty() {
@@ -553,11 +601,11 @@ impl Tool for TaskUpdateTool {
             ));
         }
 
-        let mut res = format!(
-            "Update task (id={}) {}.",
-            params.task_id,
-            updated_fields.join(", ")
-        );
+        let pairs: Vec<String> = updated_fields
+            .iter()
+            .map(|(field, value)| format!("{field}={value}"))
+            .collect();
+        let mut res = format!("Updated task (id={}): {}", params.task_id, pairs.join("; "));
         if state.tasks_context.tasks[index].state == TaskState::Completed {
             res += "\n\nTask completed. Call TaskList now to find your next available task or see if your work unblocked others.";
         }

@@ -98,14 +98,14 @@ async fn test_task_create_assigns_sequential_ids() {
             .unwrap(),
     );
     assert_eq!(st, ToolResultState::Success);
-    assert_eq!(text, "Task (id=1) created successfully: First");
+    assert_eq!(text, "Task (id=1) created successfully: First\n");
 
     let (text, _) = unwrap_text(
         tool.call(json!({"subject": "Second", "description": "d"}))
             .await
             .unwrap(),
     );
-    assert_eq!(text, "Task (id=2) created successfully: Second");
+    assert_eq!(text, "Task (id=2) created successfully: Second\n");
 
     let s = state.read().unwrap();
     assert_eq!(s.tasks_context.tasks.len(), 2);
@@ -141,7 +141,7 @@ async fn test_task_list_empty() {
     let tool = TaskListTool::new(make_state());
     let (text, st) = unwrap_text(tool.call(json!({})).await.unwrap());
     assert_eq!(st, ToolResultState::Success);
-    assert_eq!(text, "No tasks available.");
+    assert_eq!(text, "No tasks available.\n");
 }
 
 #[tokio::test]
@@ -151,7 +151,7 @@ async fn test_task_list_format_with_owner_and_blocked() {
     assert_eq!(st, ToolResultState::Success);
     assert_eq!(
         text,
-        "1 [pending] Do A(alice)\n2 [pending] Do B[blocked by 1]"
+        "1 [pending] Do A(alice)\n2 [pending] Do B[blocked by 1]\n"
     );
 }
 
@@ -166,7 +166,7 @@ async fn test_task_get_full_details() {
     assert_eq!(st, ToolResultState::Success);
     assert_eq!(
         text,
-        "Task (id=1): Do A\nStatus: pending\nDescription: desc\nOwner: alice\nBlocks: #2"
+        "Task (id=1): Do A\nStatus: pending\nDescription: desc\nOwner: alice\nBlocks: #2\n"
     );
 }
 
@@ -175,7 +175,7 @@ async fn test_task_get_not_found() {
     let tool = TaskGetTool::new(state_with_tasks());
     let (text, st) = unwrap_text(tool.call(json!({"task_id": "99"})).await.unwrap());
     assert_eq!(st, ToolResultState::Error);
-    assert_eq!(text, "Task not found");
+    assert_eq!(text, "Task not found\n");
 }
 
 #[tokio::test]
@@ -194,6 +194,75 @@ async fn test_task_get_metadata_rendering() {
 }
 
 // ---------------------------------------------------------------------------
+// Feature 033 US3: TaskGet description-truncation assertions (T010)
+// ---------------------------------------------------------------------------
+
+/// Helper: build a state with a single task whose description is `desc`.
+fn state_with_task_description(desc: &str) -> Arc<RwLock<AgentState>> {
+    let state = make_state();
+    {
+        let mut s = state.write().unwrap();
+        let mut task = agent_scope_state::Task::new("S".into(), desc.into(), HashMap::new());
+        task.id = "1".to_string();
+        s.tasks_context.add_task(task);
+    }
+    state
+}
+
+#[tokio::test]
+async fn test_task_get_truncates_description_over_200_chars() {
+    let desc = "x".repeat(201);
+    let tool = TaskGetTool::new(state_with_task_description(&desc));
+    let (text, st) = unwrap_text(tool.call(json!({"task_id": "1"})).await.unwrap());
+    assert_eq!(st, ToolResultState::Success);
+    assert_eq!(
+        text,
+        format!(
+            "Task (id=1): S\nStatus: pending\nDescription: {}… (truncated, 201 chars total)\n",
+            "x".repeat(200)
+        )
+    );
+}
+
+#[tokio::test]
+async fn test_task_get_exact_200_chars_no_truncation() {
+    let desc = "y".repeat(200);
+    let tool = TaskGetTool::new(state_with_task_description(&desc));
+    let (text, st) = unwrap_text(tool.call(json!({"task_id": "1"})).await.unwrap());
+    assert_eq!(st, ToolResultState::Success);
+    assert!(
+        text.contains(&format!("Description: {desc}\n")),
+        "expected full description, got: {text}"
+    );
+    assert!(
+        !text.contains("(truncated"),
+        "200 chars must not be truncated, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_task_get_short_description_full() {
+    let desc = "short description";
+    let tool = TaskGetTool::new(state_with_task_description(desc));
+    let (text, _) = unwrap_text(tool.call(json!({"task_id": "1"})).await.unwrap());
+    assert!(
+        text.contains(&format!("Description: {desc}\n")),
+        "got: {text}"
+    );
+    assert!(!text.contains("(truncated"));
+}
+
+#[tokio::test]
+async fn test_task_get_empty_description_empty_line() {
+    let tool = TaskGetTool::new(state_with_task_description(""));
+    let (text, _) = unwrap_text(tool.call(json!({"task_id": "1"})).await.unwrap());
+    assert!(
+        text.contains("Description: \n"),
+        "empty description should render as an empty line, got: {text}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // TaskUpdate
 // ---------------------------------------------------------------------------
 
@@ -208,7 +277,10 @@ async fn test_task_update_subject_description_owner() {
         .unwrap(),
     );
     assert_eq!(st, ToolResultState::Success);
-    assert_eq!(text, "Update task (id=1) subject, description, owner.");
+    assert_eq!(
+        text,
+        "Updated task (id=1): subject=New A; description=new desc; owner=bob\n"
+    );
 }
 
 #[tokio::test]
@@ -221,7 +293,7 @@ async fn test_task_update_empty_subject_ignored() {
     );
     assert_eq!(
         text,
-        "No updates were made to the task (id=2). Make sure you provided at least one field to update and the values are correct."
+        "No updates were made to the task (id=2). Make sure you provided at least one field to update and the values are correct.\n"
     );
 }
 
@@ -233,10 +305,10 @@ async fn test_task_update_status_completed_appends_hint() {
             .await
             .unwrap(),
     );
-    assert!(text.starts_with("Update task (id=2) status."));
+    assert!(text.starts_with("Updated task (id=2): status=completed"));
     assert!(
         text.ends_with(
-            "\n\nTask completed. Call TaskList now to find your next available task or see if your work unblocked others."
+            "\n\nTask completed. Call TaskList now to find your next available task or see if your work unblocked others.\n"
         ),
         "got: {text}"
     );
@@ -251,7 +323,7 @@ async fn test_task_update_blocks_bidirectional() {
             .await
             .unwrap(),
     );
-    assert_eq!(text, "Update task (id=2) add_blocks.");
+    assert_eq!(text, "Updated task (id=2): add_blocks=[1]\n");
 
     // Invalid references are ignored entirely
     let (text, _) = unwrap_text(
@@ -280,7 +352,7 @@ async fn test_task_update_metadata_merge_and_null_delete() {
             .await
             .unwrap(),
     );
-    assert_eq!(text, "Update task (id=1) metadata.");
+    assert_eq!(text, "Updated task (id=1): metadata=[add, drop]\n");
     let s = state.read().unwrap();
     let t = s.tasks_context.get_task("1").unwrap();
     assert!(!t.metadata.contains_key("drop"));
@@ -298,7 +370,7 @@ async fn test_task_update_deleted_removes_and_cleans() {
             .unwrap(),
     );
     assert_eq!(st, ToolResultState::Success);
-    assert_eq!(text, "Task (id=1) has been deleted.");
+    assert_eq!(text, "Task (id=1) has been deleted.\n");
     let s = state.read().unwrap();
     assert!(s.tasks_context.get_task("1").is_none());
     // task 2's blocked_by reference to "1" is cleaned up
@@ -314,7 +386,10 @@ async fn test_task_update_not_found() {
             .unwrap(),
     );
     assert_eq!(st, ToolResultState::Error);
-    assert_eq!(text, "TaskNotFoundError: The task (id=99) does not exist.");
+    assert_eq!(
+        text,
+        "TaskNotFoundError: The task (id=99) does not exist.\n"
+    );
 }
 
 #[tokio::test]
@@ -325,6 +400,97 @@ async fn test_task_update_invalid_status() {
         .await
         .unwrap_err();
     assert!(matches!(err, ToolError::InvalidInput { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// Feature 033 US2: TaskUpdate value-reporting assertions (T007)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_task_update_reports_status_value() {
+    let tool = TaskUpdateTool::new(state_with_tasks());
+    let (text, st) = unwrap_text(
+        tool.call(json!({"task_id": "2", "status": "in_progress"}))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(st, ToolResultState::Success);
+    assert_eq!(text, "Updated task (id=2): status=in_progress\n");
+}
+
+#[tokio::test]
+async fn test_task_update_reports_status_and_dependency_values() {
+    let state = make_state();
+    {
+        let mut s = state.write().unwrap();
+        for id in ["1", "2", "3", "4"] {
+            let mut task =
+                agent_scope_state::Task::new(format!("T{id}"), "d".into(), HashMap::new());
+            task.id = id.to_string();
+            s.tasks_context.add_task(task);
+        }
+    }
+    let tool = TaskUpdateTool::new(state);
+    let (text, st) = unwrap_text(
+        tool.call(json!({"task_id": "1", "status": "in_progress", "add_blocked_by": ["4"]}))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(st, ToolResultState::Success);
+    // Field order follows task_tools.rs processing order (contract §4):
+    // add_blocked_by is handled before status.
+    assert_eq!(
+        text,
+        "Updated task (id=1): add_blocked_by=[4]; status=in_progress\n"
+    );
+}
+
+#[tokio::test]
+async fn test_task_update_reports_multi_field_values_in_order() {
+    let state = make_state();
+    {
+        let mut s = state.write().unwrap();
+        for (id, subj) in [("1", "A"), ("2", "B")] {
+            let mut task = agent_scope_state::Task::new(subj.into(), "d".into(), HashMap::new());
+            task.id = id.to_string();
+            task.owner = Some("alice".into());
+            s.tasks_context.add_task(task);
+        }
+    }
+    let tool = TaskUpdateTool::new(state);
+    let (text, _) = unwrap_text(
+        tool.call(json!({
+            "task_id": "1",
+            "subject": "A2",
+            "description": "d2",
+            "add_blocks": ["2"],
+            "add_blocked_by": ["2"],
+            "status": "in_progress",
+            "owner": "bob",
+            "metadata": {"k": "v"}
+        }))
+        .await
+        .unwrap(),
+    );
+    assert_eq!(
+        text,
+        "Updated task (id=1): subject=A2; description=d2; add_blocks=[2]; add_blocked_by=[2]; status=in_progress; owner=bob; metadata=[k]\n"
+    );
+}
+
+#[tokio::test]
+async fn test_task_update_reports_completed_with_guide() {
+    let tool = TaskUpdateTool::new(state_with_tasks());
+    let (text, st) = unwrap_text(
+        tool.call(json!({"task_id": "2", "status": "completed"}))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(st, ToolResultState::Success);
+    assert_eq!(
+        text,
+        "Updated task (id=2): status=completed\n\nTask completed. Call TaskList now to find your next available task or see if your work unblocked others.\n"
+    );
 }
 
 #[tokio::test]

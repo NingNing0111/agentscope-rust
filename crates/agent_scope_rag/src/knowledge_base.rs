@@ -97,9 +97,7 @@ impl KnowledgeBase {
                         self.vector_store
                             .create_collection(&self.collection, dims)
                             .await
-                            .map_err(|e| {
-                                KnowledgeBaseError::VectorStoreError(e.to_string())
-                            })?;
+                            .map_err(|e| KnowledgeBaseError::VectorStoreError(e.to_string()))?;
                     }
                 }
                 Ok(())

@@ -43,6 +43,10 @@ let agent = ReActAgent::new(agent_config, ReActConfig::default(), ContextConfig:
 | `.injection_config(cfg)` | 运行时状态注入配置（时间/任务/上下文长度） |
 | `.task_tools_enabled(bool)` | 是否注册内置任务规划工具（默认 `true`） |
 
+<Note>
+**内置任务工具输出协议（Feature 033）**：4 个内置任务工具（`TaskCreate` / `TaskList` / `TaskGet` / `TaskUpdate`）的成功结果文本以换行符 `\n` 结尾；`TaskUpdate` 报告实际应用的字段值（如 `Updated task (id=1): status=in_progress; add_blocked_by=[4]`）；`TaskGet` 对超过 200 字符的描述截断为 `{前 200 字符}… (truncated, {len} chars total)`。工具名、输入 Schema 与行为语义均不变。
+</Note>
+
 ## 完整示例
 
 见 [`examples/agent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/agent/)，演示模型 + 工具 + 权限规则 + 中断的组装。

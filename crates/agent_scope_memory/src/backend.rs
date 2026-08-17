@@ -133,9 +133,19 @@ impl Backend for LocalBackend {
     }
 
     fn normpath(&self, path: &str) -> String {
-        lexical_clean(Path::new(path))
-            .to_string_lossy()
-            .into_owned()
+        // Lexically clean `.`/`..`, then normalize the separator to `/` so the
+        // canonical form is identical on every platform (Windows PathBuf
+        // displays `\`; the contract — and `memory_dir` keys — use `/`).
+        let cleaned = lexical_clean(Path::new(path));
+        let display = cleaned.to_string_lossy();
+        #[cfg(windows)]
+        {
+            display.replace('\\', "/")
+        }
+        #[cfg(not(windows))]
+        {
+            display.into_owned()
+        }
     }
 
     fn isabs(&self, path: &str) -> bool {

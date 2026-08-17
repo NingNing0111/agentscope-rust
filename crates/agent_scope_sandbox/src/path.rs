@@ -66,7 +66,13 @@ impl SandboxPathResolver {
                 operation: operation.into(),
             });
         }
-        let joined = if input.is_absolute() {
+        // Root-relative means the path starts at the sandbox root. On Windows a
+        // POSIX-style `/nested/...` path is NOT `is_absolute()` (no drive
+        // prefix), but its first component is still `RootDir` — treat both the
+        // same way so the resolver behaves identically on every platform.
+        let starts_at_root =
+            input.is_absolute() || matches!(input.components().next(), Some(Component::RootDir));
+        let joined = if starts_at_root {
             self.root_dir.join(strip_absolute(input))
         } else {
             cwd.unwrap_or(&self.workdir).join(input)

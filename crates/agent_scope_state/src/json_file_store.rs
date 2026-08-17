@@ -24,6 +24,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 use crate::agent_state::AgentState;
 use crate::session::{Session, SessionError, SessionImpl, SessionMeta, SessionStatus};
@@ -95,26 +96,31 @@ async fn atomic_write(dir: &Path, id: &str, contents: &[u8]) -> Result<(), Sessi
     let unique = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp_path = dir.join(format!("{id}.{}.{unique}.json.tmp", std::process::id()));
 
-    fs::write(&tmp_path, contents)
-        .await
-        .map_err(|e| SessionError::StorageError {
-            session_id: id.to_string(),
-            reason: format!("failed to write temp file: {e}"),
-        })?;
-
-    // fsync the temp file so its contents reach disk before the rename.
-    let file = fs::File::open(&tmp_path)
-        .await
-        .map_err(|e| SessionError::StorageError {
-            session_id: id.to_string(),
-            reason: format!("failed to open temp file for fsync: {e}"),
-        })?;
-    file.sync_all()
-        .await
-        .map_err(|e| SessionError::StorageError {
-            session_id: id.to_string(),
-            reason: format!("failed to fsync temp file: {e}"),
-        })?;
+    // Write and fsync through one write-capable handle, then close it BEFORE
+    // the rename. On Windows, `sync_all` on a read-only handle is unreliable
+    // and renaming a file that still has an open handle fails with a sharing
+    // violation, which made saves fail silently on Windows CI (audit finding).
+    {
+        let mut file =
+            fs::File::create(&tmp_path)
+                .await
+                .map_err(|e| SessionError::StorageError {
+                    session_id: id.to_string(),
+                    reason: format!("failed to create temp file: {e}"),
+                })?;
+        file.write_all(contents)
+            .await
+            .map_err(|e| SessionError::StorageError {
+                session_id: id.to_string(),
+                reason: format!("failed to write temp file: {e}"),
+            })?;
+        file.sync_all()
+            .await
+            .map_err(|e| SessionError::StorageError {
+                session_id: id.to_string(),
+                reason: format!("failed to fsync temp file: {e}"),
+            })?;
+    } // `file` dropped here: the temp file is closed before the rename.
 
     fs::rename(&tmp_path, &final_path)
         .await

@@ -20,6 +20,7 @@ members = [
     "examples/rag",
     "examples/workspace",
     "examples/sandbox",
+    "examples/plan-react-agent",
 ]
 resolver = "3"
 

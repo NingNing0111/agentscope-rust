@@ -141,75 +141,21 @@ pending → in_progress → completed
 
 ## 完整示例
 
-`examples/agent` 示例演示了包含任务工具在内的完整编排（权限规则、中断、流式回复）。其运行输出会先确认任务工具已注册：
+见 [`examples/plan-react-agent`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/plan-react-agent/)（独立示例 crate，实现位于 [`src/main.rs`](https://github.com/NingNing0111/agentscope-rust/blob/master/examples/plan-react-agent/src/main.rs)）：
 
 ```bash
-cargo run -p agent -- --prompt "请先规划再执行：1) 读取 examples/agent/Cargo.toml；2) 汇报其中的依赖。"
+cargo run -p plan-react-agent -- --prompt "请规划并执行：1) 阅读本仓库根目录的 README.md；2) 列出其中提到的三个 crate；3) 汇总成一段话。"
 ```
 
-一个可直接运行的完整骨架（需要 `DASHSCOPE_API_KEY`，真实模型调用）：
+示例依次演示：
 
-```rust
-use std::sync::Arc;
+1. **工具注册检查**（无需模型）——打印 `TaskCreate` / `TaskList` / `TaskGet` / `TaskUpdate` 四个工具的注册状态；
+2. **模型驱动的规划循环**——流式消费 `reply_stream` 事件，观察模型通过工具调用走完 `TaskCreate` → `TaskList` → `TaskUpdate(in_progress)` → `TaskUpdate(completed)` 的完整生命周期；
+3. **状态持久化**——回复结束后从 `agent.try_state().tasks_context.tasks` 读取最终任务清单并打印每个任务的状态。
 
-use agent_scope_agent::{Agent, AgentConfig, ContextConfig, ReActAgent, ReActConfig};
-use agent_scope_dashscope::DashScopeChatModel;
-use agent_scope_event::AgentEvent;
-use agent_scope_message::factory::user_msg;
-use futures::StreamExt;
+运行后，智能体应当先调用 `TaskCreate` 建立清单，再逐项执行并在完成后用 `TaskUpdate` 翻转状态；回复结束时打印的任务清单应确认每个任务均已 `completed`。
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    dotenv::dotenv().ok();
-    let api_key = std::env::var("DASHSCOPE_API_KEY")
-        .map_err(|_| anyhow::anyhow!("error: 缺少环境变量 DASHSCOPE_API_KEY。请设置后重试。"))?;
-
-    let model = Arc::new(DashScopeChatModel::new(&api_key, "qwen-plus").with_stream(true));
-
-    // 内置任务工具（TaskCreate/TaskList/TaskGet/TaskUpdate）默认自动注册。
-    let config = AgentConfig::builder()
-        .name("assistant")
-        .system_prompt(
-            "你是一个任务规划助手。面对多步工作时，先用 TaskCreate 拆分任务，\
-             执行时用 TaskUpdate 标记 in_progress，完成后标记 completed。",
-        )
-        .model(model)
-        .build()?;
-
-    let agent = ReActAgent::new(
-        config,
-        ReActConfig::default(),
-        ContextConfig::default(),
-        vec![],
-    )?;
-
-    // 任务清单可通过智能体状态读取（如检查注入的任务工具是否就绪）。
-    let state = agent.try_state();
-    println!("session_id = {}", state.session_id);
-    drop(state);
-
-    let msg = user_msg(
-        "user",
-        "请规划并执行：1) 总结这个仓库的用途；2) 列出其中两个 crate 的名字。",
-    )?;
-
-    let mut stream = agent.reply_stream(Some(vec![msg])).await?;
-    while let Some(event) = stream.next().await {
-        match &event {
-            AgentEvent::ToolCallStart(s) => {
-                println!("\n[tool] {} ->", s.tool_call_name);
-            }
-            AgentEvent::ToolResultTextDelta(d) => print!("{d}"),
-            AgentEvent::TextBlockDelta(d) => print!("{d}"),
-            AgentEvent::ReplyEnd(e) => println!("\n[end] {:?}", e.finished_reason),
-            _ => {}
-        }
-    }
-    Ok(())
-}
-```
-
-运行后，智能体应当先调用 `TaskCreate` 建立清单，再逐项执行并在完成后用 `TaskUpdate` 翻转状态；回复结束时可通过 `agent.try_state().tasks_context.tasks` 读取最终清单，确认每个任务均已 `completed`。
+需要真实模型调用，运行前设置 `DASHSCOPE_API_KEY`。
 
 ## 延伸阅读
 

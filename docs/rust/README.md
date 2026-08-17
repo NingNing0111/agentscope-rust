@@ -63,6 +63,7 @@ npm run test:docs:e2e       # Playwright 浏览器 + axe 无障碍测试（需�
 | `examples/mcp` | MCP 客户端接入 | tool/mcp |
 | `examples/skill` | Skill 工具 | tool/skill |
 | `examples/agent` | 编排、权限、中断、任务工具 | agent/*、middleware、permission-system、plan |
+| `examples/plan-react-agent` | 计划模式：内置任务工具全生命周期 | plan |
 | `examples/memory` | 长期记忆双后端 | long-term-memory |
 | `examples/rag` | 检索增强问答 | rag |
 | `examples/workspace` | LocalWorkspace、内置工具注入 | workspace/* |

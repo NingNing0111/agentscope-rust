@@ -2230,6 +2230,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
+name = "plan-react-agent"
+version = "0.1.0"
+dependencies = [
+ "agent_scope_agent",
+ "agent_scope_dashscope",
+ "agent_scope_event",
+ "agent_scope_message",
+ "agent_scope_state",
+ "clap",
+ "dotenv",
+ "futures",
+ "tokio",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

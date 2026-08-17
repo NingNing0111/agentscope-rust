@@ -196,7 +196,11 @@ async fn test_get_instructions() {
     ws.initialize().await.unwrap();
 
     let instructions = ws.get_instructions().await;
-    assert!(instructions.contains(&workdir));
+    // The instructions embed the workspace's canonical workdir. On Windows,
+    // canonicalization resolves 8.3 short names and `\\?\` prefixes, so the
+    // canonical form can differ from the raw config path — compare against
+    // `ws.workdir()` rather than the un-canonicalized input.
+    assert!(instructions.contains(ws.workdir()));
     assert!(instructions.contains("LocalBackend"));
 }
 

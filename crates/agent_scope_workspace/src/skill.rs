@@ -180,11 +180,19 @@ impl SkillManager {
             resolve_dir_conflict(&src_dir_name, &self.skills_dir, &*self.backend).await?;
         let dest_dir = self.backend.join_path(&self.skills_dir, &dest_dir_name);
 
-        // Canonicalize to prevent path traversal
-        let canonical_dest = std::fs::canonicalize(&dest_dir)
-            .unwrap_or_else(|_| std::path::PathBuf::from(&dest_dir));
-        let canonical_skills = std::fs::canonicalize(&self.skills_dir)
-            .unwrap_or_else(|_| std::path::PathBuf::from(&self.skills_dir));
+        // Canonicalize to prevent path traversal. Normalize the Windows `\\?\`
+        // verbatim prefix on both sides first: `canonicalize()` returns a
+        // prefixed path, while `dest_dir` (not yet created) falls back to an
+        // un-prefixed joined path — comparing the two directly would spuriously
+        // fail the containment check.
+        let canonical_dest = strip_verbatim_prefix(
+            std::fs::canonicalize(&dest_dir)
+                .unwrap_or_else(|_| std::path::PathBuf::from(&dest_dir)),
+        );
+        let canonical_skills = strip_verbatim_prefix(
+            std::fs::canonicalize(&self.skills_dir)
+                .unwrap_or_else(|_| std::path::PathBuf::from(&self.skills_dir)),
+        );
         if !canonical_dest.starts_with(&canonical_skills) {
             return Err(WorkspaceError::PathTraversal { path: dest_dir });
         }
@@ -336,4 +344,20 @@ async fn copy_dir_recursive(src: &str, dst: &str) -> Result<(), std::io::Error> 
         }
     }
     Ok(())
+}
+
+/// On Windows, `std::fs::canonicalize()` returns a `\\?\`-prefixed (verbatim)
+/// path while joined string paths are un-prefixed; a direct `starts_with`
+/// comparison between the two fails even for contained paths. Strip the prefix
+/// so both sides compare in the same form. No-op on other platforms.
+fn strip_verbatim_prefix(p: std::path::PathBuf) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let s = p.to_string_lossy();
+        std::path::PathBuf::from(s.strip_prefix("\\\\?\\").unwrap_or(&s).to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        p
+    }
 }

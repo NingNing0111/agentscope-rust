@@ -65,11 +65,29 @@ impl LocalWorkspace {
         if !workdir_path.exists() {
             let _ = std::fs::create_dir_all(workdir_path);
         }
-        let workdir = workdir_path
+        // Canonicalize once: the result serves both as the containment root
+        // (kept verbatim, including Windows' `\\?\` extended-length prefix) and
+        // as the display workdir. Windows `canonicalize()` prefixes the path
+        // with `\\?\`; that prefix would leak into agent-facing strings (e.g.
+        // `get_instructions`) and break exact matches against the un-prefixed
+        // config path, so strip it from the display form only.
+        let workdir_root = workdir_path
             .canonicalize()
-            .unwrap_or_else(|_| workdir_path.to_path_buf())
-            .to_string_lossy()
-            .to_string();
+            .unwrap_or_else(|_| workdir_path.to_path_buf());
+        let workdir = {
+            let display = workdir_root.to_string_lossy();
+            #[cfg(windows)]
+            {
+                display
+                    .strip_prefix("\\\\?\\")
+                    .unwrap_or(&display)
+                    .to_string()
+            }
+            #[cfg(not(windows))]
+            {
+                display.into_owned()
+            }
+        };
 
         let workspace_id = config
             .workspace_id
@@ -85,7 +103,7 @@ impl LocalWorkspace {
         let raw_backend: Arc<dyn WorkspaceBackend> = Arc::new(LocalBackend::new());
         let backend: Arc<dyn WorkspaceBackend> = Arc::new(ContainedBackend::new(
             Arc::clone(&raw_backend),
-            std::path::PathBuf::from(&workdir),
+            workdir_root,
         ));
 
         let skills_dir = backend.join_path(&workdir, "skills");

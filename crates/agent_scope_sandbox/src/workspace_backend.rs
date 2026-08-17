@@ -185,9 +185,26 @@ impl WorkspaceBackend for SandboxWorkspaceBackend {
                 c => buf.push(c.as_os_str()),
             }
         }
-        buf.to_string_lossy().to_string()
+        // Normalize the separator to `/` so the canonical form is identical on
+        // every platform (Windows PathBuf renders `\`). Mirrors the memory
+        // backend contract; `\` is a valid filename byte on Unix so only
+        // rewrite on Windows.
+        let display = buf.to_string_lossy();
+        #[cfg(windows)]
+        {
+            display.replace('\\', "/")
+        }
+        #[cfg(not(windows))]
+        {
+            display.into_owned()
+        }
     }
     fn is_absolute(&self, path: &str) -> bool {
-        Path::new(path).is_absolute()
+        let p = Path::new(path);
+        // A leading root (`/foo`) is absolute on every platform. On Windows
+        // `Path::is_absolute()` additionally requires a drive/UNC prefix, so a
+        // POSIX-style `/nested/...` path would otherwise read as relative —
+        // same normalization this crate's sandbox resolver applies (path.rs).
+        p.is_absolute() || matches!(p.components().next(), Some(std::path::Component::RootDir))
     }
 }

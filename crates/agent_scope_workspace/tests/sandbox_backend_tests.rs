@@ -61,5 +61,9 @@ async fn sandbox_backend_path_helpers() {
     assert_eq!(backend.dirname("/a/b.txt"), "/a");
     assert_eq!(backend.normpath("/a/./b/../c"), "/a/c");
     assert!(backend.is_absolute("/a"));
-    assert!(backend.join_path("a", "b").ends_with("a/b"));
+    // join_path is platform-native (Windows renders `\`); accept either separator.
+    assert!(
+        backend.join_path("a", "b").ends_with("a/b")
+            || backend.join_path("a", "b").ends_with("a\\b")
+    );
 }

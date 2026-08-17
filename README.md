@@ -1,4 +1,4 @@
-# AgentScope Rust
+# AgentScope Rust（Beta阶段，生产暂时不建议使用）
 
 用 Rust 实现的 **Agent 开发框架**（AgentScope 的 Rust 重构版）。以多 crate workspace 组织，核心能力位于 `crates/agent_scope_*`，每个 crate 是独立 package，可按需单独依赖。
 

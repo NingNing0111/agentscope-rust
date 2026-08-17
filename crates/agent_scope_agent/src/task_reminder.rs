@@ -92,10 +92,8 @@ fn context_aware_of_tasks(context: &[Msg]) -> bool {
         }
         for block in msg.content.iter().rev() {
             match block {
-                ContentBlock::ToolCall(tc) => {
-                    if TASK_TOOL_NAMES.contains(&tc.name.as_str()) {
-                        return true;
-                    }
+                ContentBlock::ToolCall(tc) if TASK_TOOL_NAMES.contains(&tc.name.as_str()) => {
+                    return true;
                 }
                 ContentBlock::Hint(hb)
                     if hb.source.as_deref() == Some(TASK_REMINDER_SOURCE)

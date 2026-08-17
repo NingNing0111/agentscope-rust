@@ -375,10 +375,4 @@ mod tests {
             assert_eq!(std::env::consts::OS, "windows");
         }
     }
-
-    #[test]
-    fn platform_constant_is_windows() {
-        // The availability gate is the platform const, not a compile-time cfg.
-        assert!(std::env::consts::OS == "windows" || std::env::consts::OS != "windows");
-    }
 }

@@ -21,6 +21,7 @@ members = [
     "examples/workspace",
     "examples/sandbox",
     "examples/plan-react-agent",
+    "examples/subagent",
 ]
 resolver = "3"
 

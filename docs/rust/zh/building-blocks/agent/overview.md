@@ -68,4 +68,7 @@ let agent = ReActAgent::new(
   <Card title="中断智能体" icon="hand" href="/building-blocks/agent/interrupt-agent">
     如何干净地停止运行中或暂停中的智能体。
   </Card>
+  <Card title="子智能体" icon="users" href="/building-blocks/agent/subagent">
+    库级多智能体委托：SubAgent / SubAgentRegistry / delegate_*。
+  </Card>
 </CardGroup>

@@ -21,6 +21,7 @@
 | 例外 | 原因 |
 |------|------|
 | `docs/python/en/deploy/openapi.json` 不镜像 | Python 后端 OpenAPI 生成物；Rust 当前无 agent-service 后端 |
+| `building-blocks/agent/subagent.md` 为 Rust 特有页面 | 库级多智能体委托为 Rust 侧独有能力，Python 文档无对应 building-block（Python 侧能力在 `deploy/agent-team` 描述） |
 
 ## 表
 
@@ -36,6 +37,7 @@
 | `building-blocks/agent/run-agent.mdx` | `building-blocks/agent/run-agent.md` | 已实现 | L2 | `chat` | reply/reply_stream/reply_stream_event/observe |
 | `building-blocks/agent/human-in-the-loop.mdx` | `building-blocks/agent/human-in-the-loop.md` | 已实现 | L2 | `human-in-the-loop` | 暂停-确认-恢复 + reply_stream_event（Confirm/ExternalResult/Interrupt 三类事件输入） |
 | `building-blocks/agent/interrupt-agent.mdx` | `building-blocks/agent/interrupt-agent.md` | 已实现 | L2 | `agent` | interrupt() 置位 + 事件注入 UserInterruptEvent（INTERRUPTED 结束） |
+| — | `building-blocks/agent/subagent.md` | 已实现 | L3 | `subagent` | 库级多智能体委托（SubAgent/Registry/delegate_*/MultiAgentConversation）；Rust 特有页面 |
 | `building-blocks/console.mdx` | `building-blocks/console.md` | 计划中 | — | — | Rust 无库级 console；pi-rust ratatui TUI 可参考 |
 | `building-blocks/context/overview.mdx` | `building-blocks/context/overview.md` | 部分支持 | L2 | — | 注入/压缩/卸载已实现；模型摘要策略 deferred |
 | `building-blocks/context/compress-context.mdx` | `building-blocks/context/compress-context.md` | 已实现 | L2 | — | ContextConfig 移除最旧+占位摘要 |
@@ -79,4 +81,4 @@
 | `others/change-log.mdx` | `others/change-log.md` | 已实现 | — | — | Python 2.0 vs 1.0 摘译 + Rust 状态 |
 | `others/faq.mdx` | `others/faq.md` | 已实现 | — | — | 面向 Rust 版 FAQ |
 
-> 共 50 条。状态三档与各页面顶部状态块、兼容性矩阵保持一致（spec FR-011）。
+> 共 51 条。状态三档与各页面顶部状态块、兼容性矩阵保持一致（spec FR-011）。

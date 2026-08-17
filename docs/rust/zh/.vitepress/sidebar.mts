@@ -20,7 +20,8 @@ export const sidebar: DefaultTheme.Sidebar = [
       { text: '配置智能体', link: '/building-blocks/agent/configure-agent' },
       { text: '运行智能体', link: '/building-blocks/agent/run-agent' },
       { text: '人机交互', link: '/building-blocks/agent/human-in-the-loop' },
-      { text: '中断智能体', link: '/building-blocks/agent/interrupt-agent' }
+      { text: '中断智能体', link: '/building-blocks/agent/interrupt-agent' },
+      { text: '子智能体', link: '/building-blocks/agent/subagent' }
     ]
   },
   {

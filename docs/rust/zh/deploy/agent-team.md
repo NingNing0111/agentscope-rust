@@ -22,7 +22,7 @@ description: "多智能体团队编排"
 | 跨会话消息路由（HintBlock team-message） | ❌ 未实现 |
 | 团队成员关系与 UI 渲染 | ❌ 未实现 |
 
-库级 SubAgent 委托的用法见 [Agent 概述](../building-blocks/agent/overview)（delegation 模块）。
+库级 SubAgent 委托的用法见 [子智能体](../building-blocks/agent/subagent)（SubAgent / SubAgentRegistry / delegate_*）。
 
 ## 缺失范围
 

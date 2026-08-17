@@ -3,7 +3,9 @@
 **Feature**: 024-agent-task-planning | **Date**: 2026-08-03
 **上游基准**: Python AgentScope `9d1026fa` `agentscope/src/agentscope/tool/_task/`
 
-本契约定义 4 个内置任务工具的公开表面：工具名、输入 JSON Schema、行为语义、输出文本协议与错误契约。输出文本逐字对齐 Python 参考实现，供黄金快照/差分测试逐字符比较。
+本契约定义 4 个内置任务工具的公开表面：工具名、输入 JSON Schema、行为语义、输出文本协议与错误契约。
+
+> **⚠️ 输出文本协议已由 Feature 033 取代（Rust 优化版）**：任务工具的成功输出文本自 `specs/033-task-tools-optimization/` 起不再逐字对齐 Python 参考实现，以 `contracts/task-tools-output.md` 为唯一基准——所有完整结果文本统一尾随 `\n`；TaskUpdate 报告实际字段值；TaskGet 截断超过 200 字符的描述（FR-006）。**工具名、输入 Schema、行为/错误语义仍以本契约为准，不变**；工具描述（description）仍逐字采用 Python。
 
 所有工具共同属性（对齐 Python `_TaskToolBase`）：
 
@@ -38,7 +40,7 @@
 2. 构造 Task：`id = next_id`，`state = pending`，`created_at = 当前 RFC3339`，`owner = None`，`blocks/blocked_by = []`，`metadata = 参数或 {}`。
 3. 追加到 `tasks_context.tasks`。
 
-**成功输出**（state = Success）:
+**成功输出**（state = Success，文本以 `\n` 结尾，Feature 033）:
 
 ```text
 Task (id={next_id}) created successfully: {subject}
@@ -58,7 +60,7 @@ Task (id={next_id}) created successfully: {subject}
 
 **行为**: 无参数。遍历 `tasks_context.tasks` 输出摘要列表。
 
-**输出**:
+**输出**（均以 `\n` 结尾，Feature 033）:
 
 - 空列表（state = Success）：
 
@@ -94,7 +96,7 @@ No tasks available.
 
 **行为**: 按 id 查找任务。
 
-**成功输出**（state = Success），逐行拼接，可选行仅在对应字段非空时出现：
+**成功输出**（state = Success，文本以 `\n` 结尾，Feature 033），逐行拼接，可选行仅在对应字段非空时出现；`Description` 行超过 200 字符时截断为 `{前 200 字符}… (truncated, {len} chars total)`（FR-004，完整规则见 `task-tools-output.md` §3）：
 
 ```text
 Task (id={id}): {subject}
@@ -106,7 +108,7 @@ Blocks: #{id1}, #{id2}              ← 仅 blocks 非空，id 前缀 #
 Metadata: {metadata}                ← 仅 metadata 非空，Debug/JSON 表示
 ```
 
-**错误输出**（state = Error）:
+**错误输出**（state = Error，文本以 `\n` 结尾）:
 
 ```text
 Task not found
@@ -158,19 +160,19 @@ Task not found
 TaskNotFoundError: The task (id={task_id}) does not exist.
 ```
 
-- 删除成功（state = Success）:
+- 删除成功（state = Success，文本以 `\n` 结尾）:
 
 ```text
 Task (id={task_id}) has been deleted.
 ```
 
-- 有字段被更新（state = Success）:
+- 有字段被更新（state = Success，Feature 033 报实际值、文本以 `\n` 结尾）:
 
 ```text
-Update task (id={task_id}) {field1, field2, ...}.
+Updated task (id={task_id}): {field}={value}; {field}={value}
 ```
 
-字段名按处理顺序记录（`subject`, `description`, `add_blocks`, `add_blocked_by`, `status`, `owner`, `metadata`）。若更新后状态为 `completed`，追加：
+字段-值对按处理顺序记录（`subject`, `description`, `add_blocks`, `add_blocked_by`, `status`, `owner`, `metadata`），每项报告实际应用值：状态报新值（`pending`/`in_progress`/`completed`）、`add_blocks`/`add_blocked_by` 报实际新增 id 列表（`[1, 2]`）、`owner`/`subject`/`description` 报新值、`metadata` 报受影响键（含置 `null` 删除的键）；完整格式见 `task-tools-output.md` §4。若更新后状态为 `completed`，追加：
 
 ```text
 
@@ -178,7 +180,7 @@ Update task (id={task_id}) {field1, field2, ...}.
 Task completed. Call TaskList now to find your next available task or see if your work unblocked others.
 ```
 
-- 无任何字段更新（state = Success）:
+- 无任何字段更新（state = Success，文本以 `\n` 结尾）:
 
 ```text
 No updates were made to the task (id={task_id}). Make sure you provided at least one field to update and the values are correct.

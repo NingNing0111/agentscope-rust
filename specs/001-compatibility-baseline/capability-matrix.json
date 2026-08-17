@@ -2846,7 +2846,7 @@
       "target_level": "L2",
       "status": "NOT_ANALYZED",
       "test_fixture_ids": [],
-      "notes": ""
+      "notes": "Output-text deviation (Feature 033, Art.1/Art.19 approved): success output text is Rust-optimized (newline-terminated) instead of verbatim Python 9d1026fa alignment. Tool name, input schema, state/dependency/error semantics and data model unchanged. Contract: specs/033-task-tools-optimization/contracts/task-tools-output.md."
     },
     {
       "capability_id": "tool-task-get",
@@ -2859,7 +2859,7 @@
       "target_level": "L2",
       "status": "NOT_ANALYZED",
       "test_fixture_ids": [],
-      "notes": ""
+      "notes": "Output-text deviation (Feature 033, Art.1/Art.19 approved): success output text is Rust-optimized (newline-terminated; descriptions >200 chars truncated) instead of verbatim Python 9d1026fa alignment. Tool name, input schema, state/dependency/error semantics and data model unchanged. Contract: specs/033-task-tools-optimization/contracts/task-tools-output.md."
     },
     {
       "capability_id": "tool-task-list",
@@ -2872,7 +2872,7 @@
       "target_level": "L2",
       "status": "NOT_ANALYZED",
       "test_fixture_ids": [],
-      "notes": ""
+      "notes": "Output-text deviation (Feature 033, Art.1/Art.19 approved): success output text is Rust-optimized (newline-terminated) instead of verbatim Python 9d1026fa alignment. Tool name, input schema, state/dependency/error semantics and data model unchanged. Contract: specs/033-task-tools-optimization/contracts/task-tools-output.md."
     },
     {
       "capability_id": "tool-task-update",
@@ -2885,7 +2885,7 @@
       "target_level": "L2",
       "status": "NOT_ANALYZED",
       "test_fixture_ids": [],
-      "notes": ""
+      "notes": "Output-text deviation (Feature 033, Art.1/Art.19 approved): success output text is Rust-optimized (newline-terminated; reports actual field values) instead of verbatim Python 9d1026fa alignment. Tool name, input schema, state/dependency/error semantics and data model unchanged. Contract: specs/033-task-tools-optimization/contracts/task-tools-output.md."
     },
     {
       "capability_id": "tool-tool-base",

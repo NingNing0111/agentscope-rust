@@ -7791,11 +7791,17 @@ dependencies = [
 name = "tool"
 version = "0.1.0"
 dependencies = [
+ "agent_scope_agent",
+ "agent_scope_event",
+ "agent_scope_message",
+ "agent_scope_rig",
  "agent_scope_tool",
  "anyhow",
+ "clap",
+ "dotenv",
+ "futures",
  "schemars 0.8.22",
  "serde",
- "serde_json",
  "tokio",
 ]
 
@@ -8677,8 +8683,15 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "workspace"
 version = "0.1.0"
 dependencies = [
+ "agent_scope_agent",
+ "agent_scope_event",
+ "agent_scope_message",
+ "agent_scope_rig",
  "agent_scope_workspace",
  "anyhow",
+ "clap",
+ "dotenv",
+ "futures",
  "tempfile",
  "tokio",
 ]

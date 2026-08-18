@@ -14,10 +14,10 @@ serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 schemars.workspace = true
-async-trait = "0.1"
-tokio = { version = "1", features = ["rt", "macros", "sync", "fs"] }
-tokio-util = { version = "0.7", features = ["rt"] }
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "sync", "fs"] }
+tokio-util = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
 agent_scope_event = { path = "../agent_scope_event" }
-tempfile = "3"
+tempfile.workspace = true

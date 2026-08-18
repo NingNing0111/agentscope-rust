@@ -11,15 +11,15 @@ agent_scope_utils = { path = "../agent_scope_utils" }
 agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_model = { path = "../agent_scope_model" }
 
-async-trait = "0.1"
+async-trait.workspace = true
 chrono.workspace = true
 schemars = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { version = "1", features = ["fs", "sync", "rt", "macros"] }
-tracing = "0.1"
+tokio = { workspace = true, features = ["fs", "sync", "rt", "macros"] }
+tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
-futures = "0.3"
+tempfile.workspace = true
+futures.workspace = true

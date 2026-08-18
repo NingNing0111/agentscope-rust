@@ -9,23 +9,23 @@ repository.workspace = true
 agent_scope_utils = { path = "../agent_scope_utils" }
 agent_scope_message = { path = "../agent_scope_message" }
 
-async-trait = "0.1"
+async-trait.workspace = true
 base64.workspace = true
 chrono.workspace = true
-mime_guess = "2"
+mime_guess.workspace = true
 # Safe wrapper around the Unix process-group syscalls; used to reap a child
 # *and* any grandchildren on timeout / output overflow (defect 2 fix).
 # Kept behind `cfg(unix)` in backend.rs.
-nix = { version = "0.29", default-features = false, features = ["signal", "process"] }
+nix = { workspace = true, features = ["signal", "process"] }
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
-tokio = { version = "1", features = ["fs", "io-util", "sync", "process", "rt", "macros", "time"] }
-tracing = "0.1"
+sha2.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "sync", "process", "rt", "macros", "time"] }
+tracing.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 agent_scope_sandbox = { path = "../agent_scope_sandbox" }
-async-trait = "0.1"
-tempfile = "3"
+async-trait.workspace = true
+tempfile.workspace = true

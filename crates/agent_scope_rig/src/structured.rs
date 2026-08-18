@@ -29,7 +29,7 @@ use crate::tools::tool_choice_to_rig;
 /// 构建原生 `output_schema` 请求（契约 §6.1）。
 ///
 /// `json_schema` 必须是 `flatten_json_schema_with_defs_checked` 的产物（标准
-/// JSON Schema 对象）；无法转换为 schemars `Schema` → `FormatError`（调用方
+/// JSON Schema 对象）；无法转换为 schemars 1.x `Schema` → `FormatError`（调用方
 /// 视此为"原生路径不可用"，回退工具 bypass）。
 pub(crate) fn native_output_request(
     model: &str,
@@ -38,7 +38,7 @@ pub(crate) fn native_output_request(
     params: &RigParameters,
 ) -> Result<CompletionRequest, ModelError> {
     let chat_history = to_chat_history(messages)?;
-    let schema: schemars::Schema =
+    let schema: schemars_1::Schema =
         serde_json::from_value(json_schema.clone()).map_err(|e| ModelError::FormatError {
             context: "rig:structured".to_string(),
             source: FormatError::InvalidMessage(format!(

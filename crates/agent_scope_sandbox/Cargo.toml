@@ -7,18 +7,18 @@ repository.workspace = true
 
 [dependencies]
 agent_scope_workspace = { path = "../agent_scope_workspace" }
-async-trait = "0.1"
+async-trait.workspace = true
 chrono.workspace = true
 # Safe wrapper around the Unix process-group syscalls; used to reap a child
 # *and* any grandchildren that inherited its stdout/stderr pipes on timeout
 # (round-4 M28). Kept behind `cfg(unix)` in local.rs.
-nix = { version = "0.29", default-features = false, features = ["signal", "process"] }
+nix = { workspace = true, features = ["signal", "process"] }
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
-tokio = { version = "1", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "macros", "sync", "time"] }
-tracing = "0.1"
+sha2.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "macros", "sync", "time"] }
+tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

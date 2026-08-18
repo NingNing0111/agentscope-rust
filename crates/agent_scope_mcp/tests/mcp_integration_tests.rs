@@ -23,6 +23,7 @@ use rmcp::model::{ClientInfo, ToolAnnotations};
 use rmcp::service::ServiceExt;
 use rmcp::{tool, tool_router};
 use schemars::JsonSchema;
+use schemars_1 as schemars;
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────────────────────

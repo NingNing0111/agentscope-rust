@@ -32,20 +32,45 @@ license = "Apache-2.0"
 repository = "https://github.com/ningning0111/agentscope-rust"
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+async-stream = "0.3"
+async-trait = "0.1"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
-base64 = "0.22"
-schemars = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
-thiserror = "2"
+dotenv = "0.15"
+futures = "0.3"
+globset = "0.4.20"
 gray_matter = { version = "0.3.2", default-features = false, features = [
     "yaml",
 ] }
-globset = "0.4.20"
+http = "1"
+mime_guess = "2"
+nix = { version = "0.29", default-features = false }
+regex = "1"
+# Feature 027: Official MCP Rust SDK — the sole protocol implementation.
+rmcp = { version = "3.1.1", default-features = false }
+schemars = "0.8"
+schemars_08 = { package = "schemars", version = "0.8" }
+# Feature 034: rig-core 0.41.0 depends on schemars 1.x. Keep this separate
+# from workspace schemars 0.8 for code that must interoperate with rig types.
+schemars_1 = { package = "schemars", version = "1" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = "1"
+tokio-test = "0.4"
+tokio-util = "0.7"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+turbovec = "0.9"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
 walkdir = "2.5.0"
+wiremock = "0.6"
 # Feature 034: rig LLM provider framework. Pinned to crates.io release 0.41.0
 # (0.42.0 is only in the rig repo main branch, unpublished). Default features
 # (rig-core reqwest/derive/rustls + agent) are used; openai/anthropic/deepseek
@@ -65,10 +90,10 @@ agent_scope_embedding = { path = "crates/agent_scope_embedding" }
 agent_scope_workspace = { path = "crates/agent_scope_workspace" }
 agent_scope_mcp = { path = "crates/agent_scope_mcp" }
 agent_scope_sandbox = { path = "crates/agent_scope_sandbox" }
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
-async-trait = "0.1"
-dotenv = "0.15"
+tokio = { workspace = true, features = ["full"] }
+futures.workspace = true
+async-trait.workspace = true
+dotenv.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

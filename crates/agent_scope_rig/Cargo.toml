@@ -13,24 +13,24 @@ agent_scope_message = { path = "../agent_scope_message" }
 rig.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
-async-trait = "0.1"
-tracing = "0.1"
+tokio = { workspace = true, features = ["full"] }
+futures.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
 # openai.rs 构造校验用 `url::Url::parse` 验证 base_url 合法性
-url = "2"
+url.workspace = true
 # stream.rs 增量转换器（RigStreamDelta 流 → ChatResponse 流）用 try_stream 编写
-async-stream = "0.3"
+async-stream.workspace = true
 # structured.rs 原生 output_schema 路径需构造 schemars::schema::Schema。
 # 注意：rig-core 0.41.0 依赖 schemars ^1.0（树内 1.2.x）；workspace 顶层是 0.8
 # （其他 crate 用），二者共存，此处必须用 "1" 以匹配 rig 的版本（勿改 workspace）。
-schemars = "1"
+schemars_1.workspace = true
 
 [dev-dependencies]
-wiremock = "0.6"
-tokio-test = "0.4"
+wiremock.workspace = true
+tokio-test.workspace = true
 # error.rs 测试直接使用 `http::StatusCode` / `url::ParseError`
-http = "1"
+http.workspace = true
 # rig_e2e_tests.rs（T028）：用真实 ReActAgent + FunctionTool 跑确定性端到端循环
 agent_scope_agent = { path = "../agent_scope_agent" }
 agent_scope_tool = { path = "../agent_scope_tool" }
@@ -39,4 +39,4 @@ serde = { workspace = true }
 # agent_scope_tool 的 FunctionTool::new 要求 schemars **0.8** 的 JsonSchema；
 # agent_scope_rig 主 dep schemars="1" 仅 lib 用（匹配 rig-core）。二者语义不兼容，
 # 测试侧显式 alias 为 0.8（event_sequence_tests 同款用法）。
-schemars-08 = { package = "schemars", version = "0.8" }
+schemars_08.workspace = true

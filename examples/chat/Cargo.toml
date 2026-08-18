@@ -15,10 +15,10 @@ agent_scope_rig = { path = "../../crates/agent_scope_rig" }
 agent_scope_event = { path = "../../crates/agent_scope_event" }
 agent_scope_message = { path = "../../crates/agent_scope_message" }
 agent_scope_tool = { path = "../../crates/agent_scope_tool" }
-anyhow = "1"
+anyhow.workspace = true
 clap.workspace = true
-dotenv = "0.15"
-futures = "0.3"
+dotenv.workspace = true
+futures.workspace = true
 schemars.workspace = true
 serde.workspace = true
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }

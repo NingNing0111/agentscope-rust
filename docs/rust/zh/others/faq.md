@@ -38,7 +38,7 @@ description: "关于 AgentScope Rust 的常见问题"
   </Accordion>
 
   <Accordion title="需要启用什么 feature 开关？">
-    不需要。全 workspace 无 `[features]` 开关，按需引入 `agent_scope_*` crate 即可。能力可用性以文档状态标注为准。
+    默认构建不需要 feature。多格式文档解析（PDF / Office / Excel / HTML）需要启用 `agent_scope_rag` 的 `xberg` feature，例如 `agent_scope_rag = { version = "...", features = ["xberg"] }`。其余能力按需引入对应 `agent_scope_*` crate 即可。
   </Accordion>
 
 </AccordionGroup>

@@ -25,6 +25,13 @@ pub enum ParserError {
         /// Description of the encoding error.
         error: String,
     },
+    /// Format-specific extraction failed.
+    ExtractionError {
+        /// The original filename.
+        filename: String,
+        /// Description of the extraction error.
+        error: String,
+    },
 }
 
 impl fmt::Display for ParserError {
@@ -35,6 +42,9 @@ impl fmt::Display for ParserError {
             }
             Self::EncodingError { filename, error } => {
                 write!(f, "encoding error in '{filename}': {error}")
+            }
+            Self::ExtractionError { filename, error } => {
+                write!(f, "extraction error in '{filename}': {error}")
             }
         }
     }
@@ -164,3 +174,48 @@ impl fmt::Display for KnowledgeBaseError {
 }
 
 impl std::error::Error for KnowledgeBaseError {}
+
+// ---------------------------------------------------------------------------
+// IngestError
+// ---------------------------------------------------------------------------
+
+/// Errors from the parse → chunk → insert pipeline.
+#[derive(Debug, Clone)]
+pub enum IngestError {
+    /// Document parsing failed.
+    Parser(ParserError),
+    /// Text chunking failed.
+    Chunker(ChunkerError),
+    /// Knowledge base insert failed.
+    KnowledgeBase(KnowledgeBaseError),
+}
+
+impl fmt::Display for IngestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parser(e) => write!(f, "ingest parse error: {e}"),
+            Self::Chunker(e) => write!(f, "ingest chunk error: {e}"),
+            Self::KnowledgeBase(e) => write!(f, "ingest knowledge base error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for IngestError {}
+
+impl From<ParserError> for IngestError {
+    fn from(value: ParserError) -> Self {
+        Self::Parser(value)
+    }
+}
+
+impl From<ChunkerError> for IngestError {
+    fn from(value: ChunkerError) -> Self {
+        Self::Chunker(value)
+    }
+}
+
+impl From<KnowledgeBaseError> for IngestError {
+    fn from(value: KnowledgeBaseError) -> Self {
+        Self::KnowledgeBase(value)
+    }
+}

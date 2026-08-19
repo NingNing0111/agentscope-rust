@@ -153,7 +153,13 @@ impl ApproxTokenChunker {
     }
 
     /// Split a text string into chunks using sliding window.
-    fn chunk_text(&self, text: &str, source: &str, base_index: usize) -> Vec<Chunk> {
+    fn chunk_text(
+        &self,
+        text: &str,
+        source: &str,
+        base_index: usize,
+        metadata: &HashMap<String, String>,
+    ) -> Vec<Chunk> {
         let words: Vec<&str> = text.split_whitespace().collect();
         if words.is_empty() {
             return vec![];
@@ -173,7 +179,7 @@ impl ApproxTokenChunker {
                 source: source.to_string(),
                 chunk_index: base_index + chunks.len(),
                 total_chunks: 0, // filled in later
-                metadata: HashMap::new(),
+                metadata: metadata.clone(),
             });
 
             if end >= words.len() {
@@ -216,7 +222,8 @@ impl Chunker for ApproxTokenChunker {
                     if text.trim().is_empty() {
                         continue;
                     }
-                    let chunks = self.chunk_text(text, &section.source, index_offset);
+                    let chunks =
+                        self.chunk_text(text, &section.source, index_offset, &section.metadata);
                     let count = chunks.len();
                     source_index.insert(section.source.clone(), index_offset + count);
                     all_chunks.extend(chunks);

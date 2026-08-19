@@ -36,6 +36,10 @@ jobs:
         run: cargo check --workspace --all-targets
       - name: Cargo test
         run: cargo test --workspace
+      - name: RAG xberg parser tests
+        run: cargo test -p agent_scope_rag --features xberg --all-targets
+      - name: RAG example with xberg
+        run: cargo check -p rag --features xberg --all-targets
 
   quality:
     name: Format, clippy, and docs
@@ -56,5 +60,9 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy (xberg parser)
+        run: cargo clippy -p agent_scope_rag --features xberg --all-targets -- -D warnings
+      - name: Clippy (rag example with xberg)
+        run: cargo clippy -p rag --features xberg --all-targets -- -D warnings
       - name: Documentation tests
         run: cargo test --workspace --doc

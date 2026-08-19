@@ -4,6 +4,7 @@
 //! can then be fed to a [`Chunker`](crate::chunker::Chunker).
 
 use std::collections::HashMap;
+use std::future::Future;
 
 use serde::{Deserialize, Serialize};
 
@@ -66,7 +67,7 @@ impl Section {
 /// # Implementations
 ///
 /// - [`TextParser`] — handles `.txt` and `.md` files
-/// - Other formats return `ParserError::UnsupportedFormat`
+/// - `XbergParser` (feature `xberg`) — PDF / Office / Excel / HTML
 pub trait Parser: Send + Sync {
     /// Parse raw file content into sections.
     ///
@@ -74,6 +75,16 @@ pub trait Parser: Send + Sync {
     /// * `file` — raw file content as bytes
     /// * `filename` — original filename (for source attribution and format detection)
     fn parse(&self, file: Vec<u8>, filename: &str) -> Result<Vec<Section>, ParserError>;
+
+    /// Async parse entry used by ingest. Defaults to the synchronous [`Parser::parse`].
+    fn parse_async(
+        &self,
+        file: Vec<u8>,
+        filename: &str,
+    ) -> impl Future<Output = Result<Vec<Section>, ParserError>> + Send {
+        let result = self.parse(file, filename);
+        async move { result }
+    }
 }
 
 // ---------------------------------------------------------------------------

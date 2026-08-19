@@ -6,9 +6,10 @@ use agent_scope_embedding::{
     EmbeddingError, EmbeddingInput, EmbeddingModel, EmbeddingModelCard, EmbeddingResponse,
     EmbeddingUsage,
 };
-use agent_scope_rag::chunker::Chunk;
+use agent_scope_rag::chunker::{ApproxTokenChunker, Chunk};
 use agent_scope_rag::error::KnowledgeBaseError;
 use agent_scope_rag::knowledge_base::KnowledgeBase;
+use agent_scope_rag::parser::TextParser;
 use agent_scope_rag::vector_store::{
     DocumentSummary, VectorRecord, VectorSearchResult, VectorStore,
 };
@@ -350,4 +351,26 @@ async fn test_insert_empty_chunks() {
         .await
         .expect("empty insert should succeed");
     assert!(doc_id.is_empty());
+}
+
+#[tokio::test]
+async fn test_ingest_bytes_text_parser() {
+    let kb = make_kb();
+    let chunker = ApproxTokenChunker::new(100, 20);
+    let doc_id = kb
+        .ingest_bytes(
+            &TextParser,
+            &chunker,
+            b"hello ingest pipeline from text".to_vec(),
+            "note.txt",
+            Some("ingest-1".into()),
+        )
+        .await
+        .expect("ingest should succeed");
+    assert_eq!(doc_id, "ingest-1");
+    let results = kb
+        .search(vec!["ingest".into()], 5, None)
+        .await
+        .expect("search");
+    assert!(!results.is_empty());
 }

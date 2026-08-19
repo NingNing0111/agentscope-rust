@@ -9,7 +9,10 @@ use std::sync::Arc;
 use agent_scope_agent::{Agent, AgentConfig, ContextConfig, ReActAgent, ReActConfig};
 use agent_scope_event::AgentEvent;
 use agent_scope_message::factory::user_msg;
-use agent_scope_rag::{Chunk, KnowledgeBase, RAGMiddleware, RAGMode, TurbovecVectorStore};
+use agent_scope_rag::{
+    ApproxTokenChunker, Chunk, KnowledgeBase, RAGMiddleware, RAGMode, TextParser,
+    TurbovecVectorStore,
+};
 use agent_scope_rig::{RigChatModel, RigEmbeddingModel};
 use clap::Parser;
 use futures::StreamExt;
@@ -22,6 +25,9 @@ struct Cli {
         default_value = "项目使用的编程语言是什么？请基于知识库回答。"
     )]
     prompt: String,
+    /// Optional document to parse and ingest (txt/md, or pdf/docx/pptx/xlsx/html with `--features xberg`).
+    #[arg(short, long)]
+    file: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -52,32 +58,44 @@ async fn main() -> anyhow::Result<()> {
         None,
     ));
 
-    // 2. Insert documents (as chunks).
-    kb.insert_document(
-        vec![Chunk {
-            content: "AgentScope Rust uses the Rust programming language. The workspace is organized into agent_scope_* crates.".into(),
-            source: "readme".into(),
-            chunk_index: 0,
-            total_chunks: 1,
-            metadata: Default::default(),
-        }],
-        Some("readme".into()),
-        None,
-    )
-    .await?;
-    kb.insert_document(
-        vec![Chunk {
-            content: "The framework separates model, tool, memory, rag, and workspace concerns into independent crates.".into(),
-            source: "architecture".into(),
-            chunk_index: 0,
-            total_chunks: 1,
-            metadata: Default::default(),
-        }],
-        Some("architecture".into()),
-        None,
-    )
-    .await?;
-    println!("inserted 2 documents into knowledge base");
+    if let Some(path) = cli.file.as_ref() {
+        let bytes = std::fs::read(path)?;
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("document")
+            .to_string();
+        let chunker = ApproxTokenChunker::new(200, 40);
+        let doc_id = ingest_file(&kb, &chunker, bytes, &filename).await?;
+        println!("ingested {filename} as {doc_id}");
+    } else {
+        // 2. Insert documents (as chunks).
+        kb.insert_document(
+            vec![Chunk {
+                content: "AgentScope Rust uses the Rust programming language. The workspace is organized into agent_scope_* crates.".into(),
+                source: "readme".into(),
+                chunk_index: 0,
+                total_chunks: 1,
+                metadata: Default::default(),
+            }],
+            Some("readme".into()),
+            None,
+        )
+        .await?;
+        kb.insert_document(
+            vec![Chunk {
+                content: "The framework separates model, tool, memory, rag, and workspace concerns into independent crates.".into(),
+                source: "architecture".into(),
+                chunk_index: 0,
+                total_chunks: 1,
+                metadata: Default::default(),
+            }],
+            Some("architecture".into()),
+            None,
+        )
+        .await?;
+        println!("inserted 2 documents into knowledge base");
+    }
 
     // 3. RAG middleware (Static: inject retrieved context on every turn).
     let rag = Arc::new(RAGMiddleware::new(
@@ -120,4 +138,41 @@ async fn main() -> anyhow::Result<()> {
     println!();
 
     Ok(())
+}
+
+async fn ingest_file(
+    kb: &KnowledgeBase,
+    chunker: &ApproxTokenChunker,
+    bytes: Vec<u8>,
+    filename: &str,
+) -> anyhow::Result<String> {
+    let ext = std::path::Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "txt" | "md" | "markdown" | "text" => Ok(kb
+            .ingest_bytes(
+                &TextParser,
+                chunker,
+                bytes,
+                filename,
+                Some(filename.to_string()),
+            )
+            .await?),
+        #[cfg(feature = "xberg")]
+        "pdf" | "docx" | "pptx" | "xlsx" | "html" | "htm" => Ok(kb
+            .ingest_bytes(
+                &agent_scope_rag::XbergParser,
+                chunker,
+                bytes,
+                filename,
+                Some(filename.to_string()),
+            )
+            .await?),
+        _ => anyhow::bail!(
+            "不支持的文件 '{filename}'。纯文本请使用 .txt/.md；PDF/Office/HTML 请以 `--features xberg` 运行示例。"
+        ),
+    }
 }

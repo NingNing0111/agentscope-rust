@@ -9,6 +9,10 @@ repository.workspace = true
 name = "rag"
 path = "src/main.rs"
 
+[features]
+default = []
+xberg = ["agent_scope_rag/xberg"]
+
 [dependencies]
 agent_scope_agent = { path = "../../crates/agent_scope_agent" }
 agent_scope_rig = { path = "../../crates/agent_scope_rig" }

@@ -12,18 +12,22 @@ pub mod rag_middleware;
 pub mod turbovec_memory_adapter;
 pub mod turbovec_store;
 pub mod vector_store;
+#[cfg(feature = "xberg")]
+pub mod xberg_parser;
 
 // Re-exports — chunker
 pub use chunker::{ApproxTokenChunker, Chunk, Chunker};
 
 // Re-exports — error types
-pub use error::{ChunkerError, KnowledgeBaseError, ParserError, VectorStoreError};
+pub use error::{ChunkerError, IngestError, KnowledgeBaseError, ParserError, VectorStoreError};
 
 // Re-exports — knowledge base
 pub use knowledge_base::KnowledgeBase;
 
 // Re-exports — parser
 pub use parser::{Parser, Section, SectionContent, TextParser};
+#[cfg(feature = "xberg")]
+pub use xberg_parser::XbergParser;
 
 // Re-exports — RAG middleware
 pub use rag_middleware::{RAGMiddleware, RAGMode};

@@ -8,8 +8,9 @@ use std::sync::Arc;
 use agent_scope_embedding::{EmbeddingInput, EmbeddingModel, EmbeddingModelCard};
 use tokio::sync::OnceCell;
 
-use crate::chunker::Chunk;
-use crate::error::KnowledgeBaseError;
+use crate::chunker::{Chunk, Chunker};
+use crate::error::{IngestError, KnowledgeBaseError};
+use crate::parser::Parser;
 use crate::vector_store::{DocumentSummary, VectorRecord, VectorSearchResult, VectorStore};
 
 // ---------------------------------------------------------------------------
@@ -273,6 +274,23 @@ impl KnowledgeBase {
             .map_err(|e| KnowledgeBaseError::VectorStoreError(e.to_string()))?;
 
         Ok(doc_id)
+    }
+
+    /// Parse bytes, chunk them, and insert into this knowledge base.
+    ///
+    /// Returns the document ID (auto-generated UUID v4 if not provided). An
+    /// empty parse result inserts nothing and returns an empty string.
+    pub async fn ingest_bytes(
+        &self,
+        parser: &impl Parser,
+        chunker: &impl Chunker,
+        file: Vec<u8>,
+        filename: &str,
+        document_id: Option<String>,
+    ) -> Result<String, IngestError> {
+        let sections = parser.parse_async(file, filename).await?;
+        let chunks = chunker.chunk(sections)?;
+        Ok(self.insert_document(chunks, document_id, None).await?)
     }
 
     // ── Delete ──────────────────────────────────────────────────────

@@ -98,3 +98,38 @@ fn test_chunker_cross_section_boundary() {
     assert!(!a_chunks.is_empty());
     assert!(!b_chunks.is_empty());
 }
+
+#[test]
+fn test_chunker_preserves_section_metadata() {
+    let chunker = ApproxTokenChunker::new(100, 20);
+    let mut section = Section::new_text("doc.txt", generate_text(20));
+    section.metadata.insert("page".into(), "3".into());
+    let chunks = chunker.chunk(vec![section]).expect("chunk should succeed");
+    assert!(!chunks.is_empty());
+    assert_eq!(
+        chunks[0].metadata.get("page").map(String::as_str),
+        Some("3")
+    );
+}
+
+#[test]
+fn test_chunker_section_metadata_keeps_source_totals() {
+    let chunker = ApproxTokenChunker::new(100, 20);
+    let mut page1 = Section::new_text("doc.txt", generate_text(20));
+    page1.metadata.insert("page".into(), "1".into());
+    let mut page2 = Section::new_text("doc.txt", generate_text(20));
+    page2.metadata.insert("page".into(), "2".into());
+    let chunks = chunker
+        .chunk(vec![page1, page2])
+        .expect("chunk should succeed");
+    assert_eq!(chunks.len(), 2);
+    assert!(chunks.iter().all(|c| c.total_chunks == 2));
+    assert_eq!(
+        chunks[0].metadata.get("page").map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        chunks[1].metadata.get("page").map(String::as_str),
+        Some("2")
+    );
+}

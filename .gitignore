@@ -18,6 +18,13 @@ playwright-report/
 !.claude/skills/
 .claude/settings.local.json
 .omc/
+# Agent IDE / runtime — do not commit; agents are not collaborators
+.cursor/
+.codex/
+.agents/
+agent-transcripts/
+*.local.*
+config.local.*
 agentscope/
 # Default agent-session persistence directory (Feature 025)
 sessions/

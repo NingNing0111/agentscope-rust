@@ -11,11 +11,11 @@ AgentScope Rust 中的 RAG 由**可独立替换**的功能模块组成（`agent_
 
 | 功能模块 | 描述 |
 |----------|------|
-| 解析器 Parser | 把原始文本拆成 `Section`（`TextParser`，支持 text/markdown/csv/html/json/xml/yaml） |
+| 解析器 Parser | 把原始字节拆成 `Section`（默认 `TextParser` 支持 `.txt` / `.md`；启用 `xberg` feature 后可用 `XbergParser` 解析 PDF / DOCX / PPTX / XLSX / HTML） |
 | 切块器 Chunker | 把 `Section` 切成最终入库的 `Chunk`（`ApproxTokenChunker`） |
 | 嵌入模型 Embedding | 把 `Chunk` 文本嵌入为向量（见 [Embedding](model/embedding)） |
 | 向量库 Vector Store | 存储 `Chunk` 向量并支持检索（`TurbovecVectorStore`，基于 `turbovec`） |
-| 知识库 KnowledgeBase | 绑定嵌入模型 + 向量库 + collection，封装 `insert_document` / `search` / `list_documents` / `delete_document` |
+| 知识库 KnowledgeBase | 绑定嵌入模型 + 向量库 + collection，封装 `insert_document` / `ingest_bytes` / `search` / `list_documents` / `delete_document` |
 
 ## 组装知识库
 
@@ -41,6 +41,22 @@ kb.insert_document(
     None,
 ).await?;
 ```
+
+从文件入库时，先解析再切块：
+
+```rust
+use agent_scope_rag::{ApproxTokenChunker, TextParser};
+
+kb.ingest_bytes(
+    &TextParser,
+    &ApproxTokenChunker::new(200, 40),
+    std::fs::read("notes.md")?,
+    "notes.md",
+    Some("notes".into()),
+).await?;
+```
+
+多格式文档（PDF、Word、PPT、Excel、HTML）需要启用 `agent_scope_rag` 的 `xberg` feature，并使用 `XbergParser`。当前不包含 OCR，扫描件 PDF 无法抽出文字。
 
 ## 集成到智能体
 

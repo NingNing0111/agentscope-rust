@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "AgentScope RAG System — Parser, Chunker, VectorStore, KnowledgeBase, RAGMiddleware"
 
+[features]
+default = []
+xberg = ["dep:xberg"]
+
 [dependencies]
 agent_scope_types = { path = "../agent_scope_types" }
 agent_scope_embedding = { path = "../agent_scope_embedding" }
@@ -21,6 +25,7 @@ futures.workspace = true
 uuid.workspace = true
 tokio = { workspace = true, features = ["sync", "rt"] }
 turbovec.workspace = true
+xberg = { workspace = true, optional = true, features = ["tokio-runtime", "pdf", "office", "excel", "html"] }
 
 [dev-dependencies]
 tempfile.workspace = true

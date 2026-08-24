@@ -16,6 +16,35 @@ async function exists(path) {
   }
 }
 
+// Parses `[package] name` values from Cargo.toml files directly below a
+// directory. Kept exported for unit tests and for the historical examples-only
+// discovery contract.
+export async function discoverExamplePackages(examplesRoot) {
+  const names = []
+  let entries
+  try {
+    entries = await readdir(examplesRoot, { withFileTypes: true })
+  } catch {
+    return []
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const manifestPath = join(examplesRoot, entry.name, 'Cargo.toml')
+    let manifest
+    try {
+      manifest = await readFile(manifestPath, 'utf8')
+    } catch {
+      continue
+    }
+    const section = manifest.split('[package]', 2)[1] ?? ''
+    const match = section.match(/^name\s*=\s*"([^"]+)"/m)
+    if (match) names.push(match[1])
+  }
+
+  return [...new Set(names)].sort()
+}
+
 // Parses the first `[package] name` from Cargo.toml files in the root package,
 // crates/*, and examples/*. Docs may reference both example packages (for
 // runnable demos) and library crates (for feature-gated cargo check/test

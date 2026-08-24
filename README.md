@@ -14,6 +14,7 @@
 - **工具系统**：`FunctionTool`（任意 async 函数自动生成 schema）、`ToolKit` 注册表、`Skill` 集成、lenient 容错反序列化
 - **记忆与 RAG**：`FileMemory` / `TurbovecMemory`、`KnowledgeBase` + `RAGMiddleware`（Static / Agentic）
 - **工作空间**：`LocalWorkspace` 隔离文件系统 + 内置编码工具（Read/Write/Edit/Bash/Grep/Glob/ListDir）
+- **沙箱后端**：默认 `LocalSandboxSession` 适合开发与轻量受控执行；启用 `agent_scope_sandbox` 的 `microsandbox` feature 后可使用 `MicrosandboxSession` microVM 后端
 - **事件驱动**：33 种 `AgentEvent` 流式事件，适合 TUI / WebSocket / SSE / 日志
 - **会话持久化**：agent state 自动落盘，支持 `--resume`
 
@@ -138,6 +139,20 @@ while let Some(event) = stream.next().await {
 ```
 
 更多进阶用法（记忆、RAG、权限、Planner/SubAgent/Workspace）见 [`skills/agentscope-guide/SKILL.md`](skills/agentscope-guide/SKILL.md)。
+
+## 沙箱后端 / microsandbox
+
+`agent_scope_sandbox` 默认提供 `LocalSandboxSession`：它用本地进程和临时目录提供命令执行、文件读写、路径越界防护、timeout 与 `CapabilityReport`，适合示例、开发和轻量受控执行，但不是 microVM/container 级强隔离。
+
+需要真实 microVM 隔离时，可显式启用 feature-gated `MicrosandboxSession`：
+
+```bash
+cargo check -p agent_scope_sandbox --features microsandbox
+```
+
+完整示例见 [`examples/sandbox`](examples/sandbox/)。默认 `cargo run -p sandbox` 只运行 local-process backend，不需要 microsandbox runtime；启用 feature 后也必须设置 `AGENTSCOPE_RUN_MICROSANDBOX_EXAMPLE=1` 才会启动真实 runtime。真实 integration tests 同样被 `#[ignore]` 和 `AGENTSCOPE_RUN_MICROSANDBOX_TESTS=1` 双重保护，不会被普通 `cargo test --workspace` 触发。
+
+microsandbox runtime 需要按上游文档单独安装和配置；本项目不会自动安装或管理 `msb`，也不会在 microsandbox 不可用时 fallback 到 local-process。
 
 ## 相关资源
 

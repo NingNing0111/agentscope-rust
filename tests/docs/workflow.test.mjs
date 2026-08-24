@@ -39,3 +39,15 @@ test('docs workflow deploys only on workflow_dispatch or push to master', async 
   assert.ok(content.includes('upload-pages-artifact'))
   assert.ok(content.includes('deploy-pages'))
 })
+
+test('docs workflow keeps Playwright opt-in and avoids apt dependency installation', async () => {
+  const content = await readFile(workflowPath, 'utf8')
+  const installStep = content.split('- name: Install Playwright Chromium')[1]?.split('\n\n')[0] ?? ''
+  const e2eStep = content.split('- name: Browser and accessibility tests')[1]?.split('\n\n')[0] ?? ''
+
+  assert.ok(content.includes('run_e2e:'), 'manual workflow must expose the run_e2e switch')
+  assert.match(installStep, /if: \$\{\{ inputs\.run_e2e == true \}\}/)
+  assert.match(e2eStep, /if: \$\{\{ inputs\.run_e2e == true \}\}/)
+  assert.ok(!content.includes('run: npx playwright install --with-deps'), 'Playwright install must not invoke apt')
+  assert.match(installStep, /npx playwright install chromium/)
+})

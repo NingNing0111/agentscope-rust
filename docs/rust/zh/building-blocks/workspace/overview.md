@@ -119,20 +119,61 @@ let config = AgentConfig::builder()
 
 ## 沙箱执行
 
-沙箱（Sandbox）在工作空间内提供**受控命令执行**：`LocalSandboxSession`（`agent_scope_sandbox` crate）以本地进程 + 临时根目录方式隔离命令，配合 `SandboxPolicy` / `SandboxPathResolver` 做路径越界防护与命令超时控制。
+沙箱（Sandbox）在工作空间内提供**受控命令执行**。`agent_scope_sandbox` crate 通过统一的 `SandboxSession` trait 抽象后端：默认可用的是 local-process reference backend；启用 `microsandbox` feature 后，可以显式使用 microsandbox microVM backend。
 
 | 类型 | 职责 |
 |------|------|
 | `SandboxSession` | 沙箱统一接口：`initialize` / `execute` / 文件操作 / `history` / `capability_report` |
-| `LocalSandboxSession` | 本地进程实现，临时根目录隔离 |
-| `SandboxPolicy` | 超时、输出上限、网络、cpu/memory/process 限制等策略 |
+| `LocalSandboxSession` | 默认本地进程实现，使用临时根目录、路径 containment、命令 timeout 与输出上限；不是强隔离 |
+| `MicrosandboxSession` | feature-gated microsandbox 实现，使用 microVM runtime；默认 image 为 `python`，默认 guest workdir 为 `/workspace` |
+| `SandboxPolicy` | 超时、输出上限、网络、cpu/memory/process 限制等策略；后端必须通过 `CapabilityReport` 报告可支持边界 |
 | `SandboxPathResolver` | 路径规范化与边界检查（拒绝 `..`、符号链接逃逸） |
+| `SandboxWorkspaceBackend` | 把任意 `SandboxSession` 适配成 workspace backend |
 | `ExecutionResult` | 一次命令执行的结果与资源命中记录 |
 | `CapabilityReport` | 能力报告：列出支持 / 不支持的能力 |
 
-> **边界**：Rust 沙箱为**本地隔离**，非 Docker 容器；cpu/memory 资源限制在本地后端**不可强制**（Docker / E2B / K8s 沙箱为「计划中」）。
+| 后端 | 默认可用性 | 隔离边界 | 网络策略 | 资源限制 |
+|------|------------|----------|----------|----------|
+| `LocalSandboxSession` | 默认编译，无需外部 runtime | 本地进程 + 临时根目录；Rust 文件 API 防 traversal/symlink escape；命令执行仍是宿主本地进程语义 | 跟随 `SandboxPolicy::default()` 的 host/unrestricted 语义 | 本地后端不伪装强制 CPU / memory / process limit |
+| `MicrosandboxSession` | 需 `--features microsandbox`，真实运行还需安装 microsandbox runtime | microsandbox microVM；示例与测试默认只 mount 新建 host tempdir 到 guest `/workspace` | `MicrosandboxConfig::default()` 默认 `NetworkPolicy::Disabled`；支持显式 `Disabled` / `Unrestricted` | `memory_limit_bytes` 转换为 MiB；`cpu_limit.cpu_shares` 和 `process_limit` 当前返回 unsupported |
 
-沙箱示例见 [`examples/sandbox`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/sandbox/)（`cargo run -p sandbox`），演示命令执行、路径防护与 CapabilityReport，无需模型凭据。
+> **边界**：local-process backend 是 reference backend，不是 microVM/container 级强隔离。microsandbox backend 不会在 runtime、平台或 image 不可用时 fallback 到 local-process；失败会以 sandbox 错误返回。
+
+当前 microsandbox policy 保持精确语义：`LoopbackOnly` / `Allowlist` 不会被自动放宽成 unrestricted，而是返回 unsupported；`cpu_limit.cpu_shares` 与 `process_limit` 也不会做不等价映射。调用方应读取 `CapabilityReport`，不要把“后端存在”理解为“所有 policy 均可强制执行”。
+
+默认 local 示例无需模型凭据或 microsandbox runtime：
+
+```bash
+cargo run -p sandbox
+```
+
+只检查 feature-gated microsandbox 后端能否编译：
+
+```bash
+cargo check -p agent_scope_sandbox --features microsandbox
+```
+
+启用 feature 但不设置运行 gate 时，`examples/sandbox` 仍只打印 skip 提示，不启动真实 runtime：
+
+```bash
+cargo run -p sandbox --features microsandbox
+```
+
+显式运行真实 microsandbox 示例需本机 runtime 可用，并设置环境变量：
+
+```bash
+AGENTSCOPE_RUN_MICROSANDBOX_EXAMPLE=1 \
+  cargo run -p sandbox --features microsandbox
+```
+
+真实 runtime integration tests 默认被 `#[ignore]` 和环境变量双重保护：
+
+```bash
+AGENTSCOPE_RUN_MICROSANDBOX_TESTS=1 \
+  cargo test -p agent_scope_sandbox --features microsandbox --test microsandbox_tests -- --ignored
+```
+
+更多使用说明见 [`examples/sandbox`](https://github.com/NingNing0111/agentscope-rust/tree/master/examples/sandbox/) 和 [`specs/035-microsandbox-sandbox-backend/quickstart.md`](https://github.com/NingNing0111/agentscope-rust/blob/master/specs/035-microsandbox-sandbox-backend/quickstart.md)。
 
 ## 下一步
 

@@ -47,6 +47,7 @@ gray_matter = { version = "0.3.2", default-features = false, features = [
 ] }
 http = "1"
 mime_guess = "2"
+microsandbox = "0.6.10"
 nix = { version = "0.29", default-features = false }
 regex = "1"
 # Feature 027: Official MCP Rust SDK — the sole protocol implementation.

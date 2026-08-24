@@ -36,3 +36,4 @@ examples/pi-rust/skills/
 docs/python
 # human-in-the-loop 示例运行时写入的随机文本测试产物
 notes.txt
+.omx/

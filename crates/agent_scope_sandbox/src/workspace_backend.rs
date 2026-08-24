@@ -12,20 +12,37 @@ use crate::execution::{ExecutionRequest, ExecutionStatus};
 use crate::local::LocalSandboxSession;
 use crate::session::SandboxSession;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SandboxWorkspaceBackend {
-    session: Arc<Mutex<LocalSandboxSession>>,
+    session: Arc<Mutex<Box<dyn SandboxSession>>>,
     instructions: String,
+}
+
+impl std::fmt::Debug for SandboxWorkspaceBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxWorkspaceBackend")
+            .field("instructions", &self.instructions)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SandboxWorkspaceBackend {
     #[must_use]
     pub fn new(session: LocalSandboxSession) -> Self {
-        let workspace_root = session.workdir().to_path_buf();
-        let instructions = format!(
-            "Sandbox workspace rooted at {}. Path traversal and read-only mount writes are refused. Unsupported hard isolation capabilities are reported explicitly.",
-            workspace_root.display()
-        );
+        Self::from_session(session)
+    }
+
+    #[must_use]
+    pub fn from_session<S>(session: S) -> Self
+    where
+        S: SandboxSession + 'static,
+    {
+        Self::from_boxed_session(Box::new(session))
+    }
+
+    #[must_use]
+    pub fn from_boxed_session(session: Box<dyn SandboxSession>) -> Self {
+        let instructions = "Sandbox workspace backed by a shared SandboxSession. Path traversal and read-only mount writes are refused. Unsupported hard isolation capabilities are reported explicitly.".to_string();
         Self {
             session: Arc::new(Mutex::new(session)),
             instructions,
@@ -57,13 +74,8 @@ impl SandboxWorkspaceBackend {
 }
 
 fn sandbox_to_workspace(err: SandboxError) -> WorkspaceError {
-    match err {
-        SandboxError::PermissionDenied { path, .. } => WorkspaceError::PathTraversal {
-            path: path.unwrap_or_default(),
-        },
-        other => WorkspaceError::GatewayError {
-            message: format!("{}: {other}", other.category()),
-        },
+    WorkspaceError::GatewayError {
+        message: format!("{}: {err}", err.category()),
     }
 }
 

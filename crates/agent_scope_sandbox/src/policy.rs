@@ -98,6 +98,44 @@ impl SandboxPolicy {
     }
 }
 
+pub fn validate_microsandbox_policy(policy: &SandboxPolicy) -> SandboxResult<()> {
+    policy.validate()?;
+    if policy.cpu_limit.is_some() {
+        return Err(SandboxError::UnsupportedFeature {
+            feature: "cpu_shares".into(),
+            reason:
+                "SandboxPolicy::cpu_limit.cpu_shares is not equivalent to microsandbox vCPU count"
+                    .into(),
+        });
+    }
+    if policy.process_limit.is_some() {
+        return Err(SandboxError::UnsupportedFeature {
+            feature: "process_limit".into(),
+            reason: "microsandbox SDK does not expose a stable process limit mapping".into(),
+        });
+    }
+    match &policy.network {
+        NetworkPolicy::Disabled | NetworkPolicy::Unrestricted => Ok(()),
+        NetworkPolicy::LoopbackOnly => Err(SandboxError::UnsupportedFeature {
+            feature: "network_loopback_only".into(),
+            reason: "microsandbox backend requires exact loopback-only support and does not relax it to unrestricted networking".into(),
+        }),
+        NetworkPolicy::Allowlist { .. } => Err(SandboxError::UnsupportedFeature {
+            feature: "network_allowlist".into(),
+            reason: "microsandbox backend requires exact host allowlist support and does not relax it to unrestricted networking".into(),
+        }),
+    }
+}
+
+pub fn memory_bytes_to_mib(bytes: u64) -> SandboxResult<u64> {
+    if bytes == 0 {
+        return Err(SandboxError::ValidationError {
+            message: "memory_limit_bytes must be > 0".into(),
+        });
+    }
+    Ok(bytes.div_ceil(1024 * 1024))
+}
+
 mod duration_secs {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::time::Duration;

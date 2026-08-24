@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+microsandbox = ["dep:microsandbox"]
+
 [dependencies]
 agent_scope_workspace = { path = "../agent_scope_workspace" }
 async-trait.workspace = true
@@ -13,6 +17,7 @@ chrono.workspace = true
 # *and* any grandchildren that inherited its stdout/stderr pipes on timeout
 # (round-4 M28). Kept behind `cfg(unix)` in local.rs.
 nix = { workspace = true, features = ["signal", "process"] }
+microsandbox = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

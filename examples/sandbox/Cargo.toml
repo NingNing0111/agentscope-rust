@@ -9,6 +9,10 @@ repository.workspace = true
 name = "sandbox"
 path = "src/main.rs"
 
+[features]
+default = []
+microsandbox = ["agent_scope_sandbox/microsandbox"]
+
 [dependencies]
 agent_scope_sandbox = { path = "../../crates/agent_scope_sandbox" }
 anyhow.workspace = true

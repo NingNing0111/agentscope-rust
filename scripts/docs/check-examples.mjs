@@ -16,23 +16,41 @@ async function exists(path) {
   }
 }
 
-// Parses the first `[package] name` from every examples/*/Cargo.toml.
-export async function discoverExamplePackages(examplesRoot) {
+// Parses the first `[package] name` from Cargo.toml files in the root package,
+// crates/*, and examples/*. Docs may reference both example packages (for
+// runnable demos) and library crates (for feature-gated cargo check/test
+// commands).
+export async function discoverCargoPackages(root) {
   const names = []
-  const entries = await readdir(examplesRoot, { withFileTypes: true })
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
+
+  async function addManifest(manifestPath) {
     let manifest
     try {
-      manifest = await readFile(join(examplesRoot, entry.name, 'Cargo.toml'), 'utf8')
+      manifest = await readFile(manifestPath, 'utf8')
     } catch {
-      continue
+      return
     }
     const section = manifest.split('[package]', 2)[1] ?? ''
     const match = section.match(/^name\s*=\s*"([^"]+)"/m)
     if (match) names.push(match[1])
   }
-  return names.sort()
+
+  await addManifest(join(root, 'Cargo.toml'))
+
+  for (const directory of ['crates', 'examples']) {
+    const directoryPath = join(root, directory)
+    let entries
+    try {
+      entries = await readdir(directoryPath, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) await addManifest(join(directoryPath, entry.name, 'Cargo.toml'))
+    }
+  }
+
+  return [...new Set(names)].sort()
 }
 
 function repositoryUrl({ path, type, ref }) {
@@ -79,7 +97,7 @@ export async function runChecks({ root, docsRoot, packageNames }) {
 async function main() {
   const root = resolve(dirname(new URL(import.meta.url).pathname), '../..')
   const docsRoot = resolve(root, 'docs/rust/zh')
-  const packageNames = await discoverExamplePackages(resolve(root, 'examples'))
+  const packageNames = await discoverCargoPackages(root)
   const errors = await runChecks({ root, docsRoot, packageNames })
 
   for (const error of errors) console.error(`ERROR: ${error}`)

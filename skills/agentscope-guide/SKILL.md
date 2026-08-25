@@ -32,9 +32,9 @@ AgentScope Rust 是一个用 Rust 重构的 Agent 开发框架,以**多 crate wo
 | `agent_scope_rag` | **RAG**:`Parser`、`Chunker`、`KnowledgeBase`、`TurbovecVectorStore`、`RAGMiddleware` |
 | `agent_scope_workspace` | **工作空间**:`LocalWorkspace`(隔离文件系统 + 内置工具)、Skill 管理 |
 | `agent_scope_mcp` | **MCP 集成**:`McpClient`/`McpTool`/`McpExt`(连接外部 MCP 服务器并适配为统一 `Tool`) |
-| `agent_scope_state` | **会话状态**:`AgentState`、`ReplyContext`、`SessionStore` |
-| `agent_scope_sandbox` | **沙箱**(对应 microsandbox) |
-| `agent_scope_embedding` / `agent_scope_types` / `agent_scope_utils` | 基础支撑 |
+| `agent_scope_state` | **会话状态**:`AgentState`、`ReplyContext`、`SessionStore`、`JsonFileSessionStore`、`SqliteSessionStore` |
+| `agent_scope_sandbox` | **沙箱**:`LocalSandboxSession`、feature-gated `MicrosandboxSession`、`SandboxWorkspaceBackend` |
+| `agent_scope_embedding` / `agent_scope_types` / `agent_scope_utils` | 基础支撑(ID、路径、命令输出、frontmatter 等) |
 
 > **重要**:workspace 根 package `agentscope` 只是示例壳,不提供 facade 库。使用时按需依赖具体的 `agent_scope_*` crate。
 
@@ -79,7 +79,7 @@ agent_scope_message = "0.1"
 agent_scope_event = "0.1"
 ```
 
-🔗 详细参考:[`references/dependencies.md`](references/dependencies.md)(三种引入方式对比 + 按能力选依赖 + 常见坑)
+🔗 详细参考:[`references/dependencies.md`](references/dependencies.md)(GitHub/crates.io 引入方式对比 + 按能力选依赖 + 常见坑)
 
 ---
 
@@ -315,7 +315,7 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
 
 - **SubAgent**(`agent_scope_agent::SubAgent`):父 Agent 通过 `SubAgentRegistry` 注册具名 SubAgent,用 `delegate_once()` / `delegate_many()` 委派有边界的子任务,`ContextSharingPolicy` 默认最小权限。
 
-- **Workspace**(`agent_scope_workspace::LocalWorkspace`):给 Agent 一个隔离文件系统,内置 Read/Write/Edit/Bash/Glob/Grep 工具与 Skill 管理:
+- **Workspace**(`agent_scope_workspace::LocalWorkspace`):给 Agent 一个隔离文件系统,内置 Read/Write/Edit/Bash/Glob/Grep/Find/Ls/ResetTools/Skill 工具与 Skill 管理:
 
   ```rust
   use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase};
@@ -369,7 +369,7 @@ let agent = ReActAgent::new(config, ReActConfig::default(), ContextConfig::defau
 
   传输支持 `Stdio`、`StreamableHttp`、遗留 `Sse`(连接时映射为 StreamableHttp)。真实 stdio 示例见 `crates/agent_scope_mcp/examples/mcp_excalidraw_debug.rs`;运行前需安装 `mcp-excalidraw-server` 并保证命令在 `PATH` 中。
 
-🔗 详细参考:[`references/workspace.md`](references/workspace.md)(`LocalWorkspace`/`WorkspaceManager`/`Skill` 管理/MCP 配置)、[`references/workspace.md` §6](references/workspace.md)(MCP 运行时 `agent_scope_mcp` 连接与调用)、[`references/session.md`](references/session.md)(`Session`/`SessionStore`/上下文裁剪)。`LocalSandboxSession` 沙箱定义在 `agent_scope_sandbox` crate,用法见 `references/workspace.md` §9。
+🔗 详细参考:[`references/workspace.md`](references/workspace.md)(`LocalWorkspace`/`WorkspaceManager`/内置工具/Skill 管理/MCP 配置与运行时、`LocalSandboxSession`/`MicrosandboxSession` 沙箱)、[`references/session.md`](references/session.md)(`Session`/`SessionStore`/JSON 与 SQLite 持久化/上下文裁剪)。
 
 ---
 
@@ -493,7 +493,7 @@ cargo run -p agent -- --prompt "请用一句话介绍你自己。"
 cargo run -p subagent                # 工具驱动：主 Agent 自主创建并委托子智能体
 ```
 
-`examples/` 下的 13 个示例按能力拆分（工具、MCP、Skill、记忆、RAG、Workspace、沙箱、ReAct 规划、SubAgent、HITL 等），每个演示一个真实用法。`examples/chat` 展示流式事件全量分派，`examples/subagent` 展示工具驱动的多智能体协作。
+`examples/` 下的 14 个示例按能力拆分（工具、MCP、Skill、记忆、RAG、Workspace、沙箱、Microsandbox CLI、ReAct 规划、SubAgent、HITL 等），每个演示一个真实用法。`examples/chat` 展示流式事件全量分派，`examples/subagent` 展示工具驱动的多智能体协作。
 
 > **Skill 实时扫描**:`Skill` 工具不再使用启动时快照,而是每次调用实时扫描 `workspace/skills` 目录(`LocalSkillLoader::list_skills_blocking`)。运行中把新 skill 目录复制进 `workspace/skills` 立即生效,无需重启;`PermissionRule::allow("Skill")` 始终开启以支持运行期动态装入。
 
@@ -521,7 +521,7 @@ cargo run -p subagent                # 工具驱动：主 Agent 自主创建并�
 | 文档 | 内容 |
 |------|------|
 | [`references/overview.md`](references/overview.md) | 项目概览、crate 地图、依赖 DAG、何时用哪个 crate |
-| [`references/dependencies.md`](references/dependencies.md) | Cargo.toml 三种引入方式、按能力选依赖、常见坑 |
+| [`references/dependencies.md`](references/dependencies.md) | Cargo.toml GitHub/crates.io 引入方式、按能力选依赖、常见坑 |
 | [`references/messages.md`](references/messages.md) | `Msg`/`ContentBlock` 全字段、工厂函数、角色校验、序列化协议 |
 | [`references/model.md`](references/model.md) | `ChatModel` trait、`ModelCallResult`、`StreamAccumulator`、`RigChatModel`/`RigParameters`、thinking |
 | [`references/events.md`](references/events.md) | `AgentEvent` 33 变体分组、发布顺序、End 累积内容、`AppendEvent`、取消 |
@@ -529,8 +529,8 @@ cargo run -p subagent                # 工具驱动：主 Agent 自主创建并�
 | [`references/agent.md`](references/agent.md) | `Agent` trait、`ReActAgent`、`AgentConfig`/`ReActConfig`/`ContextConfig`、`Middleware`、权限、`Planner`、`SubAgent` |
 | [`references/memory.md`](references/memory.md) | `Memory` trait、`FileMemory`、`MemoryConfig`、`MemoryMiddleware`、`Backend`、`TurbovecMemory` |
 | [`references/rag.md`](references/rag.md) | `Parser`/`Chunker`/`VectorStore`/`KnowledgeBase`/`RAGMiddleware`、文档导入、Agentic vs Static |
-| [`references/workspace.md`](references/workspace.md) | `LocalWorkspace`/`WorkspaceManager`/Skill 管理/MCP 配置与运行时(`agent_scope_mcp` 连接/调用);`LocalSandboxSession` 沙箱(定义于 `agent_scope_sandbox`) |
-| [`references/session.md`](references/session.md) | `Session`/`SessionImpl`/`AgentState`/`SessionStore`/上下文裁剪 |
+| [`references/workspace.md`](references/workspace.md) | `LocalWorkspace`/`WorkspaceManager`/内置工具/Skill 管理/MCP 配置与运行时;`LocalSandboxSession`/`MicrosandboxSession` 沙箱 |
+| [`references/session.md`](references/session.md) | `Session`/`SessionImpl`/`AgentState`/`SessionStore`/JSON 与 SQLite 持久化/上下文裁剪 |
 
 ---
 

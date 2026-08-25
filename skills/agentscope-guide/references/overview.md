@@ -9,7 +9,7 @@ AgentScope Rust 是一个 **Rust workspace**,采用多 crate 组织:
 ```text
 agentscope-rust/
 ├── crates/          # 14 个功能 crate(agent_scope_*)
-├── examples/        # 可运行示例(13 个按能力拆分的示例 crate)
+├── examples/        # 可运行示例(14 个按能力拆分的示例 crate)
 ├── docs/            # 文档站点(zh / en)
 ├── specs/           # Feature spec / plan / tasks
 ├── src/             # 根 package(仅 re-export,不提供 facade 库)
@@ -30,13 +30,13 @@ agentscope-rust/
 | `agent_scope_embedding` | 抽象 | Embedding 模型抽象 | `EmbeddingModel` trait、`EmbeddingModelCard`、`EmbeddingInput` |
 | `agent_scope_tool` | 能力 | 工具系统 + Skill 工具化 | `Tool` trait、`FunctionTool`、`ToolKit`、`SkillLoader`、`SkillViewer` |
 | `agent_scope_agent` | 编排 | Agent 编排层 | `Agent` trait、`ReActAgent`、`AgentConfig`、`ReActConfig`、`Middleware`、`PermissionContext`、`Planner`、`SubAgent`、`MemoryMiddleware` |
-| `agent_scope_state` | 编排 | 会话与状态管理 | `Session`、`SessionImpl`、`SessionStore`、`AgentState`、`TokenCounter`、`TrimStrategy` |
+| `agent_scope_state` | 编排 | 会话与状态管理 | `Session`、`SessionImpl`、`SessionStore`、`InMemorySessionStore`、`JsonFileSessionStore`、`SqliteSessionStore`、`AgentState`、`TrimStrategy` |
 | `agent_scope_memory` | 能力 | 长期记忆 | `Memory` trait、`FileMemory`、`TurbovecMemory`、`MemoryConfig`、`MemoryEntry`、`Backend` |
 | `agent_scope_rag` | 能力 | RAG 管线 | `Parser`、`Chunker`、`VectorStore`、`KnowledgeBase`、`RAGMiddleware`、`TurbovecVectorStore` |
 | `agent_scope_workspace` | 能力 | 工作空间 | `LocalWorkspace`、`WorkspaceBase`、`WorkspaceManager`、`SkillManager`、`McpRegistry` |
 | `agent_scope_mcp` | 能力 | MCP 服务器集成 | `McpClient`、`McpTool`、`McpExt`(依赖 `rmcp` 官方 SDK) |
-| `agent_scope_sandbox` | 能力 | 沙箱执行 | `SandboxSession`、`LocalSandboxSession`、`SandboxPolicy`、`CapabilityReport` |
-| `agent_scope_utils` | 工具 | 通用工具 | 内部辅助 |
+| `agent_scope_sandbox` | 能力 | 沙箱执行 | `SandboxSession`、`LocalSandboxSession`、`MicrosandboxSession`(feature-gated)、`SandboxPolicy`、`CapabilityReport` |
+| `agent_scope_utils` | 工具 | 通用工具 | ID、命令超时/输出格式化、路径规范化、skill frontmatter 等基础辅助 |
 
 ## 3. 依赖关系(DAG)
 

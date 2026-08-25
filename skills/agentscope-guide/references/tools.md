@@ -1,6 +1,6 @@
 # 参考:工具系统(`agent_scope_tool`)
 
-> 详细 API 参考:`Tool` trait、`FunctionTool` 适配器、`ToolKit` 注册表、`ToolExecOutput`、`ToolError`、Skill 集成与工具调用生命周期。
+> 详细 API 参考:`Tool` trait、`FunctionTool` 适配器、`ToolKit` 注册表、`ToolExecOutput`、`ToolError`、Skill 集成、内置 workspace 工具与工具调用生命周期。
 
 ## 1. `Tool` trait
 
@@ -80,8 +80,11 @@ toolkit.register(FunctionTool::new(
 |------|------|
 | `new()` | 创建注册表,并**自动注册 `SkillViewer`** 到默认 `basic` 组 |
 | `register(tool)` | 注册工具;同名覆盖 |
+| `try_register(tool)` | 注册工具;同名返回 `ToolError::DuplicateRegistration`,适合 fail-closed 构造流程 |
 | `remove(name)` / `clear()` | 删除 |
 | `contains(name)` / `len()` / `is_empty()` | 查询 |
+| `register_in_group(group, tool)` / `try_register_in_group(group, tool)` | 将工具放入非 `basic` 组,供 `ResetTools` 动态启停 |
+| `set_workspace_session(session)` | 绑定 workspace 工具共享 session,让 `ResetTools` 变更立即影响 schema 可见性 |
 | `get_tool_schemas()` | 导出 OpenAI-compatible function schema 数组 |
 | `call_tool(&ToolCallBlock)` | 解析 `input` JSON,按 `name` 分发 |
 | `add_skill_dir()` / `add_skill()` / `add_skill_loader()` | 注册 Skill 来源 |
@@ -93,7 +96,56 @@ toolkit.register(FunctionTool::new(
 2. 解析 `tool_call.input` 为 `JsonValue`,失败 → `InvalidInput`。
 3. 调用 `tool.call(input).await`。
 
-## 5. 工具调用生命周期
+## 5. 内置 workspace 工具
+
+`ReActAgent` 绑定 `LocalWorkspace` 后会把 workspace 工具注入到 `ToolKit`。注入是 fail-closed 的:backend 不可用或工具名冲突会使 Agent 构造失败,避免暴露半套工具。
+
+| 工具 | 名称 | 说明 |
+|------|------|------|
+| Bash | `Bash` / `bash` | 在 workspace backend 中执行 shell 命令 |
+| PowerShell | `PowerShell` / `powershell` | Windows 下执行 PowerShell 命令;非 Windows 默认不注入 |
+| Read | `Read` / `read` | 读取 UTF-8 文本文件,并记录 read-state |
+| Write | `Write` / `write` | 写入文件;复用 read-state 防止未读先改 |
+| Edit | `Edit` / `edit` | 文本替换编辑;复用 read-state 防止未读先改 |
+| Glob | `Glob` | 按 glob pattern 找文件,按 mtime 新到旧排序 |
+| Grep | `Grep` / `grep` | 在 workspace 内搜索文本或正则 |
+| Find | `find` | pi-compatible 文件发现工具,返回 workspace-relative 路径 |
+| Ls | `ls` | pi-compatible 目录列表工具 |
+| ResetTools | `ResetTools` | 启停非 `basic` 工具组,更新当前 session 的 active groups |
+| Skill | `Skill` | session-aware skill viewer,受 `ResetTools` 激活组过滤 |
+
+这些工具共享:
+
+- `BuiltInToolContext`:持有 `Arc<dyn WorkspaceBackend>`、workspace 根路径和 `WorkspaceToolSession`。
+- `WorkspaceToolSession`:保存 workspace id、已读路径、授权工具组和当前激活工具组。
+- `WorkspaceBackend`:所有文件和命令 I/O 都经过 backend,不会绕过 workspace containment。
+
+常见接入方式是让 `ReActAgent` 自动注入。手工注册时要复用同一个 `WorkspaceToolSession`,否则 `Read`/`Edit`/`Write` 的 read-state 和 `ResetTools` 的激活状态会互相看不见。
+
+```rust
+use std::sync::{Arc, RwLock};
+
+use agent_scope_tool::builtin::{
+    BuiltInToolContext, ReadTool, ResetToolsTool, WorkspaceToolSession, WriteTool,
+};
+use agent_scope_tool::ToolKit;
+use agent_scope_workspace::backend::{LocalBackend, WorkspaceBackend};
+
+let backend: Arc<dyn WorkspaceBackend> = Arc::new(LocalBackend::new());
+let session = Arc::new(RwLock::new(WorkspaceToolSession::with_authorized_groups(
+    "ws-1",
+    ["coding", "docs"],
+)));
+let ctx = BuiltInToolContext::new(backend, "/tmp/ws", Arc::clone(&session));
+
+let mut toolkit = ToolKit::new();
+toolkit.set_workspace_session(Arc::clone(&session));
+toolkit.register(ReadTool::new(ctx.clone()));
+toolkit.register(WriteTool::new(ctx.clone()));
+toolkit.register(ResetToolsTool::new(ctx));
+```
+
+## 6. 工具调用生命周期
 
 ```text
 ToolCallBlock(Pending)
@@ -102,7 +154,7 @@ ToolCallBlock(Pending)
 → ToolResultEnd(Success | Error | Interrupted | Denied)
 ```
 
-## 6. 手工调度 `ToolCallBlock`(绕过 Agent)
+## 7. 手工调度 `ToolCallBlock`(绕过 Agent)
 
 ```rust
 use agent_scope_message::{ContentBlock, ToolCallBlock};
@@ -117,15 +169,16 @@ let output = toolkit.call_tool(&ContentBlock::ToolCall(call)).await?;
 
 注意:`call_tool()` 会先解析 `call.input` 的 JSON 字符串,必须是合法 JSON。
 
-## 7. 返回 `ToolResultBlock`
+## 8. 返回 `ToolResultBlock`
 
 handler 可直接返回 `ToolResultBlock` 以便自定义状态/元数据:
 
 ```rust
 use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_utils::id::generate_uuid;
 
 let block = ToolResultBlock {
-    id: uuid::Uuid::new_v4().as_simple().to_string(),
+    id: generate_uuid(),
     name: "calculator".into(),
     output: ToolOutput::Text("42".into()),
     state: ToolResultState::Success,
@@ -136,7 +189,23 @@ let block = ToolResultBlock {
 };
 ```
 
-## 8. Skill 集成
+也可以先用消息层构造函数,再显式设置终态字段:
+
+```rust
+use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_utils::id::generate_uuid;
+
+let mut block = ToolResultBlock::new(
+    generate_uuid(),
+    "calculator".into(),
+    ToolOutput::Text("42".into()),
+);
+block.state = ToolResultState::Success;
+block.is_last = true;
+block.finished_at = Some(chrono::Utc::now().to_rfc3339());
+```
+
+## 9. Skill 集成
 
 - 直接 Skill 对象:`add_skill(skill)`
 - 本地目录:`add_skill_dir(path)`
@@ -160,7 +229,7 @@ toolkit.register(SkillViewer::new(Box::new(move |_groups| {
 })));
 ```
 
-## 9. 错误
+## 10. 错误
 
 | 错误 | 触发条件 |
 |------|----------|
@@ -168,9 +237,12 @@ toolkit.register(SkillViewer::new(Box::new(move |_groups| {
 | `ToolError::InvalidInput { tool_name, reason }` | 输入 JSON 非法或无法反序列化为参数类型 |
 | `ToolError::Execution { tool_name, reason }` | handler 运行时错误或 panic |
 | `ToolError::Interrupted { tool_name }` | 工具被中断 |
+| `ToolError::DuplicateRegistration { tool_name }` | `try_register*` 注册同名工具 |
 | `ToolError::SkillNotFound { skill_name }` | Skill 名不存在 |
 
-## 10. 常见问题
+内置 workspace 工具还会把错误归类到稳定机器码前缀,见 `ToolErrorCategory::{ValidationFailure, PermissionDenied, UnsupportedCapability, Timeout, ExecutionFailure, InternalFailure}`。
+
+## 11. 常见问题
 
 - **工具输入为什么先是字符串再 parse JSON**:与消息层 `ToolCallBlock.input` 的稳定协议保持一致,Foundation 层不提前解析参数。
 - **handler panic 会怎样**:`FunctionTool` 内部 `catch_unwind`,返回 `ToolError::Execution { reason: "handler panicked" }`。

@@ -1,16 +1,15 @@
 # 参考:依赖配置(Cargo.toml)
 
-> 本文档详细说明如何在你的项目中引入 AgentScope Rust 的 crate,覆盖 git 依赖、crates.io 版本、workspace 内 path 依赖三种方式,以及依赖项选型建议。
+> 本文档详细说明如何在你的项目中引入 AgentScope Rust 的 crate,覆盖 GitHub git 依赖、crates.io 版本以及依赖项选型建议。
 
-## 1. 三种引入方式对比
+## 1. 引入方式对比
 
 | 方式 | 适用场景 | 写法 |
 |------|---------|------|
-| **git 依赖**(当前推荐,未发布 crates.io) | 外部用户在 crates.io 发布前使用 | `{ git = "...", branch = "master" }` |
+| **GitHub git 依赖**(当前推荐,未发布 crates.io) | 外部用户在 crates.io 发布前使用 | `{ git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }` |
 | **crates.io 版本**(发布后) | 正式依赖 | `{ version = "0.1" }` |
-| **path 依赖** | 仓库内部 / 本地开发 | `{ path = "crates/agent_scope_agent" }` |
 
-> **注意**:`path = "../agentscope-rust/..."` 这类相对路径只适合仓库**内部或本地**引用,不适合作为对外发布/示例的依赖方式。对外使用请用 git 或版本号。
+> **注意**:对外文档和可复制示例不要使用 `path = "../..."` 或 `path = "crates/..."`。统一使用 `https://github.com/NingNing0111/agentscope-rust` 的 git 依赖;仓库内部开发才使用 workspace 自己的 path 关系。
 
 ## 2. 通过 GitHub(git 依赖)
 
@@ -23,6 +22,7 @@ agent_scope_rig = { git = "https://github.com/NingNing0111/agentscope-rust", bra
 agent_scope_tool = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 agent_scope_message = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 agent_scope_event = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_utils = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 
 # 非 AgentScope 依赖
 tokio = { version = "1", features = ["full"] }
@@ -50,6 +50,7 @@ agent_scope_rig = "0.1"
 agent_scope_tool = "0.1"
 agent_scope_message = "0.1"
 agent_scope_event = "0.1"
+agent_scope_utils = "0.1"
 ```
 
 ## 4. 按能力选依赖
@@ -62,8 +63,31 @@ agent_scope_event = "0.1"
 | 长期记忆 | `agent_scope_memory` | — |
 | RAG | `agent_scope_rag`, `agent_scope_embedding` | — |
 | 工作空间 | `agent_scope_workspace` | `agent_scope_sandbox`(执行隔离) |
-| 会话管理 | `agent_scope_state` | — |
+| 会话管理 | `agent_scope_state` | `sqlx`(当你直接传入/管理 `SqlitePool` 时) |
 | 多步骤规划 / SubAgent | `agent_scope_agent` | — |
+| 通用 id/path/env/error helper | `agent_scope_utils` | — |
+
+### 会话存储选择
+
+`agent_scope_state` 内置三类 `SessionStore`:
+
+| 存储 | 适用场景 | 依赖提示 |
+|------|----------|----------|
+| `InMemorySessionStore` | 测试、短生命周期进程 | 只依赖 `agent_scope_state` |
+| `JsonFileSessionStore` | 单机文件持久化、调试可读 | 只依赖 `agent_scope_state` |
+| `SqliteSessionStore` | 单机/嵌入式持久化、需要查询 session meta | 通常只依赖 `agent_scope_state`;如果应用要自己创建 `sqlx::SqlitePool`,再直接依赖 `sqlx` |
+
+生成 session id、tool result id、document id 等 UUID 时优先用 `agent_scope_utils::id::generate_uuid()`,不要在业务 crate 里重复写 `uuid::Uuid::new_v4().as_simple().to_string()`。
+
+### Sandbox feature
+
+`agent_scope_sandbox` 默认提供本地进程隔离实现。需要 microsandbox backend 时显式打开 feature:
+
+```toml
+agent_scope_sandbox = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master", features = ["microsandbox"] }
+```
+
+microsandbox 依赖宿主运行时能力;Linux CI/容器环境可能还需要安装对应系统库和 runtime。对外示例建议把 microsandbox 标成可选能力,不要作为最小依赖的一部分。
 
 ## 5. 其他常用依赖
 
@@ -77,10 +101,11 @@ AgentScope crate 内部使用并 re-export 或要求你的代码也用到的:
 | `futures` | `StreamExt` 消费事件流 | 使用 `reply_stream()` 时 |
 | `async-trait` | 自定义 `Middleware` / `Backend` / `ChatModel` | 实现 trait 时 |
 | `dotenv` | 加载 `.env` 凭据 | 应用入口 |
+| `sqlx` | SQLite pool/迁移/事务集成 | 只有应用层直接操作 `SqlitePool` 时 |
 
 ## 6. 常见坑
 
-1. **不要把 `path = "../..."` 写进对外依赖**——外部用户 clone 后无法编译。
+1. **不要把 `path = "../..."` 或 `path = "crates/..."` 写进对外依赖**——外部用户复制后无法编译;用 `git = "https://github.com/NingNing0111/agentscope-rust"`。
 2. **git 依赖不固定 rev/tag**,`cargo update` 后可能拉到破坏性变更。
 3. **根 package `agentscope` 不是 facade**——依赖它不会有完整的 `agent_scope_*` API。
 4. workspace 使用 **edition 2024**,需要较新的 Rust stable(建议 1.85+,`cargo --version` 确认)。

@@ -30,8 +30,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        # turbovec → faer/openblas-sys links against the system libopenblas.
-        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+        # turbovec → faer/openblas-sys links libopenblas; microsandbox links libcap-ng.
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev libcap-ng-dev
       - name: Cargo check
         run: cargo check --workspace --all-targets
       - name: Cargo test
@@ -54,8 +54,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Install system dependencies (Linux)
-        # Doc tests link the full dependency graph including turbovec/openblas.
-        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+        # Clippy/doc tests link the full dependency graph including turbovec and microsandbox.
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev libcap-ng-dev
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy

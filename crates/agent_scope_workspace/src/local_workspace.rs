@@ -91,7 +91,7 @@ impl LocalWorkspace {
 
         let workspace_id = config
             .workspace_id
-            .unwrap_or_else(|| agent_scope_utils::id::generate_uuid());
+            .unwrap_or_else(agent_scope_utils::id::generate_uuid);
 
         let instructions = config
             .instructions

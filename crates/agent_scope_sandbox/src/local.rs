@@ -67,7 +67,7 @@ impl LocalSandboxSession {
         config.policy.validate()?;
         let session_id = config
             .session_id
-            .unwrap_or_else(|| agent_scope_utils::id::generate_uuid());
+            .unwrap_or_else(agent_scope_utils::id::generate_uuid);
         if session_id.is_empty() {
             return Err(SandboxError::ValidationError {
                 message: "session_id must not be empty".into(),

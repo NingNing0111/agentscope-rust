@@ -118,7 +118,7 @@ impl MicrosandboxSession {
         let session_id = config
             .session_id
             .clone()
-            .unwrap_or_else(|| agent_scope_utils::id::generate_uuid());
+            .unwrap_or_else(agent_scope_utils::id::generate_uuid);
         validate_session_id(&session_id)?;
         let output_dir = std::env::temp_dir()
             .join(format!("agentscope-microsandbox-{session_id}"))

@@ -56,7 +56,7 @@ fn text_chunk(name: &str, text: String, state: ToolResultState) -> ToolExecOutpu
         text.push('\n');
     }
     ToolExecOutput::Complete(ToolResultBlock {
-        id: uuid::Uuid::new_v4().as_simple().to_string(),
+        id: agent_scope_utils::id::generate_id(),
         name: name.to_string(),
         output: ToolOutput::Text(text),
         state,

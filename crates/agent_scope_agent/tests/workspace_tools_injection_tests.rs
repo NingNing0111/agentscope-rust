@@ -24,6 +24,33 @@ const WORKSPACE_TOOLS: &[&str] = &[
     "Glob",
     "ResetTools",
     "Skill",
+    "bash",
+    "read",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
+];
+
+/// Workspace tool names that must not be exposed without an enabled workspace.
+const FILE_COMMAND_TOOLS: &[&str] = &[
+    "Bash",
+    "Read",
+    "Edit",
+    "Write",
+    "Grep",
+    "Glob",
+    "ResetTools",
+    "bash",
+    "read",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
+    "PowerShell",
+    "powershell",
 ];
 
 /// Build an initialized workspace rooted at `workdir`.
@@ -96,6 +123,22 @@ async fn workspace_agent_has_all_builtin_tools() {
         );
     }
 
+    #[cfg(target_os = "windows")]
+    for expected in ["PowerShell", "powershell"] {
+        assert!(
+            names.contains(&expected),
+            "missing Windows tool '{expected}' in schemas: {names:?}"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    for forbidden in ["PowerShell", "powershell"] {
+        assert!(
+            !names.contains(&forbidden),
+            "non-Windows agent must not expose '{forbidden}', got: {names:?}"
+        );
+    }
+
     // Every built-in tool carries a name, description, and JSON Schema input.
     for schema in &schemas {
         assert_eq!(schema["type"], "function");
@@ -115,17 +158,9 @@ async fn plain_agent_has_no_file_command_tools() {
         .filter_map(|s| s["function"]["name"].as_str())
         .collect();
 
-    for forbidden in [
-        "Bash",
-        "Read",
-        "Edit",
-        "Write",
-        "Grep",
-        "Glob",
-        "ResetTools",
-    ] {
+    for forbidden in FILE_COMMAND_TOOLS {
         assert!(
-            !names.contains(&forbidden),
+            !names.contains(forbidden),
             "agent without workspace must not expose '{forbidden}', got: {names:?}"
         );
     }
@@ -159,10 +194,12 @@ async fn workspace_tools_disabled_yields_no_builtins() {
         .iter()
         .filter_map(|s| s["function"]["name"].as_str())
         .collect();
-    assert!(
-        !names.contains(&"Bash"),
-        "workspace tools disabled: {names:?}"
-    );
+    for forbidden in FILE_COMMAND_TOOLS {
+        assert!(
+            !names.contains(forbidden),
+            "workspace tools disabled: unexpected '{forbidden}' in {names:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -217,6 +254,54 @@ async fn reset_tools_activation_filters_toolkit_schemas() {
         names.contains(&"Skill"),
         "basic group must stay visible: {names:?}"
     );
+}
+
+#[tokio::test]
+async fn workspace_builtin_name_collision_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = make_workspace(dir.path()).await;
+
+    let mut reserved_names = FILE_COMMAND_TOOLS.to_vec();
+
+    #[cfg(not(target_os = "windows"))]
+    reserved_names.retain(|name| !matches!(*name, "PowerShell" | "powershell"));
+
+    for reserved in reserved_names {
+        let mut toolkit = ToolKit::new();
+        toolkit
+            .try_register(agent_scope_tool::FunctionTool::new(
+                reserved,
+                "Conflicting custom tool",
+                marker_handler,
+            ))
+            .unwrap();
+
+        let model = Arc::new(MockModel::new("mock", "ok"));
+        let config = AgentConfig::builder()
+            .name(format!("ws-conflict-{reserved}"))
+            .model(model)
+            .toolkit(toolkit)
+            .workspace(Arc::clone(&ws))
+            .auto_persist(false)
+            .build()
+            .unwrap();
+
+        let err = match ReActAgent::new(
+            config,
+            ReActConfig::default(),
+            ContextConfig::default(),
+            vec![],
+        ) {
+            Ok(_) => panic!("reserved workspace built-in collision must fail construction"),
+            Err(err) => err,
+        };
+
+        let message = err.to_string();
+        assert!(
+            message.contains(reserved),
+            "error should identify reserved tool '{reserved}', got: {message}"
+        );
+    }
 }
 
 async fn marker_handler(_x: serde_json::Value) -> String {

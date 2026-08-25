@@ -212,7 +212,7 @@ pub fn maybe_inject_runtime_state(
     let block = HintBlock {
         hint: HintContent::Text(hint),
         source: Some(config.injection_source.clone()),
-        id: uuid::Uuid::new_v4().as_simple().to_string(),
+        id: agent_scope_utils::id::generate_id(),
         created_at: chrono::Utc::now().to_rfc3339(),
         finished_at: None,
     };

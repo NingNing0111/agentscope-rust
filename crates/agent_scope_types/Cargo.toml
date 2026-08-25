@@ -9,6 +9,5 @@ description = "AgentScope Foundation Layer — core type definitions (ReplyFinis
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
 chrono.workspace = true
 schemars.workspace = true

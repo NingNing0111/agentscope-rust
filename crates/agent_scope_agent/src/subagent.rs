@@ -75,7 +75,7 @@ impl SubAgentTemplate {
     ) -> Self {
         let name = name.into();
         Self {
-            template_id: uuid::Uuid::new_v4().as_simple().to_string(),
+            template_id: agent_scope_utils::id::generate_id(),
             name,
             description: description.into(),
             instructions: instructions.into(),
@@ -122,7 +122,7 @@ impl SubAgentTemplate {
             });
         }
         Ok(SubAgent {
-            agent_id: uuid::Uuid::new_v4().as_simple().to_string(),
+            agent_id: agent_scope_utils::id::generate_id(),
             name: self.name.clone(),
             description: self.description.clone(),
             template_id: Some(self.template_id.clone()),
@@ -197,7 +197,7 @@ impl SubAgent {
             });
         }
         Ok(Self {
-            agent_id: uuid::Uuid::new_v4().as_simple().to_string(),
+            agent_id: agent_scope_utils::id::generate_id(),
             name,
             description: description.into(),
             template_id: None,
@@ -228,7 +228,7 @@ pub struct SubAgentRegistry {
 impl SubAgentRegistry {
     pub fn new(parent_agent_name: impl Into<String>) -> Self {
         Self {
-            registry_id: uuid::Uuid::new_v4().as_simple().to_string(),
+            registry_id: agent_scope_utils::id::generate_id(),
             parent_agent_name: parent_agent_name.into(),
             selection_policy: SelectionPolicy::ExplicitOnly,
             templates: HashMap::new(),

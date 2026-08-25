@@ -77,6 +77,13 @@ impl SandboxSession for PermissionDeniedSession {
         })
     }
 
+    async fn path_exists(&self, _path: &str) -> Result<bool, SandboxError> {
+        Err(SandboxError::PermissionDenied {
+            path: Some("/readonly/input.txt".into()),
+            operation: "path_exists".into(),
+        })
+    }
+
     async fn stat_mtime(&self, _path: &str) -> Result<Option<f64>, SandboxError> {
         Err(SandboxError::PermissionDenied {
             path: Some("/readonly/input.txt".into()),
@@ -179,24 +186,22 @@ async fn sandbox_backend_path_traversal_rejected() {
 }
 
 #[tokio::test]
-async fn sandbox_backend_permission_denied_maps_to_gateway_error() {
+async fn sandbox_backend_permission_denied_maps_to_path_traversal() {
     let backend = SandboxWorkspaceBackend::from_session(PermissionDeniedSession::default());
 
     let err = backend.write_file("output.txt", b"x").await.unwrap_err();
     assert!(matches!(
         err,
-        WorkspaceError::GatewayError { ref message }
-            if message.contains("permission_denied")
+        WorkspaceError::PathTraversal { ref path }
+            if path == "/readonly/output.txt"
     ));
-    assert!(!matches!(err, WorkspaceError::PathTraversal { .. }));
 
     let err = backend.file_exists("input.txt").await.unwrap_err();
     assert!(matches!(
         err,
-        WorkspaceError::GatewayError { ref message }
-            if message.contains("permission_denied")
+        WorkspaceError::PathTraversal { ref path }
+            if path == "/readonly/input.txt"
     ));
-    assert!(!matches!(err, WorkspaceError::PathTraversal { .. }));
 }
 
 #[tokio::test]

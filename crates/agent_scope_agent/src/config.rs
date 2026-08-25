@@ -54,10 +54,12 @@ pub struct AgentConfig {
     pub injection_config: InjectionConfig,
     /// Optional workspace bound to this agent (Feature 029).
     ///
-    /// When set, the agent construction path automatically merges the
+    /// When set, the agent construction path automatically merges legacy
     /// workspace built-in tools (`Bash`/`Read`/`Edit`/`Write`/`Grep`/`Glob`/
-    /// `ResetTools`/`Skill`, plus `PowerShell` on Windows) into the agent's
-    /// `ToolKit`. Agents without a workspace expose no file/command tools.
+    /// `ResetTools`/`Skill`) plus pi-compatible lowercase tools (`bash`/`read`/
+    /// `edit`/`write`/`grep`/`find`/`ls`) into the agent's `ToolKit`. Windows
+    /// additionally gets `PowerShell` and `powershell`. Agents without a
+    /// workspace expose no file/command tools.
     pub workspace: Option<Arc<dyn WorkspaceBase>>,
     /// Whether workspace built-in tools are injected when a workspace is
     /// present. Defaults to `true`.

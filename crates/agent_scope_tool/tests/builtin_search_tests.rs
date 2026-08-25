@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use agent_scope_message::ToolResultState;
 use agent_scope_tool::Tool;
-use agent_scope_tool::builtin::{GlobTool, GrepTool, SkillTool};
+use agent_scope_tool::builtin::{FindTool, GlobTool, GrepTool, SkillTool};
 
 use common::{ctx_in, text_of, write_ws_file};
 
@@ -201,6 +201,210 @@ async fn grep_invalid_pattern_rejected() {
     };
     assert_eq!(state_of(&block), ToolResultState::Error);
     assert!(text_of(&block).contains("invalid_pattern"));
+}
+
+#[tokio::test]
+async fn grep_pi_mode_supports_literal_ignore_case_and_limit() {
+    let h = ctx_in(&[]);
+    write_ws_file(&h, "a.txt", "Alpha+Beta\nalpha+beta\nAlphaZBeta\n");
+    let tool = GrepTool::new_pi(h.ctx.clone());
+
+    let out = tool
+        .call(serde_json::json!({
+            "pattern": "Alpha+Beta",
+            "literal": true,
+            "ignoreCase": true,
+            "limit": 1
+        }))
+        .await
+        .unwrap();
+    let block = match out {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+
+    assert_eq!(block.name, "grep");
+    assert_eq!(state_of(&block), ToolResultState::Success);
+    let text = text_of(&block);
+    assert!(
+        text.contains("Alpha+Beta") || text.contains("alpha+beta"),
+        "got: {text}"
+    );
+    assert!(
+        !text.contains("AlphaZBeta"),
+        "literal search matched regex-style text: {text}"
+    );
+    let match_lines = text
+        .lines()
+        .filter(|line| line.contains("+Beta") || line.contains("+beta"))
+        .count();
+    assert_eq!(
+        match_lines, 1,
+        "limit should cap pi grep content results: {text}"
+    );
+}
+
+#[tokio::test]
+async fn grep_pi_mode_defaults_to_content_output() {
+    let h = ctx_in(&[]);
+    write_ws_file(&h, "a.txt", "needle here\n");
+    let tool = GrepTool::new_pi(h.ctx.clone());
+
+    let out = tool
+        .call(serde_json::json!({ "pattern": "needle" }))
+        .await
+        .unwrap();
+    let block = match out {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+
+    assert_eq!(state_of(&block), ToolResultState::Success);
+    let text = text_of(&block);
+    assert!(text.contains("needle here"), "got: {text}");
+}
+
+#[tokio::test]
+async fn grep_pi_mode_rejects_non_object_input() {
+    let h = ctx_in(&[]);
+    let tool = GrepTool::new_pi(h.ctx.clone());
+
+    let out = tool.call(serde_json::json!("needle")).await.unwrap();
+    let block = match out {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+
+    assert_eq!(state_of(&block), ToolResultState::Error);
+    assert!(text_of(&block).contains("missing required 'pattern'"));
+}
+
+#[tokio::test]
+async fn grep_pi_literal_preserves_trailing_space() {
+    let h = ctx_in(&[]);
+    write_ws_file(&h, "a.txt", "foo \\nfoo \nfoo\n");
+    let tool = GrepTool::new_pi(h.ctx.clone());
+
+    let out = tool
+        .call(serde_json::json!({ "pattern": "foo ", "literal": true }))
+        .await
+        .unwrap();
+    let block = match out {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+
+    assert_eq!(state_of(&block), ToolResultState::Success);
+    let text = text_of(&block);
+    assert!(text.contains("foo "), "got: {text}");
+    assert!(!text.contains("invalid_pattern"), "got: {text}");
+}
+
+// ── Find ──
+
+#[tokio::test]
+async fn find_matches_files_with_glob_and_path() {
+    let h = ctx_in(&[]);
+    write_ws_file(&h, "src/a.rs", "fn a() {}\n");
+    write_ws_file(&h, "src/b.txt", "b\n");
+    write_ws_file(&h, "tests/c.rs", "fn c() {}\n");
+
+    let tool = FindTool::new(h.ctx.clone());
+    let out = tool
+        .call(serde_json::json!({ "pattern": "*.rs", "path": "src" }))
+        .await
+        .unwrap();
+    let block = match out {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+
+    assert_eq!(state_of(&block), ToolResultState::Success);
+    let text = text_of(&block);
+    assert!(text.lines().any(|line| line == "src/a.rs"), "got: {text}");
+    assert!(!text.contains("b.txt"), "got: {text}");
+    assert!(
+        !text.contains("c.rs"),
+        "path filter leaked outside src: {text}"
+    );
+}
+
+#[tokio::test]
+async fn find_skips_git_node_modules_and_directories() {
+    let h = ctx_in(&[]);
+    write_ws_file(&h, ".git/config", "ignored\n");
+    write_ws_file(&h, "node_modules/pkg/index.js", "ignored\n");
+    write_ws_file(&h, "src/index.js", "ok\n");
+    std::fs::create_dir_all(std::path::Path::new(&h.workdir).join("src/dir.js")).unwrap();
+
+    let tool = FindTool::new(h.ctx.clone());
+    let out = tool
+        .call(serde_json::json!({ "pattern": "**/*.js" }))
+        .await
+        .unwrap();
+    let block = match out {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+
+    assert_eq!(state_of(&block), ToolResultState::Success);
+    let text = text_of(&block);
+    assert!(text.contains("src/index.js"), "got: {text}");
+    assert!(
+        !text.contains("node_modules"),
+        "node_modules must be skipped: {text}"
+    );
+    assert!(!text.contains(".git"), ".git must be skipped: {text}");
+    assert!(
+        !text.contains("dir.js"),
+        "directories must not be returned: {text}"
+    );
+}
+
+#[tokio::test]
+async fn find_limit_and_invalid_inputs_are_bounded() {
+    let h = ctx_in(&[]);
+    write_ws_file(&h, "a.txt", "a\n");
+    write_ws_file(&h, "b.txt", "b\n");
+    let tool = FindTool::new(h.ctx.clone());
+
+    let limited = match tool
+        .call(serde_json::json!({ "pattern": "*.txt", "limit": 1 }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+    assert_eq!(state_of(&limited), ToolResultState::Success);
+    let text = text_of(&limited);
+    assert_eq!(
+        text.lines().filter(|line| line.ends_with(".txt")).count(),
+        1
+    );
+    assert!(text.contains("truncated"), "got: {text}");
+
+    let escaped = match tool
+        .call(serde_json::json!({ "pattern": "*.txt", "path": "../outside" }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+    assert_eq!(state_of(&escaped), ToolResultState::Error);
+    assert!(text_of(&escaped).contains("path_outside_workspace"));
+
+    let invalid = match tool
+        .call(serde_json::json!({ "pattern": "[" }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+    assert_eq!(state_of(&invalid), ToolResultState::Error);
+    assert!(text_of(&invalid).contains("invalid_pattern"));
 }
 
 // ── Skill ──

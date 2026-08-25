@@ -66,7 +66,7 @@ pub fn maybe_inject_task_reminder(state: &RwLock<AgentState>, agent_name: &str) 
     let block = HintBlock {
         hint: HintContent::Text(hint),
         source: Some(TASK_REMINDER_SOURCE.to_string()),
-        id: uuid::Uuid::new_v4().as_simple().to_string(),
+        id: agent_scope_utils::id::generate_id(),
         created_at: chrono::Utc::now().to_rfc3339(),
         finished_at: None,
     };

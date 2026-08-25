@@ -5,9 +5,12 @@
 
 use std::path::Path;
 
-use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_message::ToolResultState;
+#[cfg(test)]
+use agent_scope_message::{ToolOutput, ToolResultBlock};
 use serde_json::Value as JsonValue;
 
+use crate::make_text_result as make_result;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 use super::{BuiltInToolContext, ToolErrorCategory};
@@ -27,27 +30,32 @@ const DEFAULT_LIMIT: usize = 2000;
 /// modify guard.
 pub struct ReadTool {
     ctx: BuiltInToolContext,
+    mode: ReadToolMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadToolMode {
+    Legacy,
+    Pi,
 }
 
 impl ReadTool {
     /// Create a new [`ReadTool`] bound to a workspace context.
     #[must_use]
     pub fn new(ctx: BuiltInToolContext) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            mode: ReadToolMode::Legacy,
+        }
     }
-}
 
-/// Build a complete one-shot [`ToolResultBlock`].
-fn make_result(name: &str, text: String, state: ToolResultState) -> ToolResultBlock {
-    ToolResultBlock {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: name.to_string(),
-        output: ToolOutput::Text(text),
-        state,
-        metadata: std::collections::HashMap::new(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        finished_at: Some(chrono::Utc::now().to_rfc3339()),
-        is_last: true,
+    /// Create a pi-compatible lowercase `read` tool.
+    #[must_use]
+    pub fn new_pi(ctx: BuiltInToolContext) -> Self {
+        Self {
+            ctx,
+            mode: ReadToolMode::Pi,
+        }
     }
 }
 
@@ -66,46 +74,86 @@ fn truncate_line(line: &str, max_chars: usize) -> String {
 #[async_trait::async_trait]
 impl Tool for ReadTool {
     fn name(&self) -> &str {
-        "Read"
+        match self.mode {
+            ReadToolMode::Legacy => "Read",
+            ReadToolMode::Pi => "read",
+        }
     }
 
     fn description(&self) -> &str {
-        "Reads a file from the local filesystem. You can access any file directly by using this tool.\n\
-         Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\
-         \n\
-         Usage:\n\
-         - The file_path parameter must be an absolute path, not a relative path\n\
-         - By default, it reads up to 2000 lines starting from the beginning of the file\n\
-         - You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n\
-         - Results are returned using cat -n format, with line numbers starting at 1\n\
-         - This tool allows you to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as you're a multimodal LLM.\n\
-         - This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific pages."
+        match self.mode {
+            ReadToolMode::Legacy => {
+                "Reads a UTF-8 text file from the workspace filesystem.\n\
+                 \n\
+                 Usage:\n\
+                 - The file_path parameter may be absolute or relative to the workspace root.\n\
+                 - By default, it reads up to 2000 lines starting from the beginning of the file.\n\
+                 - You can optionally specify a line offset and limit for long files.\n\
+                 - Results are returned using cat -n format, with line numbers starting at 1.\n\
+                 - Binary files, images, and PDFs are not decoded by this implementation; non-UTF-8 content returns an explicit error."
+            }
+            ReadToolMode::Pi => {
+                "Reads a UTF-8 text file from the workspace. Use `path` for the file path (relative to the workspace root or absolute inside it). Results are returned with line numbers. Successful reads authorize subsequent `edit`/`write` changes to existing files."
+            }
+        }
     }
 
     fn input_schema(&self) -> JsonValue {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "The absolute path to the file to read."
+        match self.mode {
+            ReadToolMode::Legacy => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The path to the UTF-8 text file to read."
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Optional 1-based line number to start reading from (default: 1)",
+                        "default": 1,
+                        "minimum": 1
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Optional maximum number of lines to read (default: 2000, max: 2000)",
+                        "default": 2000,
+                        "maximum": 2000,
+                        "minimum": 1
+                    }
                 },
-                "offset": {
-                    "type": "integer",
-                    "description": "Optional 1-based line number to start reading from (default: 1)",
-                    "default": 1,
-                    "minimum": 1
+                "required": ["file_path"]
+            }),
+            ReadToolMode::Pi => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "The path to the UTF-8 text file to read."
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Compatibility alias for path."
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Optional 1-based line number to start reading from (default: 1)",
+                        "default": 1,
+                        "minimum": 1
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Optional maximum number of lines to read (default: 2000, max: 2000)",
+                        "default": 2000,
+                        "maximum": 2000,
+                        "minimum": 1
+                    }
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Optional maximum number of lines to read (default: 2000, max: 2000)",
-                    "default": 2000,
-                    "maximum": 2000,
-                    "minimum": 1
-                }
-            },
-            "required": ["file_path"]
-        })
+                "anyOf": [
+                    { "required": ["path"] },
+                    { "required": ["file_path"] }
+                ]
+            }),
+        }
     }
 
     fn is_read_only(&self) -> bool {
@@ -117,14 +165,23 @@ impl Tool for ReadTool {
     }
 
     async fn call(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {
-        // Extract the required file_path parameter.
-        let file_path = match input.get("file_path").and_then(JsonValue::as_str) {
+        // Extract the required file path parameter.
+        let path_key = if self.mode == ReadToolMode::Pi {
+            "path"
+        } else {
+            "file_path"
+        };
+        let file_path = match input
+            .get(path_key)
+            .or_else(|| input.get("file_path"))
+            .and_then(JsonValue::as_str)
+        {
             Some(s) => s.to_string(),
             None => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Read",
+                    self.name(),
                     format!(
-                        "Error: {}: invalid_arguments: missing required 'file_path' parameter",
+                        "Error: {}: invalid_arguments: missing required '{path_key}' parameter",
                         ToolErrorCategory::ValidationFailure.as_str()
                     ),
                     ToolResultState::Error,
@@ -137,7 +194,7 @@ impl Tool for ReadTool {
             Ok(p) => p,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Read",
+                    self.name(),
                     format!(
                         "Error: {}: path_outside_workspace: {e}",
                         ToolErrorCategory::PermissionDenied.as_str()
@@ -164,7 +221,7 @@ impl Tool for ReadTool {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Read",
+                    self.name(),
                     format!(
                         "Error: {}: file_not_found: {e}",
                         ToolErrorCategory::ExecutionFailure.as_str()
@@ -175,7 +232,7 @@ impl Tool for ReadTool {
         };
         if !exists {
             return Ok(ToolExecOutput::Complete(make_result(
-                "Read",
+                self.name(),
                 format!(
                     "Error: {}: file_not_found: File does not exist: {path}",
                     ToolErrorCategory::ExecutionFailure.as_str()
@@ -189,7 +246,7 @@ impl Tool for ReadTool {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Read",
+                    self.name(),
                     format!(
                         "Error: {}: unsupported_file_type: {e}",
                         ToolErrorCategory::ValidationFailure.as_str()
@@ -200,7 +257,7 @@ impl Tool for ReadTool {
         };
         if is_dir {
             return Ok(ToolExecOutput::Complete(make_result(
-                "Read",
+                self.name(),
                 format!(
                     "Error: {}: unsupported_file_type: Path is a directory, not a file: {path}",
                     ToolErrorCategory::ValidationFailure.as_str()
@@ -214,7 +271,7 @@ impl Tool for ReadTool {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Read",
+                    self.name(),
                     format!(
                         "Error: {}: file_not_found: Error reading file: {e}",
                         ToolErrorCategory::ExecutionFailure.as_str()
@@ -229,7 +286,7 @@ impl Tool for ReadTool {
             Ok(s) => s,
             Err(_) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Read",
+                    self.name(),
                     format!(
                         "Error: {}: unsupported_file_type: file is not valid UTF-8: {path}",
                         ToolErrorCategory::ValidationFailure.as_str()
@@ -268,7 +325,7 @@ impl Tool for ReadTool {
         let result = formatted.join("\n");
 
         Ok(ToolExecOutput::Complete(make_result(
-            "Read",
+            self.name(),
             result,
             ToolResultState::Success,
         )))

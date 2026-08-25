@@ -12,7 +12,6 @@ agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_utils = { path = "../agent_scope_utils" }
 serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
 chrono.workspace = true
 base64.workspace = true
 schemars.workspace = true

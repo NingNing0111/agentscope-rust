@@ -47,7 +47,7 @@ impl Default for ChatResponse {
         Self {
             content: Vec::new(),
             is_last: false,
-            id: uuid::Uuid::new_v4().as_simple().to_string(),
+            id: agent_scope_utils::id::generate_id(),
             created_at: now,
             response_type: "chat_response".to_string(),
             usage: None,
@@ -348,7 +348,7 @@ impl Default for StructuredResponse {
     fn default() -> Self {
         Self {
             content: JsonValue::Null,
-            id: uuid::Uuid::new_v4().as_simple().to_string(),
+            id: agent_scope_utils::id::generate_id(),
             created_at: chrono::Utc::now().to_rfc3339(),
             response_type: "structured_response".to_string(),
             usage: None,

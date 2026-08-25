@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::subagent_error::{SubAgentError, SubAgentErrorInfo, redact_secret_like};
 
 fn default_id() -> String {
-    uuid::Uuid::new_v4().as_simple().to_string()
+    agent_scope_utils::id::generate_id()
 }
 
 /// Stable SubAgent delegation lifecycle event types.

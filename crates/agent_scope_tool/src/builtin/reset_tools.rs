@@ -12,9 +12,12 @@
 
 use std::collections::BTreeSet;
 
-use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_message::ToolResultState;
+#[cfg(test)]
+use agent_scope_message::{ToolOutput, ToolResultBlock};
 use serde_json::Value as JsonValue;
 
+use crate::make_text_result as make_result;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 use super::{BuiltInToolContext, ToolErrorCategory};
@@ -33,20 +36,6 @@ impl ResetToolsTool {
     #[must_use]
     pub fn new(ctx: BuiltInToolContext) -> Self {
         Self { ctx }
-    }
-}
-
-/// Build a complete one-shot [`ToolResultBlock`].
-fn make_result(name: &str, text: String, state: ToolResultState) -> ToolResultBlock {
-    ToolResultBlock {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: name.to_string(),
-        output: ToolOutput::Text(text),
-        state,
-        metadata: std::collections::HashMap::new(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        finished_at: Some(chrono::Utc::now().to_rfc3339()),
-        is_last: true,
     }
 }
 

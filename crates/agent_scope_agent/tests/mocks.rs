@@ -98,7 +98,7 @@ impl MockModel {
         Self {
             name: name.into(),
             response_text: response_text.into(),
-            block_id: uuid::Uuid::new_v4().as_simple().to_string(),
+            block_id: agent_scope_utils::id::generate_id(),
             stream_mode: false,
             stream_chunks: 1,
             context_size: 32768,
@@ -208,8 +208,8 @@ impl ChatModel for MockModel {
             let n_chunks = self.stream_chunks;
             let chunk_size = (total_chars as f64 / n_chunks as f64).ceil() as usize;
             // Shared block_id so StreamAccumulator merges all chunks into one TextBlock
-            let shared_block_id = uuid::Uuid::new_v4().as_simple().to_string();
-            let resp_id = uuid::Uuid::new_v4().as_simple().to_string();
+            let shared_block_id = agent_scope_utils::id::generate_id();
+            let resp_id = agent_scope_utils::id::generate_id();
 
             let chunks: Vec<ChatResponse> = text
                 .chars()
@@ -377,7 +377,7 @@ impl ChatModel for MockStreamingModel {
 
         if idx == 0 {
             // First call: stream chunks
-            let resp_id = uuid::Uuid::new_v4().as_simple().to_string();
+            let resp_id = agent_scope_utils::id::generate_id();
             let chunks: Vec<_> = self
                 .chunks
                 .iter()

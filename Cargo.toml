@@ -22,6 +22,7 @@ members = [
     "examples/sandbox",
     "examples/plan-react-agent",
     "examples/subagent",
+    "examples/microsandbox-agent-cli",
 ]
 resolver = "3"
 

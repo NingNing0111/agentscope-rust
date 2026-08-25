@@ -5,6 +5,11 @@ pub fn generate_id() -> String {
     Uuid::new_v4().as_simple().to_string()
 }
 
+/// Generate a hyphenated UUID string.
+pub fn generate_uuid() -> String {
+    Uuid::new_v4().to_string()
+}
+
 /// Generate an ISO 8601 / RFC 3339 timestamp.
 pub fn generate_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -26,6 +31,14 @@ mod tests {
         let id1 = generate_id();
         let id2 = generate_id();
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_generate_uuid_is_hyphenated() {
+        let id = generate_uuid();
+        assert_eq!(id.len(), 36);
+        assert_eq!(id.chars().filter(|c| *c == '-').count(), 4);
+        assert!(Uuid::parse_str(&id).is_ok());
     }
 
     #[test]

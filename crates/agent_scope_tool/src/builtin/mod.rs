@@ -3,7 +3,8 @@
 //! reference implementations (upstream commit `9d1026fa`).
 //!
 //! Tools: `Bash`, `Read`, `Edit`, `Write`, `Grep`, `Glob`, `PowerShell`,
-//! `ResetTools`, `Skill`.
+//! `ResetTools`, `Skill`, plus pi-compatible `bash`, `read`, `edit`,
+//! `write`, `grep`, `find`, `ls`, and `powershell` on Windows.
 //!
 //! All tools share a [`BuiltInToolContext`] carrying the workspace backend
 //! handle and the per-session [`WorkspaceToolSession`] (read-state + active
@@ -12,8 +13,10 @@
 
 mod bash;
 mod edit;
+mod find;
 mod glob;
 mod grep;
+mod ls;
 mod powershell;
 mod read;
 mod reset_tools;
@@ -24,14 +27,17 @@ mod write;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
+use agent_scope_utils::path::normalize_lexical;
 use agent_scope_workspace::backend::WorkspaceBackend;
 
 pub use session::WorkspaceToolSession;
 
 pub use bash::BashTool;
 pub use edit::EditTool;
+pub use find::FindTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
+pub use ls::LsTool;
 pub use powershell::PowerShellTool;
 pub use read::ReadTool;
 pub use reset_tools::ResetToolsTool;
@@ -135,27 +141,12 @@ impl BuiltInToolContext {
         } else {
             Path::new(&self.workdir).join(path)
         };
-        let normalized = normalize_path(&joined);
+        let normalized = normalize_lexical(&joined);
         if !normalized.starts_with(&self.workdir) {
             return Err("path escapes workspace".to_string());
         }
         Ok(normalized.to_string_lossy().to_string())
     }
-}
-
-/// Remove `.` and resolve `..` components lexically.
-fn normalize_path(path: &Path) -> std::path::PathBuf {
-    let mut out = std::path::PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

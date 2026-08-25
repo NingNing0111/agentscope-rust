@@ -172,6 +172,33 @@ async fn reply_stream_event_err(agent: &ReActAgent, input: EventInput) -> String
     }
 }
 
+async fn reply_stream_err(agent: &ReActAgent) -> String {
+    match agent
+        .reply_stream(Some(vec![user_msg("user", "new turn").unwrap()]))
+        .await
+    {
+        Ok(_) => panic!("expected reply_stream to fail"),
+        Err(e) => e.to_string(),
+    }
+}
+
+async fn reply_err(agent: &ReActAgent) -> String {
+    match agent
+        .reply(Some(vec![user_msg("user", "new turn").unwrap()]))
+        .await
+    {
+        Ok(_) => panic!("expected reply to fail"),
+        Err(e) => e.to_string(),
+    }
+}
+
+fn assert_pending_reply_error(err: &str) {
+    assert!(
+        err.contains("pending tool calls") && err.contains("reply_stream_event"),
+        "错误信息应提示通过 reply_stream_event 恢复 pending tool call: {err}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // US1 (T010/T011) — pause → confirm true → resume
 // ---------------------------------------------------------------------------
@@ -256,6 +283,29 @@ async fn confirm_true_resumes_and_executes_tool() {
             .any(|e| matches!(e, AgentEvent::ToolResultEnd(_))),
         "恢复后应有 tool_result"
     );
+
+    let state = agent.state();
+    assert!(
+        state.context.iter().any(|m| m.content.iter().any(|b| {
+            matches!(
+                b,
+                agent_scope_message::ContentBlock::ToolResult(tr)
+                    if tr.id == confirm.tool_calls[0].id
+            )
+        })),
+        "确认执行后应把匹配 tool_call id 的 tool_result 追加到 context"
+    );
+    assert!(
+        !state.context.iter().any(|m| m.content.iter().any(|b| {
+            matches!(
+                b,
+                agent_scope_message::ContentBlock::ToolCall(tc)
+                    if tc.id == confirm.tool_calls[0].id && tc.state == ToolCallState::Asking
+            )
+        })),
+        "确认执行后原 tool_call 不应继续处于 asking"
+    );
+
     assert!(
         resume_events.iter().any(|e| matches!(
             e,
@@ -312,6 +362,69 @@ async fn confirm_false_denies_tool_without_execution() {
         )),
         "拒绝应生成 DENIED tool_result"
     );
+}
+
+/// 普通 reply_stream 在存在 awaiting confirmation 时应本地拒绝，避免把未闭合
+/// tool_call 历史发送给 provider。
+#[tokio::test]
+async fn pending_confirmation_blocks_new_reply_stream() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let agent = agent_with_permission(PermissionRule::ask("dangerous_tool"), calls);
+
+    let events = drain(
+        agent
+            .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let _confirm = find_confirm(&events);
+
+    let err = reply_stream_err(&agent).await;
+    assert_pending_reply_error(&err);
+}
+
+/// 普通 batch reply 在存在 awaiting confirmation 时也应本地拒绝。
+#[tokio::test]
+async fn pending_confirmation_blocks_new_batch_reply() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let agent = agent_with_permission(PermissionRule::ask("dangerous_tool"), calls);
+
+    let events = drain(
+        agent
+            .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let _confirm = find_confirm(&events);
+
+    let err = reply_err(&agent).await;
+    assert_pending_reply_error(&err);
+}
+
+/// 追加观察消息后，pending tool_call 不再是尾部消息；普通 reply_stream 仍应拒绝。
+#[tokio::test]
+async fn pending_confirmation_blocks_new_reply_stream_after_observe() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let agent = agent_with_permission(PermissionRule::ask("dangerous_tool"), calls);
+
+    let events = drain(
+        agent
+            .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let _confirm = find_confirm(&events);
+
+    agent
+        .observe(Some(vec![user_msg("user", "another turn").unwrap()]))
+        .await
+        .unwrap();
+
+    let err = reply_stream_err(&agent).await;
+    assert_pending_reply_error(&err);
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +719,30 @@ async fn external_execution_result_resumes_and_continues() {
         )),
         "外部执行恢复后应以 ReplyEnd(completed) 结束"
     );
+}
+
+/// pending external execution result 时，普通 reply_stream 应本地拒绝。
+#[tokio::test]
+async fn pending_external_result_blocks_new_reply_stream() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let agent = agent_with_external_tool(calls);
+
+    let events = drain(
+        agent
+            .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::RequireExternalExecution(_))),
+        "应先进入等待外部执行结果状态"
+    );
+
+    let err = reply_stream_err(&agent).await;
+    assert_pending_reply_error(&err);
 }
 
 /// T023: 外部执行结果 id 与等待状态不匹配 → 报错（FR-015）。

@@ -6,12 +6,17 @@
 
 use std::path::Path;
 
-use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+#[cfg(test)]
+use agent_scope_message::ToolOutput;
+use agent_scope_message::{ToolResultBlock, ToolResultState};
 use serde_json::Value as JsonValue;
 
+use crate::make_text_result as make_result;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 use super::{BuiltInToolContext, ToolErrorCategory};
+
+const MAX_PI_EDITS: usize = 100;
 
 /// Built-in `Edit` tool.
 ///
@@ -20,80 +25,455 @@ use super::{BuiltInToolContext, ToolErrorCategory};
 /// the session (via the `Read` tool), otherwise the edit is rejected.
 pub struct EditTool {
     ctx: BuiltInToolContext,
+    mode: EditToolMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditToolMode {
+    Legacy,
+    Pi,
 }
 
 impl EditTool {
     /// Create a new [`EditTool`] bound to a workspace context.
     #[must_use]
     pub fn new(ctx: BuiltInToolContext) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            mode: EditToolMode::Legacy,
+        }
+    }
+
+    /// Create a pi-compatible lowercase `edit` tool.
+    #[must_use]
+    pub fn new_pi(ctx: BuiltInToolContext) -> Self {
+        Self {
+            ctx,
+            mode: EditToolMode::Pi,
+        }
     }
 }
 
-/// Build a complete one-shot [`ToolResultBlock`].
-fn make_result(name: &str, text: String, state: ToolResultState) -> ToolResultBlock {
-    ToolResultBlock {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: name.to_string(),
-        output: ToolOutput::Text(text),
-        state,
-        metadata: std::collections::HashMap::new(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        finished_at: Some(chrono::Utc::now().to_rfc3339()),
-        is_last: true,
+impl EditTool {
+    fn apply_replacement(
+        name: &str,
+        content: String,
+        path: &str,
+        old_string: &str,
+        new_string: &str,
+        replace_all: bool,
+    ) -> Result<(String, usize, bool), Box<ToolResultBlock>> {
+        if old_string.is_empty() {
+            return Err(Box::new(make_result(
+                name,
+                format!(
+                    "Error: {}: invalid_arguments: old_string must not be empty",
+                    ToolErrorCategory::ValidationFailure.as_str()
+                ),
+                ToolResultState::Error,
+            )));
+        }
+
+        if old_string == new_string {
+            return Err(Box::new(make_result(
+                name,
+                format!(
+                    "Error: {}: invalid_arguments: old_string and new_string are identical. No changes to make.",
+                    ToolErrorCategory::ValidationFailure.as_str()
+                ),
+                ToolResultState::Error,
+            )));
+        }
+
+        let occurrences = content.matches(old_string).count();
+        if occurrences == 0 {
+            return Err(Box::new(make_result(
+                name,
+                format!(
+                    "Error: {}: pattern_not_found: old_string not found in {path}",
+                    ToolErrorCategory::ValidationFailure.as_str()
+                ),
+                ToolResultState::Error,
+            )));
+        }
+        if occurrences > 1 && !replace_all {
+            return Err(Box::new(make_result(
+                name,
+                format!(
+                    "Error: {}: ambiguous_edit: old_string appears {occurrences} times in {path}. Set replace_all=true to replace all occurrences, or make old_string more specific.",
+                    ToolErrorCategory::ValidationFailure.as_str()
+                ),
+                ToolResultState::Error,
+            )));
+        }
+
+        let updated = if replace_all {
+            content.replace(old_string, new_string)
+        } else {
+            content.replacen(old_string, new_string, 1)
+        };
+        Ok((updated, occurrences, replace_all))
+    }
+
+    async fn call_impl(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {
+        let (file_path, edits) = match self.mode {
+            EditToolMode::Legacy => {
+                let file_path = match input.get("file_path").and_then(JsonValue::as_str) {
+                    Some(s) => s.to_string(),
+                    None => {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: invalid_arguments: missing required 'file_path' parameter",
+                                ToolErrorCategory::ValidationFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                };
+                let old_string = match input.get("old_string").and_then(JsonValue::as_str) {
+                    Some(s) => s.to_string(),
+                    None => {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: invalid_arguments: missing required 'old_string' parameter",
+                                ToolErrorCategory::ValidationFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                };
+                let new_string = match input.get("new_string").and_then(JsonValue::as_str) {
+                    Some(s) => s.to_string(),
+                    None => {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: invalid_arguments: missing required 'new_string' parameter",
+                                ToolErrorCategory::ValidationFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                };
+                let replace_all = input
+                    .get("replace_all")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false);
+                (file_path, vec![(old_string, new_string, replace_all)])
+            }
+            EditToolMode::Pi => {
+                let file_path = match input
+                    .get("path")
+                    .or_else(|| input.get("file_path"))
+                    .and_then(JsonValue::as_str)
+                {
+                    Some(s) => s.to_string(),
+                    None => {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: invalid_arguments: missing required 'path' parameter",
+                                ToolErrorCategory::ValidationFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                };
+                let raw_edits = match input.get("edits").and_then(JsonValue::as_array) {
+                    Some(edits) if !edits.is_empty() => edits,
+                    Some(_) => {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: invalid_arguments: edits must not be empty",
+                                ToolErrorCategory::ValidationFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                    None => {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: invalid_arguments: missing required 'edits' parameter",
+                                ToolErrorCategory::ValidationFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                };
+                if raw_edits.len() > MAX_PI_EDITS {
+                    return Ok(ToolExecOutput::Complete(make_result(
+                        self.name(),
+                        format!(
+                            "Error: {}: invalid_arguments: edits must contain at most {MAX_PI_EDITS} items",
+                            ToolErrorCategory::ValidationFailure.as_str()
+                        ),
+                        ToolResultState::Error,
+                    )));
+                }
+                let mut parsed = Vec::with_capacity(raw_edits.len());
+                for (idx, edit) in raw_edits.iter().enumerate() {
+                    let old_text = match edit.get("oldText").and_then(JsonValue::as_str) {
+                        Some(s) => s.to_string(),
+                        None => {
+                            return Ok(ToolExecOutput::Complete(make_result(
+                                self.name(),
+                                format!(
+                                    "Error: {}: invalid_arguments: edits[{idx}].oldText is required",
+                                    ToolErrorCategory::ValidationFailure.as_str()
+                                ),
+                                ToolResultState::Error,
+                            )));
+                        }
+                    };
+                    let new_text = match edit.get("newText").and_then(JsonValue::as_str) {
+                        Some(s) => s.to_string(),
+                        None => {
+                            return Ok(ToolExecOutput::Complete(make_result(
+                                self.name(),
+                                format!(
+                                    "Error: {}: invalid_arguments: edits[{idx}].newText is required",
+                                    ToolErrorCategory::ValidationFailure.as_str()
+                                ),
+                                ToolResultState::Error,
+                            )));
+                        }
+                    };
+                    parsed.push((old_text, new_text, false));
+                }
+                (file_path, parsed)
+            }
+        };
+
+        let path = match self.ctx.resolve_in_workspace(&file_path) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(ToolExecOutput::Complete(make_result(
+                    self.name(),
+                    format!(
+                        "Error: {}: path_outside_workspace: {e}",
+                        ToolErrorCategory::PermissionDenied.as_str()
+                    ),
+                    ToolResultState::Error,
+                )));
+            }
+        };
+
+        let exists = match self.ctx.backend.file_exists(&path).await {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(ToolExecOutput::Complete(make_result(
+                    self.name(),
+                    format!(
+                        "Error: {}: file_not_found: {e}",
+                        ToolErrorCategory::ExecutionFailure.as_str()
+                    ),
+                    ToolResultState::Error,
+                )));
+            }
+        };
+        if !exists {
+            return Ok(ToolExecOutput::Complete(make_result(
+                self.name(),
+                format!(
+                    "Error: {}: file_not_found: File not found: {path}",
+                    ToolErrorCategory::ExecutionFailure.as_str()
+                ),
+                ToolResultState::Error,
+            )));
+        }
+
+        let is_read = match self.ctx.session.read() {
+            Ok(guard) => guard.is_read(Path::new(&path)),
+            Err(_) => false,
+        };
+        if !is_read {
+            return Ok(ToolExecOutput::Complete(make_result(
+                self.name(),
+                format!(
+                    "Error: {}: read_before_modify_required: To edit a file, you must first read it using the Read tool.",
+                    ToolErrorCategory::PermissionDenied.as_str()
+                ),
+                ToolResultState::Error,
+            )));
+        }
+
+        let bytes = match self.ctx.backend.read_file(&path).await {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(ToolExecOutput::Complete(make_result(
+                    self.name(),
+                    format!(
+                        "Error: {}: file_not_found: Error reading file: {e}",
+                        ToolErrorCategory::ExecutionFailure.as_str()
+                    ),
+                    ToolResultState::Error,
+                )));
+            }
+        };
+        let mut content = match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => {
+                return Ok(ToolExecOutput::Complete(make_result(
+                    self.name(),
+                    format!(
+                        "Error: {}: unsupported_file_type: file is not valid UTF-8: {path}",
+                        ToolErrorCategory::ValidationFailure.as_str()
+                    ),
+                    ToolResultState::Error,
+                )));
+            }
+        };
+
+        let mut total_replacements = 0usize;
+        let mut legacy_replace_all = false;
+        for (old_text, new_text, replace_all) in edits {
+            match Self::apply_replacement(
+                self.name(),
+                content,
+                &path,
+                &old_text,
+                &new_text,
+                replace_all,
+            ) {
+                Ok((updated, occurrences, did_replace_all)) => {
+                    content = updated;
+                    total_replacements += if did_replace_all { occurrences } else { 1 };
+                    legacy_replace_all = did_replace_all;
+                }
+                Err(block) => return Ok(ToolExecOutput::Complete(*block)),
+            }
+        }
+
+        if let Err(e) = self.ctx.backend.write_file(&path, content.as_bytes()).await {
+            return Ok(ToolExecOutput::Complete(make_result(
+                self.name(),
+                format!(
+                    "Error: {}: execution: Error writing file: {e}",
+                    ToolErrorCategory::ExecutionFailure.as_str()
+                ),
+                ToolResultState::Error,
+            )));
+        }
+
+        let replacement_msg = if self.mode == EditToolMode::Legacy && legacy_replace_all {
+            format!("all {total_replacements} occurrences")
+        } else if total_replacements == 1 {
+            "1 occurrence".to_string()
+        } else {
+            format!("{total_replacements} occurrences")
+        };
+        Ok(ToolExecOutput::Complete(make_result(
+            self.name(),
+            format!("Successfully replaced {replacement_msg} in {path}"),
+            ToolResultState::Success,
+        )))
     }
 }
 
 #[async_trait::async_trait]
 impl Tool for EditTool {
     fn name(&self) -> &str {
-        "Edit"
+        match self.mode {
+            EditToolMode::Legacy => "Edit",
+            EditToolMode::Pi => "edit",
+        }
     }
 
     fn description(&self) -> &str {
-        "Performs exact string replacements in files.\n\
-         \n\
-         Usage:\n\
-         - You must use your `Read` tool at least once in the conversation\n\
-           before editing. This tool will error if you attempt an edit without\n\
-           reading the file.\n\
-         - When editing text from Read tool output, ensure you preserve the\n\
-           exact indentation (tabs/spaces) as it appears AFTER the line number\n\
-           prefix. The line number prefix format is: line number + tab.\n\
-           Everything after that is the actual file content to match. Never\n\
-           include any part of the line number prefix in the old_string or\n\
-           new_string.\n\
-         - ALWAYS prefer editing existing files in the codebase. NEVER write\n\
-           new files unless explicitly required.\n\
-         - Only use emojis if the user explicitly requests it. Avoid adding\n\
-           emojis to files unless asked.\n\
-         - The edit will FAIL if `old_string` is not unique in the file."
+        match self.mode {
+            EditToolMode::Legacy => {
+                "Performs exact string replacements in files.\n\
+                 \n\
+                 Usage:\n\
+                 - You must use your `Read` tool at least once in the conversation\n\
+                   before editing. This tool will error if you attempt an edit without\n\
+                   reading the file.\n\
+                 - When editing text from Read tool output, ensure you preserve the\n\
+                   exact indentation (tabs/spaces) as it appears AFTER the line number\n\
+                   prefix. The line number prefix format is: line number + tab.\n\
+                   Everything after that is the actual file content to match. Never\n\
+                   include any part of the line number prefix in the old_string or\n\
+                   new_string.\n\
+                 - ALWAYS prefer editing existing files in the codebase. NEVER write\n\
+                   new files unless explicitly required.\n\
+                 - Only use emojis if the user explicitly requests it. Avoid adding\n\
+                   emojis to files unless asked.\n\
+                 - The edit will FAIL if `old_string` is not unique in the file."
+            }
+            EditToolMode::Pi => {
+                "Performs exact string replacements in a workspace file. Use `path` and `edits`, where each edit has `oldText` and `newText`. Edits are validated and applied in memory first, then written once; the file must have been read first with `read`."
+            }
+        }
     }
 
     fn input_schema(&self) -> JsonValue {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "The absolute path to the file to edit."
+        match self.mode {
+            EditToolMode::Legacy => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The absolute path to the file to edit."
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": "The exact string to replace. Must match exactly including whitespace and indentation."
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "The string to replace old_string with."
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "If true, replace all occurrences. If false (default), only replace if there is exactly one occurrence.",
+                        "default": false
+                    }
                 },
-                "old_string": {
-                    "type": "string",
-                    "description": "The exact string to replace. Must match exactly including whitespace and indentation."
+                "required": ["file_path", "old_string", "new_string"]
+            }),
+            EditToolMode::Pi => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "The path to the file to edit."
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Compatibility alias for path."
+                    },
+                    "edits": {
+                        "type": "array",
+                        "description": "Ordered exact replacements to apply. Each oldText must match exactly and uniquely in the file content at the time that edit is applied.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "oldText": {
+                                    "type": "string",
+                                    "description": "The exact text to replace."
+                                },
+                                "newText": {
+                                    "type": "string",
+                                    "description": "The replacement text."
+                                }
+                            },
+                            "required": ["oldText", "newText"]
+                        },
+                        "minItems": 1,
+                        "maxItems": MAX_PI_EDITS
+                    }
                 },
-                "new_string": {
-                    "type": "string",
-                    "description": "The string to replace old_string with."
-                },
-                "replace_all": {
-                    "type": "boolean",
-                    "description": "If true, replace all occurrences. If false (default), only replace if there is exactly one occurrence.",
-                    "default": false
-                }
-            },
-            "required": ["file_path", "old_string", "new_string"]
-        })
+                "required": ["edits"],
+                "anyOf": [
+                    { "required": ["path"] },
+                    { "required": ["file_path"] }
+                ]
+            }),
+        }
     }
 
     fn is_read_only(&self) -> bool {
@@ -105,217 +485,7 @@ impl Tool for EditTool {
     }
 
     async fn call(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {
-        // Extract required parameters.
-        let file_path = match input.get("file_path").and_then(JsonValue::as_str) {
-            Some(s) => s.to_string(),
-            None => {
-                return Ok(ToolExecOutput::Complete(make_result(
-                    "Edit",
-                    format!(
-                        "Error: {}: invalid_arguments: missing required 'file_path' parameter",
-                        ToolErrorCategory::ValidationFailure.as_str()
-                    ),
-                    ToolResultState::Error,
-                )));
-            }
-        };
-        let old_string = match input.get("old_string").and_then(JsonValue::as_str) {
-            Some(s) => s.to_string(),
-            None => {
-                return Ok(ToolExecOutput::Complete(make_result(
-                    "Edit",
-                    format!(
-                        "Error: {}: invalid_arguments: missing required 'old_string' parameter",
-                        ToolErrorCategory::ValidationFailure.as_str()
-                    ),
-                    ToolResultState::Error,
-                )));
-            }
-        };
-        let new_string = match input.get("new_string").and_then(JsonValue::as_str) {
-            Some(s) => s.to_string(),
-            None => {
-                return Ok(ToolExecOutput::Complete(make_result(
-                    "Edit",
-                    format!(
-                        "Error: {}: invalid_arguments: missing required 'new_string' parameter",
-                        ToolErrorCategory::ValidationFailure.as_str()
-                    ),
-                    ToolResultState::Error,
-                )));
-            }
-        };
-        let replace_all = input
-            .get("replace_all")
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false);
-
-        // Resolve the path inside the workspace.
-        let path = match self.ctx.resolve_in_workspace(&file_path) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(ToolExecOutput::Complete(make_result(
-                    "Edit",
-                    format!(
-                        "Error: {}: path_outside_workspace: {e}",
-                        ToolErrorCategory::PermissionDenied.as_str()
-                    ),
-                    ToolResultState::Error,
-                )));
-            }
-        };
-
-        // The file must exist.
-        let exists = match self.ctx.backend.file_exists(&path).await {
-            Ok(b) => b,
-            Err(e) => {
-                return Ok(ToolExecOutput::Complete(make_result(
-                    "Edit",
-                    format!(
-                        "Error: {}: file_not_found: {e}",
-                        ToolErrorCategory::ExecutionFailure.as_str()
-                    ),
-                    ToolResultState::Error,
-                )));
-            }
-        };
-        if !exists {
-            return Ok(ToolExecOutput::Complete(make_result(
-                "Edit",
-                format!(
-                    "Error: {}: file_not_found: File not found: {path}",
-                    ToolErrorCategory::ExecutionFailure.as_str()
-                ),
-                ToolResultState::Error,
-            )));
-        }
-
-        // Read-before-modify guard (FR-008): the file must have been read
-        // earlier in the session.
-        let is_read = match self.ctx.session.read() {
-            Ok(guard) => guard.is_read(Path::new(&path)),
-            Err(_) => false,
-        };
-        if !is_read {
-            return Ok(ToolExecOutput::Complete(make_result(
-                "Edit",
-                format!(
-                    "Error: {}: read_before_modify_required: To edit a file, you must first read it using the Read tool.",
-                    ToolErrorCategory::PermissionDenied.as_str()
-                ),
-                ToolResultState::Error,
-            )));
-        }
-
-        // Validation: old_string must be non-empty.
-        if old_string.is_empty() {
-            return Ok(ToolExecOutput::Complete(make_result(
-                "Edit",
-                format!(
-                    "Error: {}: invalid_arguments: old_string must not be empty",
-                    ToolErrorCategory::ValidationFailure.as_str()
-                ),
-                ToolResultState::Error,
-            )));
-        }
-
-        // Validation: old_string and new_string must differ.
-        if old_string == new_string {
-            return Ok(ToolExecOutput::Complete(make_result(
-                "Edit",
-                format!(
-                    "Error: {}: invalid_arguments: old_string and new_string are identical. No changes to make.",
-                    ToolErrorCategory::ValidationFailure.as_str()
-                ),
-                ToolResultState::Error,
-            )));
-        }
-
-        // Read the current file contents.
-        let bytes = match self.ctx.backend.read_file(&path).await {
-            Ok(b) => b,
-            Err(e) => {
-                return Ok(ToolExecOutput::Complete(make_result(
-                    "Edit",
-                    format!(
-                        "Error: {}: file_not_found: Error reading file: {e}",
-                        ToolErrorCategory::ExecutionFailure.as_str()
-                    ),
-                    ToolResultState::Error,
-                )));
-            }
-        };
-        let content = match String::from_utf8(bytes) {
-            Ok(s) => s,
-            Err(_) => {
-                return Ok(ToolExecOutput::Complete(make_result(
-                    "Edit",
-                    format!(
-                        "Error: {}: unsupported_file_type: file is not valid UTF-8: {path}",
-                        ToolErrorCategory::ValidationFailure.as_str()
-                    ),
-                    ToolResultState::Error,
-                )));
-            }
-        };
-
-        // Count occurrences.
-        let occurrences = content.matches(&old_string).count();
-
-        // Zero occurrences → pattern not found.
-        if occurrences == 0 {
-            return Ok(ToolExecOutput::Complete(make_result(
-                "Edit",
-                format!(
-                    "Error: {}: pattern_not_found: old_string not found in {path}",
-                    ToolErrorCategory::ValidationFailure.as_str()
-                ),
-                ToolResultState::Error,
-            )));
-        }
-
-        // Multiple occurrences without replace_all → ambiguous edit.
-        if occurrences > 1 && !replace_all {
-            return Ok(ToolExecOutput::Complete(make_result(
-                "Edit",
-                format!(
-                    "Error: {}: ambiguous_edit: old_string appears {occurrences} times in {path}. Set replace_all=true to replace all occurrences, or make old_string more specific.",
-                    ToolErrorCategory::ValidationFailure.as_str()
-                ),
-                ToolResultState::Error,
-            )));
-        }
-
-        // Perform the replacement.
-        let updated = if replace_all {
-            content.replace(&old_string, &new_string)
-        } else {
-            content.replacen(&old_string, &new_string, 1)
-        };
-
-        // Write the updated content back.
-        if let Err(e) = self.ctx.backend.write_file(&path, updated.as_bytes()).await {
-            return Ok(ToolExecOutput::Complete(make_result(
-                "Edit",
-                format!(
-                    "Error: {}: execution: Error writing file: {e}",
-                    ToolErrorCategory::ExecutionFailure.as_str()
-                ),
-                ToolResultState::Error,
-            )));
-        }
-
-        // Success message, mirroring Python.
-        let replacement_msg = if replace_all {
-            format!("all {occurrences} occurrences")
-        } else {
-            "1 occurrence".to_string()
-        };
-        Ok(ToolExecOutput::Complete(make_result(
-            "Edit",
-            format!("Successfully replaced {replacement_msg} in {path}"),
-            ToolResultState::Success,
-        )))
+        self.call_impl(input).await
     }
 }
 

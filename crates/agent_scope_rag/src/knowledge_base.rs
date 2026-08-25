@@ -212,7 +212,7 @@ impl KnowledgeBase {
             return Ok(String::new());
         }
 
-        let doc_id = document_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let doc_id = document_id.unwrap_or_else(|| agent_scope_utils::id::generate_uuid());
 
         // Apply metadata merge: document_metadata < chunk.metadata < metadata_filter
         let mut merged_chunks: Vec<Chunk> = Vec::new();

@@ -330,7 +330,7 @@ impl Tool for RAGSearchTool {
         };
 
         let block = ToolResultBlock::new(
-            uuid::Uuid::new_v4().to_string(),
+            agent_scope_utils::id::generate_uuid(),
             self.name().to_string(),
             ToolOutput::Text(formatted),
         );

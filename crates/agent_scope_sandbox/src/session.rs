@@ -42,6 +42,7 @@ pub trait SandboxSession: Send + Sync {
     async fn write_file(&mut self, path: &str, data: &[u8]) -> Result<(), SandboxError>;
     async fn delete_path(&mut self, path: &str) -> Result<(), SandboxError>;
     async fn is_dir(&self, path: &str) -> Result<bool, SandboxError>;
+    async fn path_exists(&self, path: &str) -> Result<bool, SandboxError>;
     async fn stat_mtime(&self, path: &str) -> Result<Option<f64>, SandboxError>;
     async fn list_dir(&self, path: &str, recursive: bool) -> Result<Vec<String>, SandboxError>;
     async fn history(&self) -> Result<Vec<ExecutionRecord>, SandboxError>;

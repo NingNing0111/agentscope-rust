@@ -14,6 +14,7 @@ agent_scope_event = { path = "../agent_scope_event" }
 agent_scope_memory = { path = "../agent_scope_memory" }
 agent_scope_types = { path = "../agent_scope_types" }
 agent_scope_workspace = { path = "../agent_scope_workspace" }
+agent_scope_utils = { path = "../agent_scope_utils" }
 
 tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 futures.workspace = true
@@ -23,12 +24,10 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-uuid.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
 schemars = { workspace = true }
-uuid = { workspace = true }
 tempfile.workspace = true

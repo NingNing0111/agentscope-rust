@@ -4,20 +4,22 @@
 //! Mirrors the Python reference implementation in
 //! `agentscope/tool/_builtin/_grep.py` (upstream commit `9d1026fa`).
 //!
-//! The search is implemented natively in Rust (`regex` + `walkdir` traversal)
-//! — it never shells out to `rg`/`find`. Results are bounded (head_limit with
-//! a hard cap, a per-file byte cap, and a scan-entry cap) so a pathological
-//! tree cannot flood the model context.
+//! The search is implemented natively in Rust (`regex` + workspace backend
+//! traversal) — it never shells out to `rg`/`find`. Results are bounded
+//! (head_limit with a hard cap, a per-file byte cap, and a scan-entry cap) so a
+//! pathological tree cannot flood the model context.
 
 use std::collections::HashSet;
 use std::path::Path;
 
-use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_message::ToolResultState;
+#[cfg(test)]
+use agent_scope_message::{ToolOutput, ToolResultBlock};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde_json::Value as JsonValue;
-use walkdir::WalkDir;
 
+use crate::make_text_result as make_result;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 use super::{BuiltInToolContext, ToolErrorCategory};
@@ -94,13 +96,74 @@ struct SearchState {
 /// and results are bounded so a huge match set cannot flood the model context.
 pub struct GrepTool {
     ctx: BuiltInToolContext,
+    mode: GrepToolMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GrepToolMode {
+    Legacy,
+    Pi,
 }
 
 impl GrepTool {
     /// Create a new [`GrepTool`] bound to a workspace context.
     #[must_use]
     pub fn new(ctx: BuiltInToolContext) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            mode: GrepToolMode::Legacy,
+        }
+    }
+
+    /// Create a pi-compatible lowercase `grep` tool.
+    #[must_use]
+    pub fn new_pi(ctx: BuiltInToolContext) -> Self {
+        Self {
+            ctx,
+            mode: GrepToolMode::Pi,
+        }
+    }
+
+    fn normalize_input(&self, mut input: JsonValue) -> JsonValue {
+        if self.mode != GrepToolMode::Pi {
+            return input;
+        }
+
+        let Some(obj) = input.as_object_mut() else {
+            return input;
+        };
+
+        if !obj.contains_key("output_mode") {
+            obj.insert(
+                "output_mode".to_string(),
+                JsonValue::String("content".to_string()),
+            );
+        }
+        if let Some(ignore_case) = obj.get("ignoreCase").cloned()
+            && !obj.contains_key("i")
+            && !obj.contains_key("case_insensitive")
+        {
+            obj.insert("i".to_string(), ignore_case);
+        }
+        if let Some(limit) = obj.get("limit").and_then(JsonValue::as_i64)
+            && !obj.contains_key("head_limit")
+        {
+            let limit = limit.clamp(1, MAX_GREP_RESULTS as i64) as usize;
+            obj.insert("head_limit".to_string(), JsonValue::Number(limit.into()));
+        }
+        if obj
+            .get("literal")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false)
+            && let Some(pattern) = obj.get("pattern").and_then(JsonValue::as_str)
+            && !pattern.is_empty()
+        {
+            obj.insert(
+                "pattern".to_string(),
+                JsonValue::String(regex::escape(pattern)),
+            );
+        }
+        input
     }
 
     /// Search a single file and push its results into `state`.
@@ -185,20 +248,6 @@ impl GrepTool {
             }
             OutputMode::Content => emit_content_matches(rel, content, params, state),
         }
-    }
-}
-
-/// Build a complete one-shot [`ToolResultBlock`].
-fn make_result(name: &str, text: String, state: ToolResultState) -> ToolResultBlock {
-    ToolResultBlock {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: name.to_string(),
-        output: ToolOutput::Text(text),
-        state,
-        metadata: std::collections::HashMap::new(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        finished_at: Some(chrono::Utc::now().to_rfc3339()),
-        is_last: true,
     }
 }
 
@@ -420,13 +469,9 @@ fn emit_content_matches(
     }
 }
 
-/// True when a walkdir entry is a version-control directory to prune.
-fn is_vcs_dir(entry: &walkdir::DirEntry) -> bool {
-    entry.file_type().is_dir()
-        && entry
-            .file_name()
-            .to_str()
-            .is_some_and(|n| VCS_DIRS.contains(&n))
+/// True when a workspace-relative path is inside a version-control directory.
+fn is_under_vcs_dir(rel: &str) -> bool {
+    rel.split('/').any(|part| VCS_DIRS.contains(&part))
 }
 
 /// Render `full` relative to the workspace root, using `/` separators.
@@ -456,99 +501,150 @@ fn skip_notes(state: &SearchState) -> Vec<String> {
 #[async_trait::async_trait]
 impl Tool for GrepTool {
     fn name(&self) -> &str {
-        "Grep"
+        match self.mode {
+            GrepToolMode::Legacy => "Grep",
+            GrepToolMode::Pi => "grep",
+        }
     }
 
     fn description(&self) -> &str {
-        "A powerful search tool built on ripgrep\n\
-         \n\
-         Usage:\n\
-         - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.\n\
-         - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\")\n\
-         - Filter files with glob parameter (e.g., \"*.js\", \"**/*.tsx\") or type parameter (e.g., \"js\", \"py\", \"rust\")\n\
-         - Output modes: \"content\" shows matching lines, \"files_with_matches\" shows only file paths (default), \"count\" shows match counts per file\n\
-         - Context lines: use context parameter or -A/-B/-C for lines after/before/around matches\n\
-         - Case-insensitive search: set i to true\n\
-         - Multiline regex: set multiline to true for patterns spanning multiple lines\n\
-         - Limit results: use head_limit to cap the number of results returned"
+        match self.mode {
+            GrepToolMode::Legacy => {
+                "A powerful search tool built on ripgrep\n\
+                 \n\
+                 Usage:\n\
+                 - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.\n\
+                 - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\")\n\
+                 - Filter files with glob parameter (e.g., \"*.js\", \"**/*.tsx\") or type parameter (e.g., \"js\", \"py\", \"rust\")\n\
+                 - Output modes: \"content\" shows matching lines, \"files_with_matches\" shows only file paths (default), \"count\" shows match counts per file\n\
+                 - Context lines: use context parameter or -A/-B/-C for lines after/before/around matches\n\
+                 - Case-insensitive search: set i to true\n\
+                 - Multiline regex: set multiline to true for patterns spanning multiple lines\n\
+                 - Limit results: use head_limit to cap the number of results returned"
+            }
+            GrepToolMode::Pi => {
+                "Searches UTF-8 text files in the workspace. Use `pattern` with optional `path`, `glob`, `ignoreCase`, `literal`, `context`, and `limit`. Results default to matching content lines and are bounded."
+            }
+        }
     }
 
     fn input_schema(&self) -> JsonValue {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "The regular expression pattern to search for in file contents."
+        match self.mode {
+            GrepToolMode::Legacy => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "The regular expression pattern to search for in file contents."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File or directory to search in. Defaults to current working directory."
+                    },
+                    "output_mode": {
+                        "type": "string",
+                        "enum": ["content", "files_with_matches", "count"],
+                        "description": "Output mode: 'content' shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), 'files_with_matches' shows file paths, 'count' shows match counts. Defaults to 'files_with_matches'.",
+                        "default": "files_with_matches"
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Glob pattern to filter files (e.g., '*.js', '*.{ts,tsx}')."
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "File type to search (rg --type). Common types: js, py, rust, go, java, etc."
+                    },
+                    "-A": {
+                        "type": "integer",
+                        "description": "Number of lines to show after each match. Requires output_mode: 'content'."
+                    },
+                    "-B": {
+                        "type": "integer",
+                        "description": "Number of lines to show before each match. Requires output_mode: 'content'."
+                    },
+                    "-C": {
+                        "type": "integer",
+                        "description": "Alias for context."
+                    },
+                    "context": {
+                        "type": "integer",
+                        "description": "Number of context lines to show before and after matches. Requires output_mode: 'content'."
+                    },
+                    "n": {
+                        "type": "boolean",
+                        "description": "Show line numbers in output. Requires output_mode: 'content'. Defaults to true.",
+                        "default": true
+                    },
+                    "i": {
+                        "type": "boolean",
+                        "description": "Case insensitive search.",
+                        "default": false
+                    },
+                    "case_insensitive": {
+                        "type": "boolean",
+                        "description": "Case insensitive search (alias for i).",
+                        "default": false
+                    },
+                    "multiline": {
+                        "type": "boolean",
+                        "description": "Enable multiline mode where . matches newlines and patterns can span lines. Default: false.",
+                        "default": false
+                    },
+                    "head_limit": {
+                        "type": "integer",
+                        "description": "Limit output to first N lines/entries. Defaults to 250 when unspecified. Pass 0 for unlimited.",
+                        "minimum": 0
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Skip first N lines/entries before applying head_limit. Defaults to 0.",
+                        "default": 0,
+                        "minimum": 0
+                    }
                 },
-                "path": {
-                    "type": "string",
-                    "description": "File or directory to search in. Defaults to current working directory."
+                "required": ["pattern"]
+            }),
+            GrepToolMode::Pi => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "The text or regular expression pattern to search for."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File or directory to search in. Defaults to the workspace root."
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Glob pattern to filter files (e.g., '*.rs', '**/*.ts')."
+                    },
+                    "ignoreCase": {
+                        "type": "boolean",
+                        "description": "Search case-insensitively.",
+                        "default": false
+                    },
+                    "literal": {
+                        "type": "boolean",
+                        "description": "Treat pattern as literal text instead of a regular expression.",
+                        "default": false
+                    },
+                    "context": {
+                        "type": "integer",
+                        "description": "Number of context lines to show before and after matches.",
+                        "minimum": 0
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of result lines to return (default: 250, max: 1000).",
+                        "minimum": 0,
+                        "maximum": 1000
+                    }
                 },
-                "output_mode": {
-                    "type": "string",
-                    "enum": ["content", "files_with_matches", "count"],
-                    "description": "Output mode: 'content' shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), 'files_with_matches' shows file paths, 'count' shows match counts. Defaults to 'files_with_matches'.",
-                    "default": "files_with_matches"
-                },
-                "glob": {
-                    "type": "string",
-                    "description": "Glob pattern to filter files (e.g., '*.js', '*.{ts,tsx}')."
-                },
-                "type": {
-                    "type": "string",
-                    "description": "File type to search (rg --type). Common types: js, py, rust, go, java, etc."
-                },
-                "-A": {
-                    "type": "integer",
-                    "description": "Number of lines to show after each match. Requires output_mode: 'content'."
-                },
-                "-B": {
-                    "type": "integer",
-                    "description": "Number of lines to show before each match. Requires output_mode: 'content'."
-                },
-                "-C": {
-                    "type": "integer",
-                    "description": "Alias for context."
-                },
-                "context": {
-                    "type": "integer",
-                    "description": "Number of context lines to show before and after matches. Requires output_mode: 'content'."
-                },
-                "n": {
-                    "type": "boolean",
-                    "description": "Show line numbers in output. Requires output_mode: 'content'. Defaults to true.",
-                    "default": true
-                },
-                "i": {
-                    "type": "boolean",
-                    "description": "Case insensitive search.",
-                    "default": false
-                },
-                "case_insensitive": {
-                    "type": "boolean",
-                    "description": "Case insensitive search (alias for i).",
-                    "default": false
-                },
-                "multiline": {
-                    "type": "boolean",
-                    "description": "Enable multiline mode where . matches newlines and patterns can span lines. Default: false.",
-                    "default": false
-                },
-                "head_limit": {
-                    "type": "integer",
-                    "description": "Limit output to first N lines/entries. Defaults to 250 when unspecified. Pass 0 for unlimited.",
-                    "minimum": 0
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Skip first N lines/entries before applying head_limit. Defaults to 0.",
-                    "default": 0,
-                    "minimum": 0
-                }
-            },
-            "required": ["pattern"]
-        })
+                "required": ["pattern"]
+            }),
+        }
     }
 
     fn is_read_only(&self) -> bool {
@@ -560,25 +656,45 @@ impl Tool for GrepTool {
     }
 
     async fn call(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {
+        let input = self.normalize_input(input);
+        let preserve_pattern_whitespace = self.mode == GrepToolMode::Pi
+            && input
+                .get("literal")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false);
         // Extract the required, non-empty `pattern` parameter.
         let pattern = match input.get("pattern").and_then(JsonValue::as_str) {
             Some(s) => {
-                let trimmed = s.trim();
-                if trimmed.is_empty() {
-                    return Ok(ToolExecOutput::Complete(make_result(
-                        "Grep",
-                        format!(
-                            "Error: {}: invalid_arguments: pattern must not be empty",
-                            ToolErrorCategory::ValidationFailure.as_str()
-                        ),
-                        ToolResultState::Error,
-                    )));
+                if preserve_pattern_whitespace {
+                    if s.is_empty() {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: invalid_arguments: pattern must not be empty",
+                                ToolErrorCategory::ValidationFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                    s.to_string()
+                } else {
+                    let trimmed = s.trim();
+                    if trimmed.is_empty() {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: invalid_arguments: pattern must not be empty",
+                                ToolErrorCategory::ValidationFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                    trimmed.to_string()
                 }
-                trimmed.to_string()
             }
             None => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Grep",
+                    self.name(),
                     format!(
                         "Error: {}: invalid_arguments: missing required 'pattern' parameter",
                         ToolErrorCategory::ValidationFailure.as_str()
@@ -594,7 +710,7 @@ impl Tool for GrepTool {
                 let v = v.as_i64().unwrap();
                 if v < 0 {
                     return Ok(ToolExecOutput::Complete(make_result(
-                        "Grep",
+                        self.name(),
                         format!(
                             "Error: {}: invalid_arguments: head_limit must be non-negative",
                             ToolErrorCategory::ValidationFailure.as_str()
@@ -611,7 +727,7 @@ impl Tool for GrepTool {
                 let v = v.as_i64().unwrap();
                 if v < 0 {
                     return Ok(ToolExecOutput::Complete(make_result(
-                        "Grep",
+                        self.name(),
                         format!(
                             "Error: {}: invalid_arguments: offset must be non-negative",
                             ToolErrorCategory::ValidationFailure.as_str()
@@ -631,7 +747,7 @@ impl Tool for GrepTool {
             Some("count") => OutputMode::Count,
             Some(other) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Grep",
+                    self.name(),
                     format!(
                         "Error: {}: invalid_arguments: invalid output_mode: {other}",
                         ToolErrorCategory::ValidationFailure.as_str()
@@ -679,7 +795,7 @@ impl Tool for GrepTool {
                 Ok(None) => None,
                 Err(e) => {
                     return Ok(ToolExecOutput::Complete(make_result(
-                        "Grep",
+                        self.name(),
                         format!(
                             "Error: {}: invalid_pattern: invalid glob pattern: {e}",
                             ToolErrorCategory::ValidationFailure.as_str()
@@ -697,7 +813,7 @@ impl Tool for GrepTool {
                 Some(exts) => Some(exts),
                 None => {
                     return Ok(ToolExecOutput::Complete(make_result(
-                        "Grep",
+                        self.name(),
                         format!(
                             "Error: {}: invalid_arguments: unknown file type: {t}",
                             ToolErrorCategory::ValidationFailure.as_str()
@@ -714,7 +830,7 @@ impl Tool for GrepTool {
             Ok(re) => re,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Grep",
+                    self.name(),
                     format!(
                         "Error: {}: invalid_pattern: {e}",
                         ToolErrorCategory::ValidationFailure.as_str()
@@ -736,7 +852,7 @@ impl Tool for GrepTool {
                 Ok(p) => p,
                 Err(e) => {
                     return Ok(ToolExecOutput::Complete(make_result(
-                        "Grep",
+                        self.name(),
                         format!(
                             "Error: {}: path_outside_workspace: {e}",
                             ToolErrorCategory::PermissionDenied.as_str()
@@ -753,7 +869,7 @@ impl Tool for GrepTool {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Grep",
+                    self.name(),
                     format!(
                         "Error: {}: file_not_found: {e}",
                         ToolErrorCategory::ExecutionFailure.as_str()
@@ -764,7 +880,7 @@ impl Tool for GrepTool {
         };
         if !exists {
             return Ok(ToolExecOutput::Complete(make_result(
-                "Grep",
+                self.name(),
                 format!(
                     "Error: {}: file_not_found: File does not exist: {base_dir}",
                     ToolErrorCategory::ExecutionFailure.as_str()
@@ -776,7 +892,7 @@ impl Tool for GrepTool {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Grep",
+                    self.name(),
                     format!(
                         "Error: {}: file_not_found: {e}",
                         ToolErrorCategory::ExecutionFailure.as_str()
@@ -809,18 +925,24 @@ impl Tool for GrepTool {
         let mut state = SearchState::default();
 
         if is_dir {
-            // Walk the tree, pruning VCS directories and symlinks. The scan is
-            // bounded so a pathological tree cannot stall the host.
-            let walker = WalkDir::new(base_dir.as_str())
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(|e| !is_vcs_dir(e));
-            let mut entries_scanned = 0usize;
-            for entry in walker {
-                let Ok(entry) = entry else { continue };
-                if entry.depth() == 0 {
-                    continue;
+            // Traverse through the workspace backend so sandbox/remote/virtual
+            // backends keep enforcing their own containment boundaries. The
+            // backend returns descendants only, so there is no root entry to skip.
+            let entries = match self.ctx.backend.list_dir(&base_dir, true).await {
+                Ok(entries) => entries,
+                Err(e) => {
+                    return Ok(ToolExecOutput::Complete(make_result(
+                        self.name(),
+                        format!(
+                            "Error: {}: execution: failed to list directory: {e}",
+                            ToolErrorCategory::ExecutionFailure.as_str()
+                        ),
+                        ToolResultState::Error,
+                    )));
                 }
+            };
+            let mut entries_scanned = 0usize;
+            for full in entries {
                 entries_scanned += 1;
                 if entries_scanned > MAX_GREP_SCAN_FILES
                     || state.files_scanned >= MAX_GREP_SCAN_FILES
@@ -828,12 +950,26 @@ impl Tool for GrepTool {
                     state.scan_cap_hit = true;
                     break;
                 }
-                let ft = entry.file_type();
-                if ft.is_symlink() || !ft.is_file() {
+
+                let rel = rel_to_workdir(&self.ctx.workdir, &full);
+                if rel.is_empty() || is_under_vcs_dir(&rel) {
                     continue;
                 }
-                let full = entry.path().to_string_lossy().to_string();
-                let rel = rel_to_workdir(&self.ctx.workdir, &full);
+                match self.ctx.backend.is_dir(&full).await {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(e) => {
+                        return Ok(ToolExecOutput::Complete(make_result(
+                            self.name(),
+                            format!(
+                                "Error: {}: execution: failed to inspect directory entry '{full}': {e}",
+                                ToolErrorCategory::ExecutionFailure.as_str()
+                            ),
+                            ToolResultState::Error,
+                        )));
+                    }
+                }
+
                 self.search_file(&full, &rel, &params, &mut state).await;
                 if state.truncated {
                     break;
@@ -852,7 +988,7 @@ impl Tool for GrepTool {
                 msg.push_str(&format!("; {}", notes.join("; ")));
             }
             return Ok(ToolExecOutput::Complete(make_result(
-                "Grep",
+                self.name(),
                 msg,
                 ToolResultState::Success,
             )));
@@ -882,7 +1018,7 @@ impl Tool for GrepTool {
         }
 
         Ok(ToolExecOutput::Complete(make_result(
-            "Grep",
+            self.name(),
             out,
             ToolResultState::Success,
         )))

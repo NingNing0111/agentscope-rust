@@ -364,7 +364,7 @@ pub(crate) async fn run_react_loop(
                     for block in &msg.content {
                         match block {
                             ContentBlock::Text(tb) => {
-                                let block_id = uuid::Uuid::new_v4().as_simple().to_string();
+                                let block_id = agent_scope_utils::id::generate_id();
                                 let _ = event_tx
                                     .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
                                         base: base(),
@@ -394,7 +394,7 @@ pub(crate) async fn run_react_loop(
                                 if thb.thinking.is_empty() {
                                     continue;
                                 }
-                                let block_id = uuid::Uuid::new_v4().as_simple().to_string();
+                                let block_id = agent_scope_utils::id::generate_id();
                                 let _ = event_tx
                                     .send(AgentEvent::ThinkingBlockStart(ThinkingBlockStartEvent {
                                         base: base(),
@@ -454,7 +454,7 @@ pub(crate) async fn run_react_loop(
                 for msg in &text_msgs {
                     for block in &msg.content {
                         if let ContentBlock::Text(tb) = block {
-                            let block_id = uuid::Uuid::new_v4().as_simple().to_string();
+                            let block_id = agent_scope_utils::id::generate_id();
                             let _ = event_tx
                                 .send(AgentEvent::TextBlockStart(TextBlockStartEvent {
                                     base: base(),

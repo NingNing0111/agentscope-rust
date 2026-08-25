@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 fn default_id() -> String {
-    uuid::Uuid::new_v4().as_simple().to_string()
+    agent_scope_utils::id::generate_id()
 }
 
 fn default_timestamp() -> String {

@@ -4,6 +4,7 @@
 //! preserving the Rust crate's original default behavior: an empty/default
 //! engine allows tool calls unless an explicit deny/ask rule matches.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -256,8 +257,8 @@ impl PermissionEngine {
             // Remove ask rules whose pattern matches the allowed tool so they
             // cannot shadow the newly-adopted allow rule.
             self.context.ask_rules.retain(|pattern, _| {
-                !matches_pattern(pattern, &rule.tool_name)
-                    && !matches_pattern(&rule.tool_name, pattern)
+                !matches_tool_pattern(pattern, &rule.tool_name)
+                    && !matches_tool_pattern(&rule.tool_name, pattern)
             });
         }
         self.add_rule(rule);
@@ -351,13 +352,13 @@ fn find_matching_rule<'a>(
 ) -> Option<&'a PermissionRule> {
     rules
         .iter()
-        .filter(|(pattern, _)| matches_pattern(pattern, tool_name))
+        .filter(|(pattern, _)| matches_tool_pattern(pattern, tool_name))
         .flat_map(|(_, rules)| rules.iter())
         .find(|rule| rule_matches(rule, tool_name, input_text))
 }
 
 fn rule_matches(rule: &PermissionRule, tool_name: &str, input_text: &str) -> bool {
-    matches_pattern(&rule.tool_name, tool_name)
+    matches_tool_pattern(&rule.tool_name, tool_name)
         && rule
             .rule_content
             .as_ref()
@@ -373,6 +374,52 @@ fn matches_pattern(pattern: &str, name: &str) -> bool {
         return name.starts_with(prefix);
     }
     pattern == name
+}
+
+/// Pattern matching for tool permission rules.
+///
+/// Matching is exact/prefix-wildcard as before, except known workspace built-in
+/// aliases are first mapped to a canonical name. This deliberately avoids
+/// arbitrary case-insensitive matching for third-party/custom tools while making
+/// legacy and pi-compatible names share the same permission boundary.
+fn matches_tool_pattern(pattern: &str, name: &str) -> bool {
+    if matches_pattern(pattern, name) {
+        return true;
+    }
+
+    let pattern = canonical_workspace_tool_pattern(pattern);
+    let name = canonical_workspace_tool_name(name);
+    matches_pattern(pattern.as_ref(), name.as_ref())
+}
+
+fn canonical_workspace_tool_pattern(pattern: &str) -> Cow<'_, str> {
+    let Some(prefix) = pattern.strip_suffix('*') else {
+        return canonical_workspace_tool_name(pattern);
+    };
+
+    let canonical_prefix = canonical_workspace_tool_name(prefix);
+    if canonical_prefix.as_ref() == prefix {
+        Cow::Borrowed(pattern)
+    } else {
+        Cow::Owned(format!("{}*", canonical_prefix))
+    }
+}
+
+fn canonical_workspace_tool_name(name: &str) -> Cow<'_, str> {
+    match name {
+        "bash" => Cow::Borrowed("Bash"),
+        "powershell" => Cow::Borrowed("PowerShell"),
+        "read" => Cow::Borrowed("Read"),
+        "write" => Cow::Borrowed("Write"),
+        "edit" => Cow::Borrowed("Edit"),
+        "grep" => Cow::Borrowed("Grep"),
+        "find" => Cow::Borrowed("Find"),
+        "ls" => Cow::Borrowed("Ls"),
+        "glob" => Cow::Borrowed("Glob"),
+        "skill" => Cow::Borrowed("Skill"),
+        "resettools" | "reset_tools" => Cow::Borrowed("ResetTools"),
+        _ => Cow::Borrowed(name),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +466,43 @@ mod tests {
         assert_eq!(
             engine.check("other_tool", &serde_json::json!({})),
             PermissionResult::Allow
+        );
+    }
+
+    #[test]
+    fn test_wildcard_patterns_cover_workspace_tool_aliases() {
+        let mut engine = PermissionEngine::new();
+        engine.add_rule(PermissionRule::deny("Bash*"));
+        engine.add_rule(PermissionRule::deny("Power*"));
+        engine.add_rule(PermissionRule::ask("Reset*"));
+
+        assert!(matches!(
+            engine.check("bash", &serde_json::json!({})),
+            PermissionResult::Deny { .. }
+        ));
+        assert!(matches!(
+            engine.check("powershell", &serde_json::json!({})),
+            PermissionResult::Deny { .. }
+        ));
+        assert_eq!(
+            engine.check("reset_tools", &serde_json::json!({})),
+            PermissionResult::RequireConfirm
+        );
+    }
+
+    #[test]
+    fn test_lowercase_wildcard_patterns_cover_legacy_workspace_tools() {
+        let mut engine = PermissionEngine::new();
+        engine.add_rule(PermissionRule::deny("bash*"));
+        engine.add_rule(PermissionRule::ask("reset_tools*"));
+
+        assert!(matches!(
+            engine.check("Bash", &serde_json::json!({})),
+            PermissionResult::Deny { .. }
+        ));
+        assert_eq!(
+            engine.check("ResetTools", &serde_json::json!({})),
+            PermissionResult::RequireConfirm
         );
     }
 

@@ -18,11 +18,11 @@ agent_scope_agent = { path = "../agent_scope_agent" }
 agent_scope_memory = { path = "../agent_scope_memory" }
 agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_tool = { path = "../agent_scope_tool" }
+agent_scope_utils = { path = "../agent_scope_utils" }
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-uuid.workspace = true
 tokio = { workspace = true, features = ["sync", "rt"] }
 turbovec.workspace = true
 xberg = { workspace = true, optional = true, features = ["tokio-runtime", "pdf", "office", "excel", "html"] }

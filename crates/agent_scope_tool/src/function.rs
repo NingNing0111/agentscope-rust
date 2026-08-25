@@ -35,7 +35,7 @@ pub trait IntoChunk: Send + 'static {
 impl IntoChunk for String {
     fn into_chunk(self) -> ToolResultBlock {
         ToolResultBlock {
-            id: uuid::Uuid::new_v4().as_simple().to_string(),
+            id: agent_scope_utils::id::generate_id(),
             name: String::new(),
             output: ToolOutput::Text(self),
             state: ToolResultState::Success,

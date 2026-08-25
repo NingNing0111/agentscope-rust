@@ -2,6 +2,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use agent_scope_utils::path::has_parent_component;
+
 use crate::error::{SandboxError, SandboxResult};
 
 #[derive(Debug, Clone)]
@@ -60,7 +62,7 @@ impl SandboxPathResolver {
             });
         }
         let input = Path::new(path);
-        if has_parent_component(input) {
+        if has_parent_component(path) {
             return Err(SandboxError::PermissionDenied {
                 path: Some(path.to_string()),
                 operation: operation.into(),
@@ -198,8 +200,4 @@ fn strip_absolute(path: &Path) -> PathBuf {
         }
     }
     out
-}
-
-fn has_parent_component(path: &Path) -> bool {
-    path.components().any(|c| matches!(c, Component::ParentDir))
 }

@@ -85,8 +85,8 @@ async fn exec_shell(
 
 ```toml
 [dependencies]
-agent_scope_sandbox = { path = "crates/agent_scope_sandbox", features = ["microsandbox"] }
-agent_scope_workspace = { path = "crates/agent_scope_workspace" }
+agent_scope_sandbox = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master", features = ["microsandbox"] }
+agent_scope_workspace = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 tokio = { version = "1", features = ["full"] }
 ```
 

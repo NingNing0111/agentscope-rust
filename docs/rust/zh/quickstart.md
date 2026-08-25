@@ -38,19 +38,19 @@ cargo run -p quickstart -- --prompt "你好，请用一句话介绍你自己。"
 
 ### 引入依赖
 
-在项目的 `Cargo.toml` 中加入所需 crate（各 crate 都是独立 package，可按需引入）：
+在项目的 `Cargo.toml` 中加入所需 crate（各 crate 都是独立 package，可按需引入）。外部项目请使用 GitHub git 依赖，不要复制仓库内部的 `path` 依赖：
 
 ```toml
 [dependencies]
-agent_scope_agent = { path = "crates/agent_scope_agent" }
-agent_scope_rig = { path = "crates/agent_scope_rig" }
-agent_scope_tool = { path = "crates/agent_scope_tool" }
-agent_scope_message = { path = "crates/agent_scope_message" }
-agent_scope_event = { path = "crates/agent_scope_event" }
+agent_scope_agent = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_rig = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_tool = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_message = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
+agent_scope_event = { git = "https://github.com/NingNing0111/agentscope-rust", branch = "master" }
 tokio = { version = "1", features = ["full"] }
 ```
 
-如果使用 `agentscope-rust` 仓库本身，可直接运行文档对应的示例 crate（见下文）。
+如果是在 `agentscope-rust` 仓库本身开发，可直接运行文档对应的示例 crate（见下文）。
 
 ### 配置凭据
 

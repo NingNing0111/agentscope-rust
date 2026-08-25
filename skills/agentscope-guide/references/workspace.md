@@ -1,6 +1,6 @@
 # 参考:工作空间与沙箱(`agent_scope_workspace` / `agent_scope_sandbox`)
 
-> 详细 API 参考:`LocalWorkspace`、`WorkspaceBase`、`WorkspaceManager`、`Skill` 管理、MCP 配置,以及 `LocalSandboxSession` 沙箱执行与路径安全。
+> 详细 API 参考:`LocalWorkspace`、`WorkspaceBase`、`WorkspaceManager`、内置 workspace 工具、Skill 管理、MCP 配置,以及 `LocalSandboxSession` / feature-gated `MicrosandboxSession` 沙箱执行与路径安全。
 
 ## 1. `WorkspaceBase` trait
 
@@ -48,7 +48,7 @@ let mut ws = LocalWorkspace::new(config);
 ws.initialize().await?;
 assert!(ws.is_alive());
 
-let tools = ws.list_tools().await?; // Bash、Read、Write、Edit、Glob、Grep
+let tools = ws.list_tools().await?; // Bash、Read、Write、Edit、Glob、Grep 等
 ws.close().await?;
 ```
 
@@ -56,12 +56,19 @@ ws.close().await?;
 
 | 工具 | 功能 |
 |------|------|
-| Bash | 执行 Shell 命令(超时 + 输出限制) |
-| Read | 读文件 |
-| Write | 写文件 |
-| Edit | 精确字符串替换 |
-| Glob | 文件模式匹配 |
-| Grep | 内容搜索 |
+| `Bash` / `bash` | 执行 Shell 命令;legacy timeout 用毫秒,pi `bash` timeout 用秒 |
+| `PowerShell` / `powershell` | Windows PowerShell 命令;非 Windows 返回 unsupported |
+| `Read` / `read` | 读 UTF-8 文件;记录 read-before-modify 状态 |
+| `Write` / `write` | 写文件;覆盖已有文件前要求已读 |
+| `Edit` / `edit` | 精确字符串替换;pi `edit` 支持批量 edits |
+| `Glob` | 文件模式匹配;结果按 mtime 倒序 |
+| `Grep` / `grep` | 内容搜索;支持 regex、上下文、glob/type filter |
+| `find` | pi-compatible 文件发现,基于 workspace backend listing |
+| `ls` | pi-compatible 目录列举 |
+| `ResetTools` | 切换 session 内激活的工具组 |
+| `Skill` | 读取可见 skill 内容 |
+
+这些工具都通过 `BuiltInToolContext` 访问 `WorkspaceBackend`,不会直接绕过 workspace 的路径 containment。`Read`/`Write`/`Edit` 共用 `WorkspaceToolSession` 里的 read-state,用于防止未读先改。
 
 ## 3. `WorkspaceManager`
 
@@ -92,12 +99,14 @@ use agent_scope_workspace::{LocalWorkspace, LocalWorkspaceConfig, WorkspaceBase}
 
 let config = LocalWorkspaceConfig {
     workdir: "/tmp/ws".into(),
+    workspace_id: None,
+    default_mcps: vec![],
     skill_paths: vec!["/path/to/skills".into()],
-    ..Default::default()
+    instructions: None,
 };
 let mut ws = LocalWorkspace::new(config);
 ws.initialize().await?;
-// 技能已自动加载,可通过 workspace 的 skill_manager 访问
+// 技能会在 initialize() 时 seed 到 workspace 的 skills 目录与索引。
 ```
 
 ## 5. Skill 工具化(tool 侧)
@@ -276,16 +285,22 @@ cargo run -p agent_scope_mcp --example mcp_excalidraw_debug
 #[async_trait]
 pub trait SandboxSession: Send + Sync {
     fn session_id(&self) -> &str;
-    fn state(&self) -> SandboxState;  // Created → Ready → Closing → Closed
+    fn state(&self) -> SandboxState;  // Created → Ready → Closing → Closed / Failed
     fn policy(&self) -> &SandboxPolicy;
 
     async fn initialize(&mut self) -> Result<(), SandboxError>;
     async fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, SandboxError>;
-    async fn read_file(&mut self, path: &str) -> Result<Vec<u8>, SandboxError>;
+    async fn read_file(&self, path: &str) -> Result<Vec<u8>, SandboxError>;
     async fn write_file(&mut self, path: &str, data: &[u8]) -> Result<(), SandboxError>;
-    async fn delete_file(&mut self, path: &str) -> Result<(), SandboxError>;
-    async fn get_capabilities(&self) -> CapabilityReport;
+    async fn delete_path(&mut self, path: &str) -> Result<(), SandboxError>;
+    async fn is_dir(&self, path: &str) -> Result<bool, SandboxError>;
+    async fn path_exists(&self, path: &str) -> Result<bool, SandboxError>;
+    async fn stat_mtime(&self, path: &str) -> Result<Option<f64>, SandboxError>;
+    async fn list_dir(&self, path: &str, recursive: bool) -> Result<Vec<String>, SandboxError>;
+    async fn history(&self) -> Result<Vec<ExecutionRecord>, SandboxError>;
+    async fn capability_report(&self) -> Result<CapabilityReport, SandboxError>;
     async fn close(&mut self) -> Result<(), SandboxError>;
+    async fn cleanup(&mut self) -> Result<(), SandboxError>;
 }
 ```
 
@@ -293,26 +308,40 @@ pub trait SandboxSession: Send + Sync {
 
 ```rust
 pub struct SandboxPolicy {
-    pub allow_unrestricted_filesystem: bool,
-    pub command_timeout_seconds: u32,   // 默认 30
-    pub max_output_bytes: usize,        // 默认 100KB
-    pub allow_network: bool,            // 当前不支持,显式报告
+    pub default_timeout: Duration,      // 默认 30s
+    pub max_timeout: Duration,          // 默认 300s
+    pub max_output_bytes: usize,        // 默认 1MiB
+    pub network: NetworkPolicy,         // Disabled / LoopbackOnly / Allowlist / Unrestricted
+    pub writable_roots: Vec<PathBuf>,
+    pub readonly_roots: Vec<PathBuf>,
+    pub keep_on_close: bool,
+    pub cpu_limit: Option<CpuLimit>,
+    pub memory_limit_bytes: Option<u64>,
+    pub process_limit: Option<u32>,
 }
 
 pub struct ExecutionRequest {
-    pub command: String,
-    pub args: Vec<String>,
+    pub argv: Vec<String>,
+    pub cwd: Option<PathBuf>,
     pub env: HashMap<String, String>,
-    pub working_dir: Option<String>,
+    pub timeout: Option<Duration>,
+    pub stdin: Option<Vec<u8>>,
 }
 
 pub struct ExecutionResult {
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
+    pub execution_id: String,
+    pub status: ExecutionStatus,
+    pub exit_code: Option<i32>,
+    pub stdout: OutputSummary,
+    pub stderr: OutputSummary,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
     pub duration: Duration,
+    pub resource_hits: Vec<ResourceLimitHit>,
 }
 ```
+
+`ExecutionRequest::new(["echo", "hello"])` 可快速构造 argv。`stdout`/`stderr` 是 `OutputSummary`,小输出内联,超限时可通过 `full_ref` 指向落盘文件。
 
 ## 9. `LocalSandboxSession` 使用
 
@@ -328,26 +357,43 @@ session.write_file("notes/result.txt", b"hello").await?;
 let data = session.read_file("notes/result.txt").await?;
 
 // 命令执行(带超时与输出限制)
-let result = session.execute(ExecutionRequest {
-    command: "echo".into(),
-    args: vec!["hello world".into()],
-    env: Default::default(),
-    working_dir: None,
-}).await?;
+let result = session.execute(ExecutionRequest::new(["echo", "hello world"])).await?;
 
 // 显式检查能力
-let caps = session.get_capabilities().await;
-assert!(!caps.network_isolation); // 本地参考实现无网络隔离
+let caps = session.capability_report().await?;
+assert_eq!(caps.backend_name, "local-process");
 
 session.close().await?;
 ```
 
-## 10. 路径安全
+`LocalSandboxSession` 是本地参考实现:Rust 文件 API 有路径 containment,命令执行是 host child process,不是 chroot/container/VM 级隔离。选择它时必须读 `capability_report()`。
+
+## 10. `MicrosandboxSession`(feature-gated)
+
+启用 `agent_scope_sandbox` 的 `microsandbox` feature 后可使用 `MicrosandboxSession`:
+
+```rust
+#[cfg(feature = "microsandbox")]
+use agent_scope_sandbox::{MicrosandboxConfig, MicrosandboxSession, SandboxSession};
+
+#[cfg(feature = "microsandbox")]
+let mut session = MicrosandboxSession::new(MicrosandboxConfig::default())?;
+```
+
+要点:
+
+- 需要独立安装/可用的 microsandbox runtime。
+- `CapabilityReport::microsandbox()` 为 L4,支持硬件隔离、guest filesystem、memory limit 等能力。
+- `NetworkPolicy::Disabled` / `Unrestricted` 可映射;`LoopbackOnly` / `Allowlist` 当前会返回 `UnsupportedFeature`,不会放宽成 unrestricted。
+- `cpu_limit.cpu_shares` 和 `process_limit` 当前也会拒绝,因为 SDK 暂无等价稳定映射。
+- `MSB_API_KEY` / `MSB_API_URL` 不会自动选择 cloud execution;云执行必须由未来显式配置选择。
+
+## 11. 路径安全
 
 `LocalSandboxSession` 对路径做规范化检查:
 
 - 拒绝绝对路径。
-- 拒绝含 `..` 的路径遍历(`SandboxError::PathTraversal`)。
+- 拒绝含 `..` 的路径遍历(通常返回 `SandboxError::PermissionDenied`)。
 - 拒绝指向工作目录外的符号链接。
 - 所有文件操作限定在 root_dir 范围内。
 
@@ -356,24 +402,24 @@ session.close().await?;
 session.read_file("notes/data.txt").await
 
 // ❌ 拒绝(路径遍历)
-session.read_file("../../etc/passwd").await  // → SandboxError::PathTraversal
+session.read_file("../../etc/passwd").await  // → SandboxError::PermissionDenied
 ```
 
-## 11. `CapabilityReport`(伪兼容对策)
+## 12. `CapabilityReport`
 
 ```rust
 pub struct CapabilityReport {
-    pub hard_isolation: bool,        // false — 无硬隔离
-    pub network_isolation: bool,     // false
-    pub resource_limits: bool,       // false
-    pub filesystem_isolation: bool,  // true — 路径遍历防护
-    pub sandbox_type: String,        // "local-reference"
+    pub backend_name: String,                  // "local-process" / "microsandbox"
+    pub compatibility_level: CompatibilityLevel, // L1..L4
+    pub supported: Vec<SandboxCapability>,
+    pub unsupported: Vec<UnsupportedCapability>,
+    pub known_deviations: Vec<String>,
 }
 ```
 
-原则:`LocalSandboxSession` 不假装拥有不能提供的能力(`network_isolation: false` 明确告知软隔离)。
+原则:后端不假装拥有不能提供的能力。`local-process` 会明确列出 network/cpu/memory/process/hard isolation 等 unsupported;`microsandbox` 会列出当前 SDK 无法精确映射的策略。
 
-## 12. 挂载点
+## 13. 挂载点
 
 ```rust
 use agent_scope_sandbox::SandboxMount;
@@ -387,7 +433,7 @@ let config = LocalSandboxConfig {
 };
 ```
 
-## 13. 错误
+## 14. 错误
 
 | 错误 | 触发条件 |
 |------|----------|
@@ -397,14 +443,19 @@ let config = LocalSandboxConfig {
 | `WorkspaceError::McpNotFound` | 无该名称的持久化 MCP 配置 |
 | `WorkspaceError::McpConnectionError` | MCP 传输层失败(派生/连接/断开) |
 | `WorkspaceError::McpCallError` | MCP 调用期间协议/对端错误 |
-| `SandboxError::PathTraversal` | 路径越界或符号链接逃逸 |
-| `SandboxError::Timeout` | 命令执行超时 |
-| `SandboxError::OutputLimitExceeded` | 输出超 `max_output_bytes` |
-| `SandboxError::PermissionDenied` | 违反 `SandboxPolicy` |
-| `SandboxError::SessionClosed` | 对已关闭 session 操作 |
+| `SandboxError::ValidationError` | 配置或请求非法 |
+| `SandboxError::LifecycleError` | 在错误生命周期状态调用操作 |
+| `SandboxError::PermissionDenied` | 路径越界、符号链接逃逸或违反策略 |
+| `SandboxError::TimeoutError` | 命令执行超时 |
+| `SandboxError::UnsupportedFeature` | 当前 backend 无法精确满足请求的 policy/capability |
+| `SandboxError::SandboxUnavailable` | microsandbox runtime 或 backend 不可用 |
+| `SandboxError::IoError` | 文件/进程 I/O 失败 |
+| `SandboxError::InternalError` | 未预期内部错误 |
 
-## 14. 不支持的能力
+输出超过 `max_output_bytes` 不一定是错误;`ExecutionResult.resource_hits` 会包含 `ResourceLimitHit::OutputTruncated`,完整输出可通过 `OutputSummary.full_ref` 读取。
+
+## 15. 当前边界
 
 - Workspace:`GatewayError` 为占位,沙箱↔工作空间网关集成待完善;远程工作空间后端不在范围。
-- Sandbox:硬隔离(Docker/VM)、网络隔离、资源限制(CPU/内存)均不支持并显式报告;`LocalSandboxSession` 是参考实现,非生产级沙箱。
+- Sandbox:`LocalSandboxSession` 是参考实现,非生产级沙箱;需要硬隔离时启用并配置 `MicrosandboxSession`,且仍需检查 `CapabilityReport` 与 `UnsupportedFeature`。
 - Skill:远程技能加载(URL 获取)、技能依赖、热重载均未实现。

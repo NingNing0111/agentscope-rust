@@ -48,6 +48,10 @@ fn should_skip_dir(name: &str) -> bool {
     matches!(name, ".git" | "node_modules")
 }
 
+fn normalize_relative_path(path: &str) -> String {
+    path.trim_start_matches(['/', '\\']).replace('\\', "/")
+}
+
 #[async_trait::async_trait]
 impl Tool for FindTool {
     fn name(&self) -> &str {
@@ -211,7 +215,7 @@ impl Tool for FindTool {
                 continue;
             }
             let rel_str = match entry.strip_prefix(self.ctx.workdir.as_str()) {
-                Some(rel) => rel.trim_start_matches('/').replace('\\', "/"),
+                Some(rel) => normalize_relative_path(rel),
                 None => continue,
             };
             if rel_str.is_empty() {
@@ -221,7 +225,7 @@ impl Tool for FindTool {
                 continue;
             }
             let base_rel_str = match entry.strip_prefix(base_dir.as_str()) {
-                Some(rel) => rel.trim_start_matches('/').replace('\\', "/"),
+                Some(rel) => normalize_relative_path(rel),
                 None => rel_str.clone(),
             };
             if glob_set.is_match(rel_str.as_str()) || glob_set.is_match(base_rel_str.as_str()) {
@@ -254,5 +258,16 @@ impl Tool for FindTool {
             output,
             ToolResultState::Success,
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_relative_path;
+
+    #[test]
+    fn normalize_relative_path_accepts_windows_separators() {
+        assert_eq!(normalize_relative_path("\\src\\a.rs"), "src/a.rs");
+        assert_eq!(normalize_relative_path("/src/a.rs"), "src/a.rs");
     }
 }

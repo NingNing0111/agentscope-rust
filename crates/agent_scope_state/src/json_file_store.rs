@@ -28,7 +28,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::agent_state::AgentState;
 use crate::session::{Session, SessionError, SessionImpl, SessionMeta, SessionStatus};
-use crate::session_store::SessionStore;
+use crate::session_store::{SessionStore, validate_session_id};
 
 // ---------------------------------------------------------------------------
 // SessionRecordFile — on-disk record (T004)
@@ -52,30 +52,6 @@ pub struct SessionRecordFile {
     #[serde(default = "default_utc_now")]
     pub last_active: DateTime<Utc>,
     pub state: AgentState,
-}
-
-// ---------------------------------------------------------------------------
-// Session-id validation (T005)
-// ---------------------------------------------------------------------------
-
-/// Validate a session id as a safe file-name component.
-///
-/// Rejects empty ids and ids containing path separators (`/`, `\`) or `.`,
-/// which could otherwise enable path traversal or overwriting unrelated files.
-fn validate_session_id(id: &str) -> Result<(), SessionError> {
-    if id.is_empty() {
-        return Err(SessionError::StorageError {
-            session_id: id.to_string(),
-            reason: "session id must not be empty".to_string(),
-        });
-    }
-    if id.contains('/') || id.contains('\\') || id.contains('.') {
-        return Err(SessionError::StorageError {
-            session_id: id.to_string(),
-            reason: "session id contains an invalid character (path separator or '.')".to_string(),
-        });
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

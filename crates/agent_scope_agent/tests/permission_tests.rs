@@ -78,6 +78,43 @@ fn agent_with_permission(rule: PermissionRule, calls: Arc<AtomicUsize>) -> ReAct
     )
 }
 
+fn agent_with_tool_and_context(
+    tool_name: &str,
+    permission_context: PermissionContext,
+    calls: Arc<AtomicUsize>,
+) -> ReActAgent {
+    let model = Arc::new(ScriptedModel::new(
+        "scripted",
+        vec![
+            ScriptedResponse::ToolCall {
+                id: "tc1".into(),
+                name: tool_name.into(),
+                input: r#"{"cmd":"demo"}"#.into(),
+            },
+            ScriptedResponse::Text("done".into()),
+        ],
+    ));
+
+    let mut toolkit = ToolKit::new();
+    toolkit.register(counted_tool(tool_name, calls));
+
+    let config = AgentConfig::builder()
+        .name("agent")
+        .model(model)
+        .toolkit(toolkit)
+        .permission_context(permission_context)
+        .build()
+        .unwrap();
+
+    ReActAgent::new(
+        config,
+        ReActConfig::default(),
+        ContextConfig::default(),
+        vec![],
+    )
+    .unwrap()
+}
+
 #[tokio::test]
 async fn deny_rule_blocks_tool_execution_in_streaming_reply() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -280,6 +317,201 @@ async fn ask_rule_streaming_emits_confirmation_and_pauses_without_internal_wait(
             .any(|event| matches!(event, AgentEvent::ReplyEnd(_))),
         "暂停时不应有 ReplyEnd"
     );
+}
+
+#[tokio::test]
+async fn allow_rule_matches_bash_exact_tool_name() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut permission_context = PermissionContext::default();
+    permission_context.add_rule(PermissionRule::allow("Bash"));
+    let agent = agent_with_tool_and_context("Bash", permission_context, Arc::clone(&calls));
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "Bash allow rule 应执行工具"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::RequireUserConfirm(_))),
+        "Bash allow rule 不应触发确认"
+    );
+}
+
+#[tokio::test]
+async fn ask_rule_takes_precedence_over_allow_rule_for_same_tool() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut permission_context = PermissionContext::default();
+    permission_context.add_rule(PermissionRule::allow("Bash"));
+    permission_context.add_rule(PermissionRule::ask("Bash"));
+    let agent = agent_with_tool_and_context("Bash", permission_context, Arc::clone(&calls));
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "ask 优先于 allow 时工具不得执行"
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::RequireUserConfirm(confirm)
+            if confirm.tool_calls.len() == 1 && confirm.tool_calls[0].name == "Bash"
+    )));
+}
+
+#[tokio::test]
+async fn deny_rule_for_legacy_bash_blocks_lowercase_alias() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut permission_context = PermissionContext::default();
+    permission_context.add_rule(PermissionRule::deny("Bash"));
+    let agent = agent_with_tool_and_context("bash", permission_context, Arc::clone(&calls));
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "bash alias must be denied");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolResultEnd(end) if end.state == ToolResultState::Denied
+    )));
+}
+
+#[tokio::test]
+async fn deny_rule_for_lowercase_bash_blocks_legacy_alias() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut permission_context = PermissionContext::default();
+    permission_context.add_rule(PermissionRule::deny("bash"));
+    let agent = agent_with_tool_and_context("Bash", permission_context, Arc::clone(&calls));
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "Bash alias must be denied");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolResultEnd(end) if end.state == ToolResultState::Denied
+    )));
+}
+
+#[tokio::test]
+async fn ask_rule_for_legacy_bash_covers_lowercase_alias() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut permission_context = PermissionContext::default();
+    permission_context.add_rule(PermissionRule::ask("Bash"));
+    let agent = agent_with_tool_and_context("bash", permission_context, Arc::clone(&calls));
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "bash must pause for confirmation"
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::RequireUserConfirm(confirm)
+            if confirm.tool_calls.len() == 1 && confirm.tool_calls[0].name == "bash"
+    )));
+}
+
+#[tokio::test]
+async fn ask_rule_for_lowercase_alias_takes_precedence_over_legacy_allow_rule() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut permission_context = PermissionContext::default();
+    permission_context.add_rule(PermissionRule::allow("Bash"));
+    permission_context.add_rule(PermissionRule::ask("bash"));
+    let agent = agent_with_tool_and_context("Bash", permission_context, Arc::clone(&calls));
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "alias ask must shadow allow"
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::RequireUserConfirm(confirm)
+            if confirm.tool_calls.len() == 1 && confirm.tool_calls[0].name == "Bash"
+    )));
+}
+
+#[tokio::test]
+async fn powershell_permission_rules_cover_lowercase_alias() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut permission_context = PermissionContext::default();
+    permission_context.add_rule(PermissionRule::deny("PowerShell"));
+    let agent = agent_with_tool_and_context("powershell", permission_context, Arc::clone(&calls));
+
+    let mut stream = agent
+        .reply_stream(Some(vec![user_msg("user", "run it").unwrap()]))
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event);
+    }
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "PowerShell alias must be denied"
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolResultEnd(end) if end.state == ToolResultState::Denied
+    )));
 }
 
 #[tokio::test]

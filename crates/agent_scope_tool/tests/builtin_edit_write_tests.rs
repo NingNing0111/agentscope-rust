@@ -200,3 +200,159 @@ async fn edit_pattern_not_found_rejected() {
     assert_eq!(state_of(&block), ToolResultState::Error);
     assert!(text_of(&block).contains("pattern_not_found"));
 }
+
+#[tokio::test]
+async fn pi_read_records_state_for_pi_edit_and_write() {
+    let h = ctx_in(&[]);
+    let file = write_ws_file(&h, "a.txt", "hello old\n");
+
+    let read = ReadTool::new_pi(h.ctx.clone());
+    let read_block = match read
+        .call(serde_json::json!({ "path": file }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+    assert_eq!(read_block.name, "read");
+    assert_eq!(state_of(&read_block), ToolResultState::Success);
+
+    let edit = EditTool::new_pi(h.ctx.clone());
+    let edit_block = match edit
+        .call(serde_json::json!({
+            "path": file,
+            "edits": [{ "oldText": "old", "newText": "new" }]
+        }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+    assert_eq!(edit_block.name, "edit");
+    assert_eq!(state_of(&edit_block), ToolResultState::Success);
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&file)).unwrap(),
+        "hello new\n"
+    );
+
+    let write = WriteTool::new_pi(h.ctx.clone());
+    let write_block = match write
+        .call(serde_json::json!({ "path": file, "content": "replacement\n" }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+    assert_eq!(write_block.name, "write");
+    assert_eq!(state_of(&write_block), ToolResultState::Success);
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&file)).unwrap(),
+        "replacement\n"
+    );
+}
+
+#[tokio::test]
+async fn pi_edit_and_write_require_prior_read_for_existing_files() {
+    let h = ctx_in(&[]);
+    let file = write_ws_file(&h, "a.txt", "old\n");
+
+    let edit = EditTool::new_pi(h.ctx.clone());
+    let edit_block = match edit
+        .call(serde_json::json!({
+            "path": file,
+            "edits": [{ "oldText": "old", "newText": "new" }]
+        }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+    assert_eq!(edit_block.name, "edit");
+    assert_eq!(state_of(&edit_block), ToolResultState::Error);
+    assert!(text_of(&edit_block).contains("read_before_modify_required"));
+
+    let write = WriteTool::new_pi(h.ctx.clone());
+    let write_block = match write
+        .call(serde_json::json!({ "path": file, "content": "new\n" }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+    assert_eq!(write_block.name, "write");
+    assert_eq!(state_of(&write_block), ToolResultState::Error);
+    assert!(text_of(&write_block).contains("read_before_modify_required"));
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&file)).unwrap(),
+        "old\n"
+    );
+}
+
+#[tokio::test]
+async fn pi_edit_batch_is_atomic_on_missing_pattern() {
+    let h = ctx_in(&[]);
+    let file = write_ws_file(&h, "a.txt", "one two\n");
+    ReadTool::new_pi(h.ctx.clone())
+        .call(serde_json::json!({ "path": file }))
+        .await
+        .unwrap();
+
+    let edit = EditTool::new_pi(h.ctx.clone());
+    let block = match edit
+        .call(serde_json::json!({
+            "path": file,
+            "edits": [
+                { "oldText": "one", "newText": "ONE" },
+                { "oldText": "missing", "newText": "MISSING" }
+            ]
+        }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+
+    assert_eq!(block.name, "edit");
+    assert_eq!(state_of(&block), ToolResultState::Error);
+    assert!(text_of(&block).contains("pattern_not_found"));
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&file)).unwrap(),
+        "one two\n"
+    );
+}
+
+#[tokio::test]
+async fn pi_edit_rejects_too_many_replacements() {
+    let h = ctx_in(&[]);
+    let file = write_ws_file(&h, "a.txt", "target\n");
+    ReadTool::new_pi(h.ctx.clone())
+        .call(serde_json::json!({ "path": file }))
+        .await
+        .unwrap();
+
+    let edits: Vec<_> = (0..101)
+        .map(|idx| serde_json::json!({ "oldText": format!("target{idx}"), "newText": "x" }))
+        .collect();
+    let block = match EditTool::new_pi(h.ctx.clone())
+        .call(serde_json::json!({ "path": file, "edits": edits }))
+        .await
+        .unwrap()
+    {
+        agent_scope_tool::ToolExecOutput::Complete(b) => b,
+        _ => panic!("expected Complete"),
+    };
+
+    assert_eq!(block.name, "edit");
+    assert_eq!(state_of(&block), ToolResultState::Error);
+    assert!(text_of(&block).contains("at most 100 items"));
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&file)).unwrap(),
+        "target\n"
+    );
+}

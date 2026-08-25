@@ -10,7 +10,6 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
-use uuid::Uuid;
 
 use crate::capability::CapabilityReport;
 use crate::error::{SandboxError, SandboxResult};
@@ -68,7 +67,7 @@ impl LocalSandboxSession {
         config.policy.validate()?;
         let session_id = config
             .session_id
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+            .unwrap_or_else(|| agent_scope_utils::id::generate_uuid());
         if session_id.is_empty() {
             return Err(SandboxError::ValidationError {
                 message: "session_id must not be empty".into(),
@@ -319,7 +318,7 @@ impl SandboxSession for LocalSandboxSession {
         } else {
             self.workdir.clone()
         };
-        let execution_id = Uuid::new_v4().to_string();
+        let execution_id = agent_scope_utils::id::generate_uuid();
         let started_at = Utc::now();
         let started = Instant::now();
         let mut cmd = Command::new(&request.argv[0]);
@@ -587,6 +586,15 @@ impl SandboxSession for LocalSandboxSession {
         self.guard("is_dir")?;
         match self.resolver()?.resolve(path, None, true, "is_dir") {
             Ok(p) => Ok(p.is_dir()),
+            Err(SandboxError::IoError { .. }) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn path_exists(&self, path: &str) -> SandboxResult<bool> {
+        self.guard("path_exists")?;
+        match self.resolver()?.resolve(path, None, true, "path_exists") {
+            Ok(p) => Ok(p.exists()),
             Err(SandboxError::IoError { .. }) => Ok(false),
             Err(e) => Err(e),
         }

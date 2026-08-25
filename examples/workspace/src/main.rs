@@ -3,10 +3,13 @@
 //!
 //! A workspace scopes filesystem and command operations to a controlled working
 //! directory. When it is attached to an agent, the agent automatically receives
-//! built-in tools such as Bash, Read, Write, Edit, Grep, Glob, ResetTools, and
-//! Skill. This demo installs a read-only permission context so only
-//! Read/Glob/Grep can run without confirmation. It creates a temporary project
-//! file and asks the agent to read it through the injected `Read` tool.
+//! built-in tools. The injected set includes the legacy PascalCase names (Bash,
+//! Read, Write, Edit, Grep, Glob, ResetTools, Skill) and pi-compatible lowercase
+//! names (bash, read, edit, write, grep, find, ls; plus PowerShell/powershell on
+//! Windows). This demo installs a read-only permission context so only
+//! Read/Glob/Grep and read-only lowercase discovery tools can run without
+//! confirmation. It creates a temporary project file and asks the agent to read
+//! it through the injected `Read` tool.
 
 use std::sync::Arc;
 
@@ -75,14 +78,19 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // 2. Bind the workspace to an agent. ReActAgent construction injects the
-    // workspace built-ins into the agent's ToolKit. Explore mode denies every
-    // unclassified tool call, so arbitrary prompts cannot run Bash/Write/Edit;
-    // this demo only allows read-only workspace tools.
+    // legacy PascalCase tools and pi-compatible lowercase tools into the
+    // agent's ToolKit. Explore mode denies every unclassified tool call, so
+    // arbitrary prompts cannot run Bash/Write/Edit; this demo only allows
+    // read-only workspace tools.
     let ws: Arc<dyn WorkspaceBase> = Arc::new(ws);
     let mut perm = PermissionContext::new(PermissionMode::Explore);
     perm.add_rule(PermissionRule::allow("Read"));
     perm.add_rule(PermissionRule::allow("Glob"));
     perm.add_rule(PermissionRule::allow("Grep"));
+    perm.add_rule(PermissionRule::allow("read"));
+    perm.add_rule(PermissionRule::allow("grep"));
+    perm.add_rule(PermissionRule::allow("find"));
+    perm.add_rule(PermissionRule::allow("ls"));
 
     let agent_config = AgentConfig::builder()
         .name("workspace-demo")

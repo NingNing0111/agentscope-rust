@@ -3,6 +3,8 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use agent_scope_utils::path::has_parent_component;
+
 use crate::error::WorkspaceError;
 
 /// Upper bound on the bytes read from a shell command's stdout/stderr, so an
@@ -126,7 +128,7 @@ impl ContainedBackend {
     /// Internal implementation.
     fn contain_path(&self, path: &str, must_exist: bool) -> Result<String, WorkspaceError> {
         // 1. Reject paths with `..` components before any resolution
-        if path_has_parent_component(path) {
+        if has_parent_component(path) {
             return Err(WorkspaceError::PathTraversal {
                 path: path.to_string(),
             });
@@ -224,12 +226,6 @@ impl ContainedBackend {
             Ok(result.to_string_lossy().to_string())
         }
     }
-}
-
-fn path_has_parent_component(path: &str) -> bool {
-    Path::new(path)
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
 }
 
 #[async_trait::async_trait]

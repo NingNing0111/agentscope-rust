@@ -5,9 +5,12 @@
 
 use std::path::Path;
 
-use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_message::ToolResultState;
+#[cfg(test)]
+use agent_scope_message::{ToolOutput, ToolResultBlock};
 use serde_json::Value as JsonValue;
 
+use crate::make_text_result as make_result;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 use super::{BuiltInToolContext, ToolErrorCategory};
@@ -19,62 +22,101 @@ use super::{BuiltInToolContext, ToolErrorCategory};
 /// session (via the `Read` tool), otherwise the write is rejected.
 pub struct WriteTool {
     ctx: BuiltInToolContext,
+    mode: WriteToolMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriteToolMode {
+    Legacy,
+    Pi,
 }
 
 impl WriteTool {
     /// Create a new [`WriteTool`] bound to a workspace context.
     #[must_use]
     pub fn new(ctx: BuiltInToolContext) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            mode: WriteToolMode::Legacy,
+        }
     }
-}
 
-/// Build a complete one-shot [`ToolResultBlock`].
-fn make_result(name: &str, text: String, state: ToolResultState) -> ToolResultBlock {
-    ToolResultBlock {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: name.to_string(),
-        output: ToolOutput::Text(text),
-        state,
-        metadata: std::collections::HashMap::new(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        finished_at: Some(chrono::Utc::now().to_rfc3339()),
-        is_last: true,
+    /// Create a pi-compatible lowercase `write` tool.
+    #[must_use]
+    pub fn new_pi(ctx: BuiltInToolContext) -> Self {
+        Self {
+            ctx,
+            mode: WriteToolMode::Pi,
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl Tool for WriteTool {
     fn name(&self) -> &str {
-        "Write"
+        match self.mode {
+            WriteToolMode::Legacy => "Write",
+            WriteToolMode::Pi => "write",
+        }
     }
 
     fn description(&self) -> &str {
-        "Writes a file to the local filesystem.\n\
-         \n\
-         Usage:\n\
-         - This tool will overwrite the existing file if there is one at the provided path.\n\
-         - If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.\n\
-         - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n\
-         - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.\n\
-         - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."
+        match self.mode {
+            WriteToolMode::Legacy => {
+                "Writes a file to the local filesystem.\n\
+                 \n\
+                 Usage:\n\
+                 - This tool will overwrite the existing file if there is one at the provided path.\n\
+                 - If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.\n\
+                 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n\
+                 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.\n\
+                 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."
+            }
+            WriteToolMode::Pi => {
+                "Writes UTF-8 text content to a file in the workspace. Use `path` and `content`. If the file already exists, it must have been read first with `read`; prefer `edit` for changes to existing files."
+            }
+        }
     }
 
     fn input_schema(&self) -> JsonValue {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "The absolute path to the file to write (must be absolute, not relative)"
+        match self.mode {
+            WriteToolMode::Legacy => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The absolute path to the file to write (must be absolute, not relative)"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write to the file"
+                    }
                 },
-                "content": {
-                    "type": "string",
-                    "description": "The content to write to the file"
-                }
-            },
-            "required": ["file_path", "content"]
-        })
+                "required": ["file_path", "content"]
+            }),
+            WriteToolMode::Pi => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "The path to the file to write."
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Compatibility alias for path."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write to the file."
+                    }
+                },
+                "required": ["content"],
+                "anyOf": [
+                    { "required": ["path"] },
+                    { "required": ["file_path"] }
+                ]
+            }),
+        }
     }
 
     fn is_read_only(&self) -> bool {
@@ -87,13 +129,22 @@ impl Tool for WriteTool {
 
     async fn call(&self, input: JsonValue) -> Result<ToolExecOutput, ToolError> {
         // Extract required parameters.
-        let file_path = match input.get("file_path").and_then(JsonValue::as_str) {
+        let path_key = if self.mode == WriteToolMode::Pi {
+            "path"
+        } else {
+            "file_path"
+        };
+        let file_path = match input
+            .get(path_key)
+            .or_else(|| input.get("file_path"))
+            .and_then(JsonValue::as_str)
+        {
             Some(s) => s.to_string(),
             None => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Write",
+                    self.name(),
                     format!(
-                        "Error: {}: invalid_arguments: missing required 'file_path' parameter",
+                        "Error: {}: invalid_arguments: missing required '{path_key}' parameter",
                         ToolErrorCategory::ValidationFailure.as_str()
                     ),
                     ToolResultState::Error,
@@ -104,7 +155,7 @@ impl Tool for WriteTool {
             Some(s) => s.to_string(),
             None => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Write",
+                    self.name(),
                     format!(
                         "Error: {}: invalid_arguments: missing required 'content' parameter",
                         ToolErrorCategory::ValidationFailure.as_str()
@@ -119,7 +170,7 @@ impl Tool for WriteTool {
             Ok(p) => p,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Write",
+                    self.name(),
                     format!(
                         "Error: {}: path_outside_workspace: {e}",
                         ToolErrorCategory::PermissionDenied.as_str()
@@ -135,7 +186,7 @@ impl Tool for WriteTool {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Write",
+                    self.name(),
                     format!(
                         "Error: {}: execution: failed to check existence: {e}",
                         ToolErrorCategory::ExecutionFailure.as_str()
@@ -151,7 +202,7 @@ impl Tool for WriteTool {
             };
             if !is_read {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "Write",
+                    self.name(),
                     format!(
                         "Error: {}: read_before_modify_required: File {file_path} exists but has not been read yet. You must read the file first before writing to it.",
                         ToolErrorCategory::PermissionDenied.as_str()
@@ -164,7 +215,7 @@ impl Tool for WriteTool {
         // Write the content (the backend creates parent directories).
         if let Err(e) = self.ctx.backend.write_file(&path, content.as_bytes()).await {
             return Ok(ToolExecOutput::Complete(make_result(
-                "Write",
+                self.name(),
                 format!(
                     "Error: {}: execution: Error writing file: {e}",
                     ToolErrorCategory::ExecutionFailure.as_str()
@@ -177,7 +228,7 @@ impl Tool for WriteTool {
         let line_count = content.split('\n').count();
 
         Ok(ToolExecOutput::Complete(make_result(
-            "Write",
+            self.name(),
             format!("The file {file_path} has been written successfully ({line_count} lines)."),
             ToolResultState::Success,
         )))

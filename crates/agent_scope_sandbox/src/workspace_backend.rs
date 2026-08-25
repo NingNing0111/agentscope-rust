@@ -74,8 +74,13 @@ impl SandboxWorkspaceBackend {
 }
 
 fn sandbox_to_workspace(err: SandboxError) -> WorkspaceError {
-    WorkspaceError::GatewayError {
-        message: format!("{}: {err}", err.category()),
+    match err {
+        SandboxError::PermissionDenied { path, operation } => WorkspaceError::PathTraversal {
+            path: path.unwrap_or(operation),
+        },
+        err => WorkspaceError::GatewayError {
+            message: format!("{}: {err}", err.category()),
+        },
     }
 }
 
@@ -150,15 +155,12 @@ impl WorkspaceBackend for SandboxWorkspaceBackend {
     }
 
     async fn file_exists(&self, path: &str) -> Result<bool, WorkspaceError> {
-        // Use `stat_mtime` (a metadata call) rather than `read_file`: reading
-        // the whole file into memory just to test existence is wasteful, and a
-        // directory path would fail the read with EISDIR and be misreported as
-        // non-existent (audit S6).
-        match self.session.lock().await.stat_mtime(path).await {
-            Ok(Some(_)) => Ok(true),
-            Ok(None) => Ok(false),
-            Err(e) => Err(sandbox_to_workspace(e)),
-        }
+        self.session
+            .lock()
+            .await
+            .path_exists(path)
+            .await
+            .map_err(sandbox_to_workspace)
     }
 
     fn join_path(&self, a: &str, b: &str) -> String {

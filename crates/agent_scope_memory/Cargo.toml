@@ -18,7 +18,6 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["fs", "sync", "rt", "macros"] }
 tracing.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

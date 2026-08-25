@@ -10,6 +10,7 @@ description = "MCP (Model Context Protocol) client integration for AgentScope: r
 agent_scope_message = { path = "../agent_scope_message" }
 agent_scope_tool = { path = "../agent_scope_tool" }
 agent_scope_workspace = { path = "../agent_scope_workspace" }
+agent_scope_utils = { path = "../agent_scope_utils" }
 
 async-trait.workspace = true
 chrono.workspace = true
@@ -23,7 +24,6 @@ rmcp = { workspace = true, features = [
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 # In-process integration tests need the server + macros features (the

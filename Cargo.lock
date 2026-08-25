@@ -60,6 +60,7 @@ dependencies = [
  "agent_scope_state",
  "agent_scope_tool",
  "agent_scope_types",
+ "agent_scope_utils",
  "agent_scope_workspace",
  "async-stream",
  "async-trait",
@@ -74,7 +75,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -96,12 +96,12 @@ version = "0.1.0"
 dependencies = [
  "agent_scope_message",
  "agent_scope_types",
+ "agent_scope_utils",
  "base64 0.22.1",
  "chrono",
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -110,6 +110,7 @@ version = "0.1.0"
 dependencies = [
  "agent_scope_message",
  "agent_scope_tool",
+ "agent_scope_utils",
  "agent_scope_workspace",
  "async-trait",
  "chrono",
@@ -121,7 +122,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -141,7 +141,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -150,12 +149,12 @@ version = "0.1.0"
 dependencies = [
  "agent_scope_event",
  "agent_scope_types",
+ "agent_scope_utils",
  "base64 0.22.1",
  "chrono",
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -174,7 +173,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -188,6 +186,7 @@ dependencies = [
  "agent_scope_model",
  "agent_scope_tool",
  "agent_scope_types",
+ "agent_scope_utils",
  "async-trait",
  "futures",
  "serde",
@@ -195,7 +194,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "turbovec",
- "uuid",
  "xberg",
 ]
 
@@ -229,6 +227,7 @@ dependencies = [
 name = "agent_scope_sandbox"
 version = "0.1.0"
 dependencies = [
+ "agent_scope_utils",
  "agent_scope_workspace",
  "async-trait",
  "chrono",
@@ -240,7 +239,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -250,15 +248,16 @@ dependencies = [
  "agent_scope_event",
  "agent_scope_message",
  "agent_scope_types",
+ "agent_scope_utils",
  "async-trait",
  "chrono",
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sqlx",
  "tempfile",
  "tokio",
  "tokio-util",
- "uuid",
 ]
 
 [[package]]
@@ -282,7 +281,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
- "uuid",
  "walkdir",
 ]
 
@@ -294,7 +292,6 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -326,7 +323,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -6507,6 +6503,25 @@ dependencies = [
  "which",
  "windows-sys 0.61.2",
  "zeroize",
+]
+
+[[package]]
+name = "microsandbox-agent-cli"
+version = "0.1.0"
+dependencies = [
+ "agent_scope_agent",
+ "agent_scope_event",
+ "agent_scope_message",
+ "agent_scope_rig",
+ "agent_scope_sandbox",
+ "agent_scope_workspace",
+ "anyhow",
+ "async-trait",
+ "clap",
+ "dotenv",
+ "futures",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

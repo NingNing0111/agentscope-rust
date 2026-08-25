@@ -155,7 +155,7 @@ impl Tool for McpTool {
         };
 
         let block = ToolResultBlock {
-            id: uuid::Uuid::new_v4().as_simple().to_string(),
+            id: agent_scope_utils::id::generate_id(),
             name: self.display_name.clone(),
             output: ToolOutput::Text(output),
             state,

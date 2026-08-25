@@ -7,9 +7,15 @@
 //! Availability: Windows-only (FR-017). On non-Windows hosts the tool returns
 //! an `UnsupportedCapability` error instead of silently degrading (Art.5).
 
-use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_message::ToolResultState;
+#[cfg(test)]
+use agent_scope_message::{ToolOutput, ToolResultBlock};
+use agent_scope_utils::command::{
+    TimeoutUnit, command_timeout, format_command_output, truncate_chars,
+};
 use serde_json::Value as JsonValue;
 
+use crate::make_text_result as make_result;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 use super::{BuiltInToolContext, ToolErrorCategory};
@@ -35,13 +41,39 @@ const SHELL_CANDIDATES: [&str; 2] = ["pwsh", "powershell.exe"];
 /// `-EncodedCommand` indirection is unnecessary here).
 pub struct PowerShellTool {
     ctx: BuiltInToolContext,
+    mode: PowerShellToolMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PowerShellToolMode {
+    Legacy,
+    Pi,
 }
 
 impl PowerShellTool {
     /// Create a new [`PowerShellTool`] bound to a workspace context.
     #[must_use]
     pub fn new(ctx: BuiltInToolContext) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            mode: PowerShellToolMode::Legacy,
+        }
+    }
+
+    /// Create a pi-compatible lowercase `powershell` tool.
+    #[must_use]
+    pub fn new_pi(ctx: BuiltInToolContext) -> Self {
+        Self {
+            ctx,
+            mode: PowerShellToolMode::Pi,
+        }
+    }
+
+    fn timeout_unit(&self) -> TimeoutUnit {
+        match self.mode {
+            PowerShellToolMode::Legacy => TimeoutUnit::Milliseconds,
+            PowerShellToolMode::Pi => TimeoutUnit::Seconds,
+        }
     }
 
     /// Probe for an available PowerShell executable via the backend.
@@ -75,99 +107,84 @@ impl PowerShellTool {
     }
 }
 
-/// Build a complete one-shot [`ToolResultBlock`].
-fn make_result(name: &str, text: String, state: ToolResultState) -> ToolResultBlock {
-    ToolResultBlock {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: name.to_string(),
-        output: ToolOutput::Text(text),
-        state,
-        metadata: std::collections::HashMap::new(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        finished_at: Some(chrono::Utc::now().to_rfc3339()),
-        is_last: true,
-    }
-}
-
-/// Clamp a user-supplied timeout (ms) into `[0, MAX_TIMEOUT_MS]`, defaulting
-/// to [`DEFAULT_TIMEOUT_MS`] when absent.
-fn clamp_timeout_ms(timeout: Option<i64>) -> i64 {
-    timeout
-        .unwrap_or(DEFAULT_TIMEOUT_MS)
-        .clamp(0, MAX_TIMEOUT_MS)
-}
-
-/// Decode stdout/stderr as UTF-8 (lossy), normalize CRLF, merge (stderr
-/// appended when non-empty), and truncate to [`MAX_OUTPUT_CHARS`] characters.
-fn format_output(stdout: &[u8], stderr: &[u8]) -> String {
-    let stdout = String::from_utf8_lossy(stdout).replace("\r\n", "\n");
-    let stderr = String::from_utf8_lossy(stderr).replace("\r\n", "\n");
-    let mut output = stdout;
-    if !stderr.is_empty() {
-        if !output.is_empty() {
-            output.push('\n');
-        }
-        output.push_str(&stderr);
-    }
-    truncate_output(output)
-}
-
-/// Truncate `text` to [`MAX_OUTPUT_CHARS`] characters, appending the Python
-/// `... (output truncated)` marker.
-fn truncate_output(text: String) -> String {
-    if text.chars().count() > MAX_OUTPUT_CHARS {
-        let truncated: String = text.chars().take(MAX_OUTPUT_CHARS).collect();
-        format!("{truncated}\n... (output truncated)")
-    } else {
-        text
-    }
-}
-
 #[async_trait::async_trait]
 impl Tool for PowerShellTool {
     fn name(&self) -> &str {
-        "PowerShell"
+        match self.mode {
+            PowerShellToolMode::Legacy => "PowerShell",
+            PowerShellToolMode::Pi => "powershell",
+        }
     }
 
     fn description(&self) -> &str {
-        "Executes a PowerShell command and returns its output.\n\
-         \n\
-         Each command starts in the configured working directory, but PowerShell session state does not persist between commands. Commands run without loading the user's PowerShell profile.\n\
-         \n\
-         IMPORTANT: Avoid using this tool for filesystem operations when a dedicated tool can accomplish the task. Prefer the dedicated tools because their calls are easier for the user to review and authorize:\n\
-         \n\
-         - File search: Use Glob (NOT Get-ChildItem)\n\
-         - Content search: Use Grep (NOT Select-String)\n\
-         - Read files: Use Read (NOT Get-Content)\n\
-         - Edit files: Use Edit\n\
-         - Write files: Use Write (NOT Set-Content or Out-File)\n\
-         - Communication: Output text directly (NOT Write-Output)\n\
-         \n\
-         You may specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). The default timeout is 120000ms (2 minutes)."
+        match self.mode {
+            PowerShellToolMode::Legacy => {
+                "Executes a PowerShell command and returns its output.\n\
+                 \n\
+                 Each command starts in the configured working directory, but PowerShell session state does not persist between commands. Commands run without loading the user's PowerShell profile.\n\
+                 \n\
+                 IMPORTANT: Avoid using this tool for filesystem operations when a dedicated tool can accomplish the task. Prefer the dedicated tools because their calls are easier for the user to review and authorize:\n\
+                 \n\
+                 - File search: Use Glob (NOT Get-ChildItem)\n\
+                 - Content search: Use Grep (NOT Select-String)\n\
+                 - Read files: Use Read (NOT Get-Content)\n\
+                 - Edit files: Use Edit\n\
+                 - Write files: Use Write (NOT Set-Content or Out-File)\n\
+                 - Communication: Output text directly (NOT Write-Output)\n\
+                 \n\
+                 You may specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). The default timeout is 120000ms (2 minutes)."
+            }
+            PowerShellToolMode::Pi => {
+                "Executes a PowerShell command in the workspace and returns its output. Prefer dedicated tools for filesystem work: `find`/`ls` for discovery, `grep` for content search, `read` for reading files, `edit` for changes, and `write` for new files. The optional timeout is in seconds (default: 120, max: 600)."
+            }
+        }
     }
 
     fn input_schema(&self) -> JsonValue {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The PowerShell command to execute."
+        match self.mode {
+            PowerShellToolMode::Legacy => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The PowerShell command to execute."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Clear, concise description of what this command does."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in milliseconds (default: 120000, max: 600000)",
+                        "default": 120000,
+                        "maximum": 600000,
+                        "minimum": 0
+                    }
                 },
-                "description": {
-                    "type": "string",
-                    "description": "Clear, concise description of what this command does."
+                "required": ["command"]
+            }),
+            PowerShellToolMode::Pi => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The PowerShell command to execute."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Clear, concise description of what this command does."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in seconds (default: 120, max: 600)",
+                        "default": 120,
+                        "maximum": 600,
+                        "minimum": 0
+                    }
                 },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Optional timeout in milliseconds (default: 120000, max: 600000)",
-                    "default": 120000,
-                    "maximum": 600000,
-                    "minimum": 0
-                }
-            },
-            "required": ["command"]
-        })
+                "required": ["command"]
+            }),
+        }
     }
 
     fn is_read_only(&self) -> bool {
@@ -184,7 +201,7 @@ impl Tool for PowerShellTool {
         // instead of degrading silently.
         if std::env::consts::OS != "windows" {
             return Ok(ToolExecOutput::Complete(make_result(
-                "PowerShell",
+                self.name(),
                 format!(
                     "Error: {}: unsupported_capability: PowerShell is only available on Windows",
                     ToolErrorCategory::UnsupportedCapability.as_str()
@@ -198,7 +215,7 @@ impl Tool for PowerShellTool {
             Some(s) if !s.is_empty() => s.to_string(),
             Some(_) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "PowerShell",
+                    self.name(),
                     format!(
                         "Error: {}: invalid_arguments: command must not be empty",
                         ToolErrorCategory::ValidationFailure.as_str()
@@ -208,7 +225,7 @@ impl Tool for PowerShellTool {
             }
             None => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "PowerShell",
+                    self.name(),
                     format!(
                         "Error: {}: invalid_arguments: missing required 'command' parameter",
                         ToolErrorCategory::ValidationFailure.as_str()
@@ -218,9 +235,12 @@ impl Tool for PowerShellTool {
             }
         };
 
-        // Clamp timeout to the max window and convert milliseconds to seconds.
-        let timeout_ms = clamp_timeout_ms(input.get("timeout").and_then(JsonValue::as_i64));
-        let timeout_secs = timeout_ms as f64 / 1000.0;
+        let timeout = command_timeout(
+            input.get("timeout").and_then(JsonValue::as_i64),
+            self.timeout_unit(),
+            DEFAULT_TIMEOUT_MS,
+            MAX_TIMEOUT_MS,
+        );
 
         // Resolve the PowerShell executable (pwsh → powershell.exe). When no
         // candidate responds, the tool fails with command_failed.
@@ -228,7 +248,7 @@ impl Tool for PowerShellTool {
             Some(exe) => exe,
             None => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "PowerShell",
+                    self.name(),
                     format!(
                         "Error: {}: command_failed: No PowerShell executable found (probed: {})",
                         ToolErrorCategory::ExecutionFailure.as_str(),
@@ -256,13 +276,13 @@ impl Tool for PowerShellTool {
         let result = match self
             .ctx
             .backend
-            .exec_shell(&argv, &self.ctx.workdir, Some(timeout_secs))
+            .exec_shell(&argv, &self.ctx.workdir, Some(timeout.seconds))
             .await
         {
             Ok(out) => out,
             Err(e) => {
                 return Ok(ToolExecOutput::Complete(make_result(
-                    "PowerShell",
+                    self.name(),
                     format!(
                         "Error: {}: command_failed: Command failed: {command}\nError: {e}",
                         ToolErrorCategory::ExecutionFailure.as_str()
@@ -276,16 +296,17 @@ impl Tool for PowerShellTool {
         // was killed after exceeding its configured timeout window.
         if result.exit_code == -1 {
             return Ok(ToolExecOutput::Complete(make_result(
-                "PowerShell",
+                self.name(),
                 format!(
-                    "Error: {}: command_timeout: Command timed out after {timeout_ms}ms: {command}",
-                    ToolErrorCategory::Timeout.as_str()
+                    "Error: {}: command_timeout: Command timed out after {}: {command}",
+                    ToolErrorCategory::Timeout.as_str(),
+                    timeout.display
                 ),
                 ToolResultState::Error,
             )));
         }
 
-        let output = format_output(&result.stdout, &result.stderr);
+        let output = format_command_output(&result.stdout, &result.stderr, MAX_OUTPUT_CHARS);
 
         if !result.ok() {
             let stdout_text = String::from_utf8_lossy(&result.stdout).replace("\r\n", "\n");
@@ -298,18 +319,18 @@ impl Tool for PowerShellTool {
                 error.push_str(&format!("\nStderr:\n{stderr_text}"));
             }
             return Ok(ToolExecOutput::Complete(make_result(
-                "PowerShell",
+                self.name(),
                 format!(
                     "Error: {}: command_failed: {}",
                     ToolErrorCategory::ExecutionFailure.as_str(),
-                    truncate_output(error)
+                    truncate_chars(error, MAX_OUTPUT_CHARS, "\n... (output truncated)")
                 ),
                 ToolResultState::Error,
             )));
         }
 
         Ok(ToolExecOutput::Complete(make_result(
-            "PowerShell",
+            self.name(),
             output,
             ToolResultState::Success,
         )))
@@ -340,11 +361,26 @@ mod tests {
 
     #[test]
     fn timeout_clamped_to_max() {
-        assert_eq!(clamp_timeout_ms(None), DEFAULT_TIMEOUT_MS);
-        assert_eq!(clamp_timeout_ms(Some(0)), 0);
-        assert_eq!(clamp_timeout_ms(Some(300_000)), 300_000);
-        assert_eq!(clamp_timeout_ms(Some(900_000)), MAX_TIMEOUT_MS);
-        assert_eq!(clamp_timeout_ms(Some(1_000_000)), MAX_TIMEOUT_MS);
+        assert_eq!(
+            command_timeout(
+                None,
+                TimeoutUnit::Milliseconds,
+                DEFAULT_TIMEOUT_MS,
+                MAX_TIMEOUT_MS
+            )
+            .display,
+            "120000ms"
+        );
+        assert_eq!(
+            command_timeout(
+                Some(900_000),
+                TimeoutUnit::Milliseconds,
+                DEFAULT_TIMEOUT_MS,
+                MAX_TIMEOUT_MS
+            )
+            .display,
+            "600000ms"
+        );
     }
 
     /// On non-Windows hosts, PowerShell returns an `UnsupportedCapability`

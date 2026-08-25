@@ -7,14 +7,15 @@ repository.workspace = true
 description = "AgentScope Foundation Layer — AgentState, Task, ToolContext (state management)"
 
 [dependencies]
+agent_scope_utils = { path = "../agent_scope_utils" }
 agent_scope_types = { path = "../agent_scope_types" }
 agent_scope_message = { path = "../agent_scope_message" }
 serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
 chrono.workspace = true
 schemars.workspace = true
 async-trait.workspace = true
+sqlx.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "sync", "fs"] }
 tokio-util = { workspace = true, features = ["rt"] }
 

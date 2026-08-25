@@ -7,10 +7,11 @@
 
 use std::collections::HashMap;
 
-use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_message::ToolResultState;
 use agent_scope_workspace::Skill;
 use serde_json::Value as JsonValue;
 
+use crate::make_skill_text_result as make_result;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 // ---------------------------------------------------------------------------
@@ -56,20 +57,6 @@ impl SkillViewer {
         Self {
             _get_skills_method: get_skills_method,
         }
-    }
-}
-
-/// Build a complete [`ToolResultBlock`] for the SkillViewer.
-fn make_result(output_text: String, state: ToolResultState) -> ToolResultBlock {
-    ToolResultBlock {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: "Skill".to_string(),
-        output: ToolOutput::Text(output_text),
-        state,
-        metadata: std::collections::HashMap::new(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        finished_at: Some(chrono::Utc::now().to_rfc3339()),
-        is_last: true,
     }
 }
 

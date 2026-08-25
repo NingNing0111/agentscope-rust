@@ -3,11 +3,13 @@
 //! Mirrors the Python reference implementation in
 //! `agentscope/tool/_builtin/_glob.py` (upstream commit `9d1026fa`).
 
-use agent_scope_message::{ToolOutput, ToolResultBlock, ToolResultState};
+use agent_scope_message::ToolResultState;
+#[cfg(test)]
+use agent_scope_message::{ToolOutput, ToolResultBlock};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde_json::Value as JsonValue;
-use walkdir::WalkDir;
 
+use crate::make_text_result as make_result;
 use crate::tool_trait::{Tool, ToolError, ToolExecOutput};
 
 use super::{BuiltInToolContext, ToolErrorCategory};
@@ -21,8 +23,8 @@ const MAX_GLOB_SCAN_ENTRIES: usize = 100_000;
 
 /// Built-in `Glob` tool.
 ///
-/// Walks the workspace tree (native Rust `walkdir` traversal, no shell-out)
-/// and matches each file's workspace-relative path against a compiled
+/// Traverses the workspace through [`WorkspaceBackend::list_dir`] and matches
+/// each file's path relative to the selected base directory against a compiled
 /// `globset`. Results are sorted by modification time (newest first) with a
 /// deterministic lexicographic tie-break, then truncated to a bounded result
 /// set so a huge match set cannot flood the model context.
@@ -35,20 +37,6 @@ impl GlobTool {
     #[must_use]
     pub fn new(ctx: BuiltInToolContext) -> Self {
         Self { ctx }
-    }
-}
-
-/// Build a complete one-shot [`ToolResultBlock`].
-fn make_result(name: &str, text: String, state: ToolResultState) -> ToolResultBlock {
-    ToolResultBlock {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: name.to_string(),
-        output: ToolOutput::Text(text),
-        state,
-        metadata: std::collections::HashMap::new(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        finished_at: Some(chrono::Utc::now().to_rfc3339()),
-        is_last: true,
     }
 }
 
@@ -196,33 +184,53 @@ impl Tool for GlobTool {
             }
         };
 
-        // Walk the tree, collecting workspace-relative paths of matching
-        // regular files. Symlinks are skipped (never followed). The scan is
-        // bounded so a pathological tree cannot stall the host.
+        // Traverse through the workspace backend, collecting paths relative to
+        // the selected base directory. Sandboxed/remote/virtual backends keep
+        // enforcing their own containment boundaries; host-only files that the
+        // backend does not expose are therefore invisible to Glob.
+        let entries = match self.ctx.backend.list_dir(&base_dir, true).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                return Ok(ToolExecOutput::Complete(make_result(
+                    "Glob",
+                    format!(
+                        "Error: {}: execution: failed to list directory: {e}",
+                        ToolErrorCategory::ExecutionFailure.as_str()
+                    ),
+                    ToolResultState::Error,
+                )));
+            }
+        };
         let mut matches: Vec<String> = Vec::new();
         let mut entries_scanned = 0usize;
         let mut scan_cap_hit = false;
-        for entry in WalkDir::new(base_dir.as_str())
-            .follow_links(false)
-            .into_iter()
-        {
-            let Ok(entry) = entry else { continue };
-            if entry.depth() == 0 {
-                continue;
-            }
+        for full in entries {
             entries_scanned += 1;
             if entries_scanned > MAX_GLOB_SCAN_ENTRIES {
                 scan_cap_hit = true;
                 break;
             }
-            let ft = entry.file_type();
-            if ft.is_symlink() || !ft.is_file() {
-                continue;
+            match self.ctx.backend.is_dir(&full).await {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(e) => {
+                    return Ok(ToolExecOutput::Complete(make_result(
+                        "Glob",
+                        format!(
+                            "Error: {}: execution: failed to inspect directory entry '{full}': {e}",
+                            ToolErrorCategory::ExecutionFailure.as_str()
+                        ),
+                        ToolResultState::Error,
+                    )));
+                }
             }
-            let Some(rel) = entry.path().strip_prefix(base_dir.as_str()).ok() else {
+            let Some(rel) = full.strip_prefix(base_dir.as_str()) else {
                 continue;
             };
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = rel.trim_start_matches('/').replace('\\', "/");
+            if rel_str.is_empty() {
+                continue;
+            }
             if glob_set.is_match(rel_str.as_str()) {
                 matches.push(rel_str);
             }
@@ -299,7 +307,10 @@ impl Tool for GlobTool {
 mod tests {
     use super::*;
     use crate::builtin::WorkspaceToolSession;
-    use agent_scope_workspace::backend::{LocalBackend, WorkspaceBackend};
+    use agent_scope_workspace::WorkspaceError;
+    use agent_scope_workspace::backend::{ExecOutput, LocalBackend, WorkspaceBackend};
+    use std::collections::{HashMap, HashSet};
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, RwLock};
 
     /// Build a context rooted at a temp directory. Returns the context and the
@@ -316,6 +327,124 @@ mod tests {
         match &block.output {
             ToolOutput::Text(t) => t.clone(),
             _ => String::new(),
+        }
+    }
+
+    struct ListingOnlyBackend {
+        dirs: HashSet<String>,
+        files: HashMap<String, f64>,
+    }
+
+    impl ListingOnlyBackend {
+        fn new(root: String, files: &[(&str, f64)]) -> Self {
+            let mut dirs = HashSet::from([root.clone()]);
+            let mut map = HashMap::new();
+            for (rel, mtime) in files {
+                let full = Path::new(&root).join(rel).to_string_lossy().to_string();
+                map.insert(full.clone(), *mtime);
+                let mut parent = Path::new(&full).parent().map(Path::to_path_buf);
+                while let Some(dir_path) = parent {
+                    let dir = dir_path.to_string_lossy().to_string();
+                    dirs.insert(dir.clone());
+                    if dir == root {
+                        break;
+                    }
+                    parent = dir_path.parent().map(Path::to_path_buf);
+                }
+            }
+            Self { dirs, files: map }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkspaceBackend for ListingOnlyBackend {
+        async fn exec_shell(
+            &self,
+            _cmd: &[&str],
+            _cwd: &str,
+            _timeout_secs: Option<f64>,
+        ) -> Result<ExecOutput, WorkspaceError> {
+            Err(WorkspaceError::BackendError {
+                message: "not supported".into(),
+            })
+        }
+
+        async fn read_file(&self, _path: &str) -> Result<Vec<u8>, WorkspaceError> {
+            Err(WorkspaceError::BackendError {
+                message: "not supported".into(),
+            })
+        }
+
+        async fn write_file(&self, _path: &str, _data: &[u8]) -> Result<(), WorkspaceError> {
+            Err(WorkspaceError::BackendError {
+                message: "not supported".into(),
+            })
+        }
+
+        async fn is_dir(&self, path: &str) -> Result<bool, WorkspaceError> {
+            Ok(self.dirs.contains(path))
+        }
+
+        async fn list_dir(
+            &self,
+            path: &str,
+            recursive: bool,
+        ) -> Result<Vec<String>, WorkspaceError> {
+            if !self.dirs.contains(path) {
+                return Err(WorkspaceError::BackendError {
+                    message: format!("missing directory: {path}"),
+                });
+            }
+            let prefix = format!("{}/", path.trim_end_matches('/'));
+            let mut entries: Vec<String> = self
+                .files
+                .keys()
+                .filter(|full| full.starts_with(&prefix))
+                .filter(|full| recursive || !full[prefix.len()..].contains('/'))
+                .cloned()
+                .collect();
+            entries.sort();
+            Ok(entries)
+        }
+
+        async fn delete_path(&self, _path: &str) -> Result<(), WorkspaceError> {
+            Err(WorkspaceError::BackendError {
+                message: "not supported".into(),
+            })
+        }
+
+        async fn file_exists(&self, path: &str) -> Result<bool, WorkspaceError> {
+            Ok(self.files.contains_key(path) || self.dirs.contains(path))
+        }
+
+        fn join_path(&self, a: &str, b: &str) -> String {
+            Path::new(a).join(b).to_string_lossy().to_string()
+        }
+
+        fn basename(&self, path: &str) -> String {
+            Path::new(path)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default()
+        }
+
+        fn dirname(&self, path: &str) -> String {
+            Path::new(path)
+                .parent()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default()
+        }
+
+        async fn stat_mtime(&self, path: &str) -> Result<Option<f64>, WorkspaceError> {
+            Ok(self.files.get(path).copied())
+        }
+
+        fn normpath(&self, path: &str) -> String {
+            PathBuf::from(path).to_string_lossy().to_string()
+        }
+
+        fn is_absolute(&self, path: &str) -> bool {
+            Path::new(path).is_absolute()
         }
     }
 
@@ -414,6 +543,27 @@ mod tests {
         let text = text_of(&block);
         assert!(text.contains("b.rs"), "got: {text}");
         assert!(!text.contains("a.rs"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn glob_uses_backend_listing_not_host_walkdir() {
+        let dir = tempfile::tempdir().unwrap();
+        let workdir = dir.path().to_string_lossy().to_string();
+        std::fs::write(dir.path().join("host_only.rs"), "fn host_only() {}\n").unwrap();
+
+        let backend: Arc<dyn WorkspaceBackend> = Arc::new(ListingOnlyBackend::new(
+            workdir.clone(),
+            &[("backend_only.rs", 20.0)],
+        ));
+        let session = Arc::new(RwLock::new(WorkspaceToolSession::new("ws-1")));
+        let ctx = BuiltInToolContext::new(backend, workdir, session);
+        let tool = GlobTool::new(ctx);
+
+        let block = run(&tool, serde_json::json!({ "pattern": "*.rs" })).await;
+        assert_eq!(block.state, ToolResultState::Success);
+        let text = text_of(&block);
+        assert!(text.contains("backend_only.rs"), "got: {text}");
+        assert!(!text.contains("host_only.rs"), "got: {text}");
     }
 
     #[tokio::test]

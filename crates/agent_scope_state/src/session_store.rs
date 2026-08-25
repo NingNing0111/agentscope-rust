@@ -38,6 +38,27 @@ pub trait SessionStore: Send + Sync {
     async fn list_meta(&self) -> Result<Vec<SessionMeta>, SessionError>;
 }
 
+/// Validate a session id as a safe storage key.
+///
+/// File-backed stores must be able to use ids as file-name components, so the
+/// shared rule rejects empty ids plus path separators and `.`. Database-backed
+/// stores reuse the same rule to keep session ids portable across backends.
+pub(crate) fn validate_session_id(id: &str) -> Result<(), SessionError> {
+    if id.is_empty() {
+        return Err(SessionError::StorageError {
+            session_id: id.to_string(),
+            reason: "session id must not be empty".to_string(),
+        });
+    }
+    if id.contains('/') || id.contains('\\') || id.contains('.') {
+        return Err(SessionError::StorageError {
+            session_id: id.to_string(),
+            reason: "session id contains an invalid character (path separator or '.')".to_string(),
+        });
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // InMemorySessionStore (T011)
 // ---------------------------------------------------------------------------

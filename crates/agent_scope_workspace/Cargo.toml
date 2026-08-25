@@ -23,7 +23,6 @@ sha2.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "sync", "process", "rt", "macros", "time"] }
 tracing.workspace = true
 thiserror.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 agent_scope_sandbox = { path = "../agent_scope_sandbox" }

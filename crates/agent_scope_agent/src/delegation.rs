@@ -14,7 +14,7 @@ use crate::subagent::SubAgentRegistry;
 use crate::subagent_error::{SubAgentError, SubAgentErrorInfo};
 
 fn default_id() -> String {
-    uuid::Uuid::new_v4().as_simple().to_string()
+    agent_scope_utils::id::generate_id()
 }
 
 /// How delegation results are returned.

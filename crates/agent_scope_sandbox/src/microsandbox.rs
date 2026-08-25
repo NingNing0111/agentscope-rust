@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 
 use crate::capability::CapabilityReport;
 use crate::error::{SandboxError, SandboxResult};
@@ -27,6 +26,12 @@ use crate::session::{SandboxSession, SandboxState};
 
 const MICROSANDBOX_BACKEND: &str = "microsandbox";
 const MAX_READ_FILE_BYTES: usize = 10 * 1024 * 1024;
+const LOCAL_BACKEND_ENV_KEYS: &[&str] = &[
+    "MSB_API_KEY",
+    "MSB_BACKEND",
+    "MSB_PROFILE",
+    "MSB_CONFIG_PATH",
+];
 
 #[derive(Clone)]
 pub struct MicrosandboxConfig {
@@ -113,7 +118,7 @@ impl MicrosandboxSession {
         let session_id = config
             .session_id
             .clone()
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+            .unwrap_or_else(|| agent_scope_utils::id::generate_uuid());
         validate_session_id(&session_id)?;
         let output_dir = std::env::temp_dir()
             .join(format!("agentscope-microsandbox-{session_id}"))
@@ -324,7 +329,9 @@ impl SandboxSession for MicrosandboxSession {
             });
         }
 
-        match tokio::time::timeout(self.config.startup_timeout, builder.create()).await {
+        let local_backend = explicit_local_backend()?;
+        let create = ::microsandbox::with_backend(local_backend, builder.create());
+        match tokio::time::timeout(self.config.startup_timeout, create).await {
             Ok(Ok(sandbox)) => {
                 self.handle = Some(sandbox);
                 self.state = SandboxState::Ready;
@@ -368,7 +375,7 @@ impl SandboxSession for MicrosandboxSession {
             self.config.workdir.clone()
         };
         let sandbox = self.sandbox("execute")?;
-        let execution_id = Uuid::new_v4().to_string();
+        let execution_id = agent_scope_utils::id::generate_uuid();
         let started_at = Utc::now();
         let started = Instant::now();
         let command = request.argv[0].clone();
@@ -466,9 +473,13 @@ impl SandboxSession for MicrosandboxSession {
         self.guard("write_file")?;
         let guest_path = self.resolve_guest_path(path, "write_file")?;
         self.check_write_access(&guest_path, "write_file")?;
-        self.sandbox("write_file")?
-            .fs()
-            .write(&guest_path, data)
+        let fs = self.sandbox("write_file")?.fs();
+        if let Some(parent) = guest_parent_dir(&guest_path) {
+            fs.mkdir(&parent)
+                .await
+                .map_err(sdk_fs_error("write_file"))?;
+        }
+        fs.write(&guest_path, data)
             .await
             .map_err(sdk_fs_error("write_file"))
     }
@@ -527,6 +538,16 @@ impl SandboxSession for MicrosandboxSession {
         }
     }
 
+    async fn path_exists(&self, path: &str) -> SandboxResult<bool> {
+        self.guard("path_exists")?;
+        let guest_path = self.resolve_guest_path(path, "path_exists")?;
+        self.sandbox("path_exists")?
+            .fs()
+            .exists(&guest_path)
+            .await
+            .map_err(sdk_fs_error("path_exists"))
+    }
+
     async fn stat_mtime(&self, path: &str) -> SandboxResult<Option<f64>> {
         self.guard("stat_mtime")?;
         let guest_path = self.resolve_guest_path(path, "stat_mtime")?;
@@ -573,12 +594,12 @@ impl SandboxSession for MicrosandboxSession {
             return Ok(());
         }
         self.state = SandboxState::Closing;
-        if let Some(sandbox) = self.handle.take() {
-            if let Err(err) = sandbox.stop_with_timeout(self.config.stop_timeout).await {
-                self.state = SandboxState::Failed;
-                self.closed_at = Some(Utc::now());
-                return Err(sdk_unavailable(err));
-            }
+        if let Some(sandbox) = self.handle.take()
+            && let Err(err) = sandbox.stop_with_timeout(self.config.stop_timeout).await
+        {
+            self.state = SandboxState::Failed;
+            self.closed_at = Some(Utc::now());
+            return Err(sdk_unavailable(err));
         }
         self.state = SandboxState::Closed;
         self.closed_at = Some(Utc::now());
@@ -594,6 +615,32 @@ impl SandboxSession for MicrosandboxSession {
             let _ = tokio::fs::remove_dir_all(&self.output_dir).await;
         }
         Ok(())
+    }
+}
+
+fn explicit_local_backend() -> SandboxResult<::microsandbox::backend::LocalBackend> {
+    explicit_local_backend_with_env(|key| std::env::var_os(key).is_some())
+}
+
+fn explicit_local_backend_with_env(
+    has_env: impl Fn(&str) -> bool,
+) -> SandboxResult<::microsandbox::backend::LocalBackend> {
+    if let Some(key) = LOCAL_BACKEND_ENV_KEYS.iter().find(|key| has_env(key)) {
+        return Err(SandboxError::ValidationError {
+            message: format!(
+                "microsandbox integration requires an explicit local backend; unset {key} to avoid ambient SDK backend/profile selection"
+            ),
+        });
+    }
+    Ok(::microsandbox::backend::LocalBackend::lazy())
+}
+
+fn guest_parent_dir(path: &str) -> Option<String> {
+    let parent = path.rsplit_once('/')?.0;
+    if parent.is_empty() {
+        Some("/".into())
+    } else {
+        Some(parent.into())
     }
 }
 
@@ -915,6 +962,26 @@ mod tests {
             resolve_guest_path("/workspace", &[], "/tmp/x", "write_file"),
             Err(SandboxError::PermissionDenied { .. })
         ));
+    }
+
+    #[test]
+    fn guest_parent_dir_returns_parent_for_nested_paths() {
+        assert_eq!(
+            guest_parent_dir("/workspace/dir/file.txt"),
+            Some("/workspace/dir".into())
+        );
+        assert_eq!(
+            guest_parent_dir("/workspace/file.txt"),
+            Some("/workspace".into())
+        );
+    }
+
+    #[test]
+    fn explicit_local_backend_rejects_ambient_msb_config() {
+        let result = explicit_local_backend_with_env(|key| key == "MSB_BACKEND");
+        assert!(
+            matches!(result, Err(SandboxError::ValidationError { message }) if message.contains("MSB_BACKEND"))
+        );
     }
 
     #[test]

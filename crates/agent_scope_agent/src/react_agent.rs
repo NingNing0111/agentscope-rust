@@ -11,8 +11,8 @@ use agent_scope_state::{
     AgentState, JsonFileSessionStore, Session, SessionError, SessionImpl, SessionStore,
 };
 use agent_scope_tool::builtin::{
-    BashTool, BuiltInToolContext, EditTool, GlobTool, GrepTool, PowerShellTool, ReadTool,
-    ResetToolsTool, SkillTool, WorkspaceToolSession, WriteTool,
+    BashTool, BuiltInToolContext, EditTool, FindTool, GlobTool, GrepTool, LsTool, PowerShellTool,
+    ReadTool, ResetToolsTool, SkillTool, WorkspaceToolSession, WriteTool,
 };
 use agent_scope_tool::{Tool, ToolKit};
 use futures::Stream;
@@ -294,6 +294,31 @@ pub(crate) fn has_awaiting_tool_calls(inner: &Arc<AgentInner>) -> bool {
     !get_awaiting_tool_calls(inner).is_empty()
 }
 
+fn pending_tool_calls_error() -> AgentError {
+    AgentError::ValidationError {
+        message: "agent has pending tool calls awaiting user confirmation or external execution result; resume with reply_stream_event(EventInput::Confirm/ExternalResult) before starting a new reply".to_string(),
+    }
+}
+
+fn ensure_no_awaiting_tool_calls(inner: &Arc<AgentInner>) -> Result<(), AgentError> {
+    let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
+    let has_pending = state.context.iter().any(|msg| {
+        msg.role == Role::Assistant
+            && msg.name == inner.config.name
+            && msg.content.iter().any(|block| {
+                matches!(
+                    block,
+                    ContentBlock::ToolCall(tc)
+                        if matches!(tc.state, ToolCallState::Asking | ToolCallState::Submitted)
+                )
+            })
+    });
+    if has_pending {
+        return Err(pending_tool_calls_error());
+    }
+    Ok(())
+}
+
 fn register_builtin_task_tool(
     toolkit: &mut ToolKit,
     tool: impl Tool + 'static,
@@ -312,10 +337,12 @@ fn register_builtin_task_tool(
 /// Merge the workspace built-in tools into `toolkit` (Feature 029, T023).
 ///
 /// Called from [`ReActAgent::construct`] when the agent is explicitly bound to
-/// a workspace. Registers `Bash`/`Read`/`Edit`/`Write`/`Grep`/`Glob`/
-/// `ResetTools`/`Skill` (plus `PowerShell` on Windows) and shares a single
-/// [`WorkspaceToolSession`] between them so `Read` → `Edit`/`Write` guard
-/// state and `ResetTools` activation state stay consistent.
+/// a workspace. Registers legacy workspace tools (`Bash`/`Read`/`Edit`/`Write`/
+/// `Grep`/`Glob`/`ResetTools`/`Skill`) plus pi-compatible lowercase tools
+/// (`bash`/`read`/`edit`/`write`/`grep`/`find`/`ls`). Windows additionally gets
+/// `PowerShell` and `powershell`. All tools share a single
+/// [`WorkspaceToolSession`] so `Read`/`read` → `Edit`/`edit`/`Write`/`write`
+/// guard state and `ResetTools` activation state stay consistent.
 ///
 /// Fail-closed: an unavailable workspace backend, or a name collision with an
 /// already-registered tool, aborts construction with an [`AgentError`] instead
@@ -359,8 +386,7 @@ fn register_workspace_builtins(
     let skill_cb = toolkit.skill_snapshot_callback();
     inject_workspace_tool(toolkit, SkillTool::new(ctx.clone(), skill_cb))?;
 
-    // The remaining built-in tools. `PowerShell` is only exposed on Windows
-    // (FR-017); elsewhere it is omitted from the default injected set.
+    // Legacy workspace tools remain injected for compatibility.
     inject_workspace_tool(toolkit, BashTool::new(ctx.clone()))?;
     inject_workspace_tool(toolkit, ReadTool::new(ctx.clone()))?;
     inject_workspace_tool(toolkit, EditTool::new(ctx.clone()))?;
@@ -368,8 +394,22 @@ fn register_workspace_builtins(
     inject_workspace_tool(toolkit, GrepTool::new(ctx.clone()))?;
     inject_workspace_tool(toolkit, GlobTool::new(ctx.clone()))?;
     inject_workspace_tool(toolkit, ResetToolsTool::new(ctx.clone()))?;
+
+    // pi-compatible lowercase tools are exposed alongside the legacy names so
+    // coding agents can use the same default workspace vocabulary as pi.
+    inject_workspace_tool(toolkit, BashTool::new_pi(ctx.clone()))?;
+    inject_workspace_tool(toolkit, ReadTool::new_pi(ctx.clone()))?;
+    inject_workspace_tool(toolkit, EditTool::new_pi(ctx.clone()))?;
+    inject_workspace_tool(toolkit, WriteTool::new_pi(ctx.clone()))?;
+    inject_workspace_tool(toolkit, GrepTool::new_pi(ctx.clone()))?;
+    inject_workspace_tool(toolkit, FindTool::new(ctx.clone()))?;
+    inject_workspace_tool(toolkit, LsTool::new(ctx.clone()))?;
+
+    // PowerShell is only exposed on Windows (FR-017); elsewhere it is omitted
+    // from the default injected set.
     if std::env::consts::OS == "windows" {
-        inject_workspace_tool(toolkit, PowerShellTool::new(ctx))?;
+        inject_workspace_tool(toolkit, PowerShellTool::new(ctx.clone()))?;
+        inject_workspace_tool(toolkit, PowerShellTool::new_pi(ctx))?;
     }
 
     Ok(())
@@ -427,6 +467,7 @@ impl Drop for EventStream {
 #[async_trait::async_trait]
 impl Agent for ReActAgent {
     async fn reply(&self, input: Option<Vec<Msg>>) -> Result<Msg, AgentError> {
+        ensure_no_awaiting_tool_calls(&self.inner)?;
         if self
             .inner
             .is_streaming
@@ -444,6 +485,7 @@ impl Agent for ReActAgent {
         &self,
         input: Option<Vec<Msg>>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
+        ensure_no_awaiting_tool_calls(&self.inner)?;
         if self
             .inner
             .is_streaming
@@ -636,7 +678,7 @@ async fn do_reply(inner: Arc<AgentInner>, input: Option<Vec<Msg>>) -> Result<Msg
         let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
         state.session_id.clone()
     };
-    let reply_id = uuid::Uuid::new_v4().as_simple().to_string();
+    let reply_id = agent_scope_utils::id::generate_id();
 
     {
         let mut state = inner.state.write().unwrap_or_else(|e| e.into_inner());
@@ -746,7 +788,7 @@ async fn do_reply_stream(
         let state = inner.state.read().unwrap_or_else(|e| e.into_inner());
         state.session_id.clone()
     };
-    let reply_id = uuid::Uuid::new_v4().as_simple().to_string();
+    let reply_id = agent_scope_utils::id::generate_id();
 
     {
         let mut state = inner.state.write().unwrap_or_else(|e| e.into_inner());

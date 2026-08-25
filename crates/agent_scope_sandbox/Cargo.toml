@@ -10,6 +10,7 @@ default = []
 microsandbox = ["dep:microsandbox"]
 
 [dependencies]
+agent_scope_utils = { path = "../agent_scope_utils" }
 agent_scope_workspace = { path = "../agent_scope_workspace" }
 async-trait.workspace = true
 chrono.workspace = true
@@ -23,7 +24,6 @@ serde_json.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "macros", "sync", "time"] }
 tracing.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

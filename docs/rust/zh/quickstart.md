@@ -11,6 +11,31 @@ description: "快速上手 AgentScope Rust"
 
 AgentScope Rust 需要 Rust 工具链（edition 2024，stable 即可）。同时需要一个模型服务的 API Key（当前内置 provider 为 rig：OpenAI / Anthropic / DeepSeek，示例默认 OpenAI）。
 
+<Tip>
+如果你只是想确认项目能编译，可先跳过凭据配置，直接运行下面的示例命令。未设置 `DEFAULT_API_KEY` 时，程序会输出明确错误并退出，不会产生隐藏的网络调用或 panic。
+</Tip>
+
+## 最短路径
+
+1. 确认在仓库根目录，并安装依赖：
+
+```bash
+npm install
+cargo --version
+```
+
+2. 设置模型凭据：
+
+```bash
+export DEFAULT_API_KEY="sk-your-key"
+```
+
+3. 运行 quickstart 示例：
+
+```bash
+cargo run -p quickstart -- --prompt "你好，请用一句话介绍你自己。"
+```
+
 ### 引入依赖
 
 在项目的 `Cargo.toml` 中加入所需 crate（各 crate 都是独立 package，可按需引入）：
@@ -34,6 +59,14 @@ tokio = { version = "1", features = ["full"] }
 ```bash
 export DEFAULT_API_KEY="sk-your-key"
 ```
+
+可选变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `DEFAULT_API_KEY` | 必填。模型服务 API Key。 |
+| `DEFAULT_CHAT_MODEL` | 可选。聊天模型名，未设置时使用示例默认值。 |
+| `DEFAULT_URL` | 可选。覆盖 OpenAI 兼容端点。 |
 
 ## 第一个智能体
 
@@ -122,6 +155,14 @@ async fn main() -> anyhow::Result<()> {
 ### 预期输出
 
 有凭据时，程序先打印 `reply()` 的最终助手消息，再以 `reply_stream()` 流式输出文本增量并以 `[reply end]` 结束。未设置 `DEFAULT_API_KEY` 时，程序输出明确的缺凭据错误并退出（不会静默失败或 panic）。
+
+### 常见问题
+
+| 现象 | 处理方式 |
+| --- | --- |
+| `缺少环境变量 DEFAULT_API_KEY` | 设置环境变量，或在仓库根目录 `.env` 中写入同名变量。 |
+| 模型端点不可达 | 检查 `DEFAULT_URL` 是否指向 OpenAI 兼容接口，或移除该变量使用默认端点。 |
+| 输出中没有工具调用 | quickstart 示例使用空 `ToolKit`，这是预期行为；接入工具见 [工具系统](/building-blocks/tool/overview)。 |
 
 ## 按需使用其他能力
 

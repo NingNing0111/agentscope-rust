@@ -3,6 +3,81 @@
    暗色主题按钮 #3e63dd 已满足要求，保持 .dark 覆盖不变。 */
 :root {
   --vp-button-brand-bg: var(--vp-c-brand-1);
+  --vp-c-brand-1: #2f5f9f;
+  --vp-c-brand-2: #3f7abf;
+  --vp-c-brand-3: #6aa1d8;
+  --vp-c-brand-soft: rgba(47, 95, 159, 0.14);
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(90deg, #1f5f91 0%, #15803d 100%);
+  --vp-home-hero-image-background-image:
+    radial-gradient(circle at 35% 35%, rgba(21, 128, 61, 0.22), transparent 34%),
+    radial-gradient(circle at 65% 60%, rgba(47, 95, 159, 0.22), transparent 38%);
+  --vp-home-hero-image-filter: blur(46px);
+  --as-surface-border: color-mix(in srgb, var(--vp-c-divider), var(--vp-c-brand-1) 18%);
+  --as-shadow-soft: 0 10px 28px rgba(31, 41, 55, 0.08);
+}
+
+.dark {
+  --vp-c-brand-1: #8bb8ee;
+  --vp-c-brand-2: #6aa1d8;
+  --vp-c-brand-3: #3f7abf;
+  --vp-c-brand-soft: rgba(139, 184, 238, 0.16);
+  --as-surface-border: color-mix(in srgb, var(--vp-c-divider), var(--vp-c-brand-1) 22%);
+  --as-shadow-soft: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.VPHome .VPHero {
+  padding-top: 56px;
+  padding-bottom: 36px;
+}
+
+.VPHome .VPHero .text {
+  max-width: 760px;
+  line-height: 1.16;
+}
+
+.VPHome .VPHero .tagline {
+  max-width: 720px;
+  color: var(--vp-c-text-2);
+}
+
+.VPHome .VPFeatures {
+  padding-top: 12px;
+}
+
+.VPDoc .content {
+  max-width: 880px;
+}
+
+.vp-doc {
+  line-height: 1.78;
+}
+
+.vp-doc h2 {
+  margin-top: 2.4rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+.vp-doc table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+}
+
+.vp-doc th {
+  color: var(--vp-c-text-1);
+  background: var(--vp-c-bg-soft);
+}
+
+.vp-doc th,
+.vp-doc td {
+  padding: 0.72rem 0.85rem;
+  border-color: var(--vp-c-divider);
 }
 
 /* 代码块语言标签：默认 --vp-code-lang-color = text-3（亮色 #929295，2.87:1），
@@ -35,23 +110,43 @@
 
 .as-card {
   display: block;
-  padding: 1rem;
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 10px;
+  min-height: 100%;
+  padding: 1.05rem;
+  border: 1px solid var(--as-surface-border);
+  border-radius: 8px;
   color: var(--vp-c-text-1);
-  background: var(--vp-c-bg-soft);
+  background: linear-gradient(180deg, var(--vp-c-bg) 0%, var(--vp-c-bg-soft) 100%);
+  box-shadow: var(--as-shadow-soft);
 }
 
-.as-card-link { text-decoration: none; transition: border-color 0.2s, background-color 0.2s; }
-.as-card-link:hover { border-color: var(--vp-c-brand-1); background: var(--vp-c-bg-elv); }
+.as-card-link {
+  text-decoration: none;
+  transition: border-color 0.2s, background-color 0.2s, transform 0.2s;
+}
+.as-card-link:hover {
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-bg-elv);
+  transform: translateY(-2px);
+}
 .as-card-link:focus-visible,
 .as-accordion-button:focus-visible { outline: 3px solid var(--vp-c-brand-1); outline-offset: 3px; }
-.as-card-icon { display: block; color: var(--vp-c-brand-1); font-size: 0.85rem; }
-.as-card-title { display: block; margin-top: 0.25rem; font-size: 1.05rem; }
+.as-card-icon {
+  display: inline-flex;
+  min-width: 1.6rem;
+  min-height: 1.6rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.as-card-title { display: block; margin-top: 0.6rem; font-size: 1.05rem; }
 .as-card-content { margin-top: 0.5rem; color: var(--vp-c-text-2); }
 .as-card-content > :first-child { margin-top: 0; }
 .as-card-content > :last-child { margin-bottom: 0; }
-.as-card-cta { display: block; margin-top: 0.75rem; color: var(--vp-c-brand-1); font-weight: 600; }
+.as-card-cta { display: block; margin-top: 0.75rem; color: var(--vp-c-brand-1); font-weight: 700; }
 
 .as-badge { display: inline-flex; align-items: center; border-radius: 999px; font-weight: 600; line-height: 1; vertical-align: middle; }
 .as-badge-sm { padding: 0.2rem 0.45rem; font-size: 0.75rem; }
@@ -70,4 +165,6 @@
 
 @media (max-width: 640px) {
   .as-card-group { grid-template-columns: 1fr; }
+  .VPHome .VPHero { padding-top: 32px; }
+  .vp-doc table { display: block; }
 }

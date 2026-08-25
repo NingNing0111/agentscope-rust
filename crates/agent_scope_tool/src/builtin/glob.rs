@@ -227,7 +227,7 @@ impl Tool for GlobTool {
             let Some(rel) = full.strip_prefix(base_dir.as_str()) else {
                 continue;
             };
-            let rel_str = rel.trim_start_matches('/').replace('\\', "/");
+            let rel_str = rel.trim_start_matches(['/', '\\']).replace('\\', "/");
             if rel_str.is_empty() {
                 continue;
             }
@@ -395,13 +395,16 @@ mod tests {
                     message: format!("missing directory: {path}"),
                 });
             }
-            let prefix = format!("{}/", path.trim_end_matches('/'));
             let mut entries: Vec<String> = self
                 .files
                 .keys()
-                .filter(|full| full.starts_with(&prefix))
-                .filter(|full| recursive || !full[prefix.len()..].contains('/'))
-                .cloned()
+                .filter_map(|full| {
+                    let rel = Path::new(full).strip_prefix(path).ok()?;
+                    if !recursive && rel.components().count() > 1 {
+                        return None;
+                    }
+                    Some(full.clone())
+                })
                 .collect();
             entries.sort();
             Ok(entries)

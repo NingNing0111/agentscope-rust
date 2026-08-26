@@ -39,6 +39,12 @@ pub struct LocalWorkspace {
 }
 
 impl LocalWorkspace {
+    /// Return the raw MCP config for runtime use.
+    #[must_use]
+    pub fn get_mcp_config(&self, name: &str) -> Option<McpClientConfig> {
+        self._mcps.iter().find(|m| m.name == name).cloned()
+    }
+
     /// Disconnect and drop all active MCP connections (FR-010).
     async fn disconnect_all_mcps(&self) -> Result<(), WorkspaceError> {
         let mut conns = self._mcp_connections.lock().await;

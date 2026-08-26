@@ -12,6 +12,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 
+use http::{HeaderName, HeaderValue};
+
 use agent_scope_workspace::McpConnectionHandle;
 use agent_scope_workspace::error::WorkspaceError;
 use agent_scope_workspace::mcp::{McpClientConfig, McpTransportConfig};
@@ -119,8 +121,34 @@ impl McpClient {
                         self.name
                     );
                 }
-                let transport =
-                    rmcp::transport::StreamableHttpClientTransport::from_uri(url.as_str());
+                let mut custom_headers = std::collections::HashMap::new();
+                if let McpTransportConfig::Sse { headers, .. }
+                | McpTransportConfig::StreamableHttp { headers, .. } = &self.config.transport
+                {
+                    for (name, value) in headers {
+                        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
+                            WorkspaceError::McpConnectionError {
+                                name: self.name.clone(),
+                                reason: format!("invalid MCP header name '{name}': {e}"),
+                            }
+                        })?;
+                        let header_value = HeaderValue::from_str(value).map_err(|e| {
+                            WorkspaceError::McpConnectionError {
+                                name: self.name.clone(),
+                                reason: format!(
+                                    "invalid MCP header value for '{name}': {e}"
+                                ),
+                            }
+                        })?;
+                        custom_headers.insert(header_name, header_value);
+                    }
+                }
+                let transport = rmcp::transport::StreamableHttpClientTransport::from_config(
+                    rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
+                        url.as_str(),
+                    )
+                    .custom_headers(custom_headers),
+                );
                 ClientInfo::default().serve(transport).await.map_err(|e| {
                     WorkspaceError::McpConnectionError {
                         name: self.name.clone(),

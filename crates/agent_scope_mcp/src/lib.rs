@@ -84,14 +84,11 @@ pub trait McpExt: WorkspaceBase {
 #[async_trait::async_trait]
 impl McpExt for LocalWorkspace {
     async fn connect_mcp(&mut self, name: &str) -> Result<Vec<Arc<dyn Tool>>, WorkspaceError> {
-        // Resolve the persisted configuration. `list_mcps()` returns the
-        // scrubbed copy (sensitive headers already redacted) — this is
-        // intentional so this extension layer never touches raw credentials.
-        let configs = self.list_mcps().await?;
-        let config = configs
-            .iter()
-            .find(|c| c.name == name)
-            .cloned()
+        // Resolve the raw configuration for runtime use.
+        // `list_mcps()` is intentionally scrubbed for display/persistence,
+        // so we must not use it here or auth headers would be lost.
+        let config = self
+            .get_mcp_config(name)
             .ok_or_else(|| WorkspaceError::McpNotFound {
                 name: name.to_string(),
             })?;

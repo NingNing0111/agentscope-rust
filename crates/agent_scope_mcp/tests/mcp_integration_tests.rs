@@ -92,6 +92,45 @@ fn parse_args(input: serde_json::Value) -> serde_json::Map<String, serde_json::V
     input.as_object().expect("args must be an object").clone()
 }
 
+/// Real-network regression: connect to Huice's MCP endpoint with API-key auth
+/// and verify tool discovery succeeds.
+///
+/// Run manually with:
+/// `HUICE_MCP_URL=... HUICE_MCP_API_KEY=... cargo test -p agent_scope_mcp --test mcp_integration_tests test_real_huice_streamable_http_connects -- --ignored --nocapture`
+#[tokio::test]
+#[ignore]
+async fn test_real_huice_streamable_http_connects() -> Result<(), Box<dyn std::error::Error>> {
+    let url = std::env::var("HUICE_MCP_URL")?;
+    let api_key = std::env::var("HUICE_MCP_API_KEY")?;
+
+    let mut headers = HashMap::new();
+    headers.insert("X-API-Key".to_string(), api_key);
+
+    let mut ws = LocalWorkspace::new(LocalWorkspaceConfig {
+        workdir: std::env::temp_dir()
+            .join(format!("agentscope-huice-mcp-{}", std::process::id()))
+            .to_string_lossy()
+            .into_owned(),
+        workspace_id: None,
+        default_mcps: vec![McpClientConfig {
+            name: "huice".to_string(),
+            transport: McpTransportConfig::StreamableHttp { url, headers },
+            is_stateful: true,
+        }],
+        skill_paths: vec![],
+        instructions: None,
+    });
+    ws.initialize().await?;
+
+    let tools = ws.connect_mcp("huice").await?;
+    assert!(!tools.is_empty(), "expected at least one remote tool");
+    for tool in &tools {
+        println!("{} | {}", tool.name(), tool.description());
+    }
+    ws.disconnect_mcp("huice").await?;
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // US1+US2 tests (T024-T029)
 // ─────────────────────────────────────────────────────────────────────────────

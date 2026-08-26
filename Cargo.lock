@@ -114,6 +114,7 @@ dependencies = [
  "agent_scope_workspace",
  "async-trait",
  "chrono",
+ "http",
  "rmcp",
  "schemars 1.2.2",
  "serde",

@@ -14,6 +14,7 @@ agent_scope_utils = { path = "../agent_scope_utils" }
 
 async-trait.workspace = true
 chrono.workspace = true
+http.workspace = true
 # Official MCP Rust SDK — the sole protocol implementation (Feature 027).
 rmcp = { workspace = true, features = [
     "client",
